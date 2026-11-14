@@ -1,0 +1,219 @@
+// Stage 8 of the pipeline: turn beat timestamps into readings.
+
+import { robustLine, median, parabolicOffset } from './mathutil.js';
+
+/**
+ * @typedef {Object} BeatSeries
+ * @property {0|1} type 0 for the earlier beat of each cycle ("tick"), 1 for the other ("tock")
+ * @property {number} K cycles averaged per estimate
+ * @property {Float64Array} t time of each estimate in seconds
+ * @property {Float64Array} n beat number of each estimate (even for ticks, odd for tocks)
+ * @property {Uint8Array} ok 1 where the estimate stands above the noise
+ * @property {Float64Array} z confidence of each estimate
+ * @property {number} confidentFraction share of estimates above the noise threshold
+ * @property {number} zMedian median confidence of the estimates
+ */
+
+/**
+ * @typedef {Object} BeatFit
+ * @property {0|1} type
+ * @property {number} period measured beat period in seconds
+ * @property {number} rate seconds per day, positive when the watch gains
+ * @property {number} rateSd statistical uncertainty of the rate in seconds per day
+ * @property {number} jitterMs robust scatter of the timestamps about the fitted line
+ * @property {number} count independent confident estimates used
+ */
+
+/**
+ * Indices of the estimates that are both confident and statistically independent (estimates
+ * averaged over K cycles overlap, so only every K-th is independent).
+ * @param {BeatSeries} series
+ * @returns {number[]}
+ */
+export function independentConfident(series) {
+  /** @type {number[]} */
+  const idx = [];
+  for (let i = 0; i < series.t.length; i += series.K) if (series.ok[i]) idx.push(i);
+  return idx;
+}
+
+/**
+ * Fit the rate of one beat type.
+ * @param {BeatSeries} series
+ * @param {number} nominalPeriod nominal beat period in seconds
+ * @returns {BeatFit | null} null when fewer than five usable estimates exist
+ */
+export function fitSeries(series, nominalPeriod) {
+  const idx = independentConfident(series);
+  if (idx.length < 5) return null;
+  const n = idx.map((i) => series.n[i]);
+  const t = idx.map((i) => series.t[i]);
+  const { b, residualSd } = robustLine(n, t);
+  const nMean = n.reduce((s, v) => s + v, 0) / n.length;
+  const spread = Math.sqrt(n.reduce((s, v) => s + (v - nMean) * (v - nMean), 0));
+  const periodSd = residualSd / spread;
+  return {
+    type: series.type,
+    period: b,
+    rate: 86400 * (nominalPeriod / b - 1),
+    rateSd: (86400 * nominalPeriod * periodSd) / (b * b),
+    jitterMs: residualSd * 1e3,
+    count: idx.length,
+  };
+}
+
+/**
+ * Offset of the tocks from the midpoint between ticks, in seconds, given a common beat period.
+ * @param {BeatSeries} ticks
+ * @param {BeatSeries} tocks
+ * @param {number} period common beat period in seconds
+ * @returns {number}
+ */
+export function tockOffset(ticks, tocks, period) {
+  /** @param {BeatSeries} s */
+  const intercept = (s) => {
+    /** @type {number[]} */
+    const v = [];
+    for (let i = 0; i < s.t.length; i++) if (s.ok[i]) v.push(s.t[i] - period * s.n[i]);
+    return median(v);
+  };
+  return intercept(tocks) - intercept(ticks);
+}
+
+/**
+ * Compare the tick half and the tock half of the template. If the two reference points do not
+ * sit on the same feature of the beat, the best-matching shift says by how much.
+ * @param {Float32Array[]} template
+ * @param {number} c1 tick position in samples
+ * @param {number} c2 tock position in samples
+ * @param {number} envelopeRate
+ * @returns {{shiftSeconds: number, similarity: number}}
+ */
+export function templateAlignment(template, c1, c2, envelopeRate) {
+  const nb = template[0].length;
+  const half = Math.floor(0.01 * envelopeRate);
+  const maxShift = Math.floor(0.002 * envelopeRate);
+  /** @param {Float32Array} t @param {number} i */
+  const at = (t, i) => {
+    const v = t[((i % nb) + nb) % nb];
+    return v > 0 ? v : 0;
+  };
+  let aa = 0;
+  for (const t of template) for (let tau = -half; tau <= half; tau++) aa += at(t, c1 + tau) ** 2;
+  /** @type {number[]} */
+  const cc = [];
+  for (let s = -maxShift; s <= maxShift; s++) {
+    let ab = 0;
+    let bb = 0;
+    for (const t of template) {
+      for (let tau = -half; tau <= half; tau++) {
+        const a = at(t, c1 + tau);
+        const b = at(t, c2 + tau + s);
+        ab += a * b;
+        bb += b * b;
+      }
+    }
+    cc.push(ab / (Math.sqrt(aa * bb) + 1e-30));
+  }
+  let k = 0;
+  for (let i = 1; i < cc.length; i++) if (cc[i] > cc[k]) k = i;
+  const off = k > 0 && k < cc.length - 1 ? parabolicOffset(cc[k - 1], cc[k], cc[k + 1]) : 0;
+  return { shiftSeconds: (k - maxShift + off) / envelopeRate, similarity: cc[k] };
+}
+
+/**
+ * One rate from both beat types together: the tocks are moved onto the tick line, then a
+ * single robust line is fitted.
+ * @param {BeatSeries} ticks
+ * @param {BeatSeries} tocks
+ * @param {number} tockShift seconds to subtract from the tock times
+ * @param {number} nominalPeriod nominal beat period in seconds
+ * @returns {{rate: number, rateSd: number, jitterMs: number, count: number}}
+ */
+export function jointRate(ticks, tocks, tockShift, nominalPeriod) {
+  /** @type {{n: number, t: number}[]} */
+  const pts = [];
+  for (const i of independentConfident(ticks)) pts.push({ n: ticks.n[i], t: ticks.t[i] });
+  for (const i of independentConfident(tocks)) pts.push({ n: tocks.n[i], t: tocks.t[i] - tockShift });
+  pts.sort((p, q) => p.n - q.n);
+  const n = pts.map((p) => p.n);
+  const t = pts.map((p) => p.t);
+  const { b, residualSd } = robustLine(n, t);
+  const nMean = n.reduce((s, v) => s + v, 0) / n.length;
+  const spread = Math.sqrt(n.reduce((s, v) => s + (v - nMean) * (v - nMean), 0));
+  return {
+    rate: 86400 * (nominalPeriod / b - 1),
+    rateSd: (86400 * nominalPeriod * (residualSd / spread)) / (b * b),
+    jitterMs: residualSd * 1e3,
+    count: pts.length,
+  };
+}
+
+/** Largest uncertainty of the tick-tock offset, in milliseconds, for a beat error to be reported. */
+export const MAX_OFFSET_SD_MS = 0.1;
+/** Smallest tick-tock template similarity for a beat error to be reported. */
+export const MIN_SIMILARITY = 0.35;
+/** Largest timestamp scatter of either beat type, in milliseconds, for a beat error to be reported. */
+export const MAX_SCATTER_MS = 0.2;
+
+/**
+ * @typedef {Object} Readings
+ * @property {(BeatFit|null)[]} fits rate fit of each beat type
+ * @property {number|null} rate seconds per day, positive when gaining
+ * @property {number|null} rateSd statistical uncertainty of the rate
+ * @property {number|null} jitterMs scatter of the timestamps about the fitted line
+ * @property {number|null} beatErrorMs gap between the tick and tock trace lines; null when unreliable
+ * @property {number|null} beatOffsetMs signed offset of the tocks from the midpoint between ticks
+ * @property {{offsetMs: number, offsetSdMs: number, similarity: number}|null} beatErrorDetail
+ *   the raw tick-tock comparison, kept even when the beat error is judged unreliable
+ */
+
+/**
+ * Stage 8 in one call: rate, beat error and the checks that decide whether a beat error may be
+ * shown. The beat error is reported only when both beat types are timed precisely and the tick
+ * and tock look alike, so the two timestamps refer to the same event in each beat. Otherwise
+ * the rate comes from the better-timed beat type alone.
+ * @param {BeatSeries[]} beats the ticks and the tocks
+ * @param {number} nominalPeriod nominal beat period in seconds
+ * @param {Float32Array[]} template averaged tick-tock cycle
+ * @param {[number, number]} clusters tick and tock positions in the template, in samples
+ * @param {number} envelopeRate
+ * @returns {Readings}
+ */
+export function summarize(beats, nominalPeriod, template, clusters, envelopeRate) {
+  const fits = beats.map((s) => fitSeries(s, nominalPeriod));
+  /** @type {Readings} */
+  const result = { fits, rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null };
+  const [fitTick, fitTock] = fits;
+  let both = false;
+  if (fitTick && fitTock) {
+    // Common period from the two fits, weighted by their uncertainties.
+    const w0 = 1 / (fitTick.rateSd * fitTick.rateSd);
+    const w1 = 1 / (fitTock.rateSd * fitTock.rateSd);
+    const rate = (fitTick.rate * w0 + fitTock.rate * w1) / (w0 + w1);
+    const commonPeriod = nominalPeriod / (1 + rate / 86400);
+    const raw = tockOffset(beats[0], beats[1], commonPeriod);
+    const align = templateAlignment(template, clusters[0], clusters[1], envelopeRate);
+    const offset = raw + align.shiftSeconds;
+    const offsetSdMs = Math.hypot(fitTick.jitterMs / Math.sqrt(fitTick.count), fitTock.jitterMs / Math.sqrt(fitTock.count));
+    result.beatErrorDetail = { offsetMs: offset * 1e3, offsetSdMs, similarity: align.similarity };
+    both = offsetSdMs <= MAX_OFFSET_SD_MS && align.similarity >= MIN_SIMILARITY && Math.max(fitTick.jitterMs, fitTock.jitterMs) <= MAX_SCATTER_MS;
+    if (both) {
+      const joint = jointRate(beats[0], beats[1], raw, nominalPeriod);
+      result.rate = joint.rate;
+      result.rateSd = joint.rateSd;
+      result.jitterMs = joint.jitterMs;
+      result.beatOffsetMs = offset * 1e3;
+      result.beatErrorMs = Math.abs(offset) * 1e3;
+    }
+  }
+  if (!both) {
+    const only = fitTick && fitTock ? (fitTick.rateSd <= fitTock.rateSd ? fitTick : fitTock) : fitTick || fitTock;
+    if (only) {
+      result.rate = only.rate;
+      result.rateSd = only.rateSd;
+      result.jitterMs = only.jitterMs;
+    }
+  }
+  return result;
+}

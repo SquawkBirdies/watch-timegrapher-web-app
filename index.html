@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Watch Timegrapher Web App</title>
+<style>
+/* Placeholder page for milestone 3. It shows that the site is hosted correctly and that this
+   browser has what the app will need. The app's own interface replaces it in milestone 5. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #1a2030;
+  --muted: #5a6478;
+  --line: #dde2ea;
+  --accent: #27449c;
+  --good: #1f7a4d;
+  --bad: #b3261e;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11141a;
+    --surface: #171b23;
+    --ink: #e3e7ef;
+    --muted: #98a2b6;
+    --line: #2a313e;
+    --accent: #93abff;
+    --good: #5fcf96;
+    --bad: #ff8a80;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font); }
+a { color: var(--accent); }
+main {
+  max-width: 640px; margin: 0 auto; display: grid; gap: 20px;
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 48px max(20px, env(safe-area-inset-left));
+}
+h1 { font-size: 28px; line-height: 1.15; margin: 0; text-wrap: balance; }
+.status { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+p { margin: 0; }
+.lede { color: var(--muted); }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px 16px; }
+h2 { font-size: 15px; margin: 12px 0 4px; }
+ul { list-style: none; margin: 0; padding: 0; }
+li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+li:first-child { border-top: 0; }
+.what { font-weight: 600; }
+.why { grid-column: 1 / -1; color: var(--muted); font-size: 14px; }
+.result { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.result.yes { color: var(--good); }
+.result.no { color: var(--bad); }
+.result.wait { color: var(--muted); }
+.small { font-size: 13px; color: var(--muted); }
+code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <div class="status">Milestone 3 of 9 · placeholder</div>
+  <h1>Watch Timegrapher Web App</h1>
+  <p class="lede">
+    A timegrapher for mechanical watches that listens through your phone's microphone. The app is
+    still being built. This page checks that it is hosted correctly and that this browser has
+    what the app will need.
+  </p>
+
+  <section aria-labelledby="checks-title">
+    <h2 id="checks-title">This browser</h2>
+    <ul id="checks"></ul>
+  </section>
+
+  <p class="small">
+    This project was written with generative AI. See the README in the
+    <a id="source" href="https://github.com/">source repository</a> for who did what.
+    MIT licence.
+  </p>
+  <p class="small">Browser: <code id="agent"></code></p>
+</main>
+
+<script type="module">
+const checks = [
+  {
+    what: 'Secure connection',
+    why: 'Browsers only allow the microphone on pages served over HTTPS.',
+    test: () => window.isSecureContext,
+  },
+  {
+    what: 'Microphone access offered',
+    why: 'The browser can ask for the microphone. This page does not ask.',
+    test: () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+  },
+  {
+    what: 'Audio worklets',
+    why: 'Used to receive the live audio without gaps.',
+    test: () => typeof AudioWorkletNode === 'function',
+  },
+  {
+    what: 'Screen wake lock',
+    why: 'Keeps the screen on during a measurement.',
+    test: () => 'wakeLock' in navigator,
+  },
+  {
+    what: 'Signal pipeline loads',
+    why: 'The measurement code downloads and starts in this browser.',
+    test: async () => {
+      const { Pipeline } = await import('./js/dsp/pipeline.js');
+      const pipeline = new Pipeline(48000, 1);
+      pipeline.push([new Float32Array(4096)]);
+      return true;
+    },
+  },
+];
+
+const list = document.getElementById('checks');
+for (const c of checks) {
+  const li = document.createElement('li');
+  li.innerHTML = '<span class="what"></span><span class="result wait">Checking</span><span class="why"></span>';
+  li.querySelector('.what').textContent = c.what;
+  li.querySelector('.why').textContent = c.why;
+  list.appendChild(li);
+  const result = li.querySelector('.result');
+  Promise.resolve()
+    .then(c.test)
+    .then((ok) => {
+      result.textContent = ok ? 'Yes' : 'No';
+      result.className = 'result ' + (ok ? 'yes' : 'no');
+    })
+    .catch((e) => {
+      result.textContent = 'No';
+      result.className = 'result no';
+      li.querySelector('.why').textContent = c.why + ' Error: ' + (e && e.message ? e.message : e);
+    });
+}
+
+document.getElementById('agent').textContent = navigator.userAgent;
+
+// On GitHub Pages the address is https://OWNER.github.io/REPOSITORY/, so the source is
+// https://github.com/OWNER/REPOSITORY.
+const source = document.getElementById('source');
+const host = location.hostname.match(/^([^.]+)\.github\.io$/);
+const repo = location.pathname.split('/').filter(Boolean)[0];
+if (host && repo) source.href = `https://github.com/${host[1]}/${repo}`;
+</script>
+</body>
+</html>

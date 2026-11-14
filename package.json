@@ -1,0 +1,12 @@
+{
+  "name": "watch-timegrapher-web-app",
+  "version": "0.1.0",
+  "description": "A mechanical watch timegrapher that runs in a phone's web browser, using the microphone.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "typecheck": "tsc -p jsconfig.json"
+  }
+}
