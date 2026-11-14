@@ -4,9 +4,11 @@ A mechanical watch timegrapher that runs in a phone's web browser and listens th
 microphone. It measures rate (seconds per day) and beat error (milliseconds) and will draw a
 real-time trace.
 
-**Status: milestone 3 of 9.** The signal pipeline works on whole recordings and in real time,
-on audio fed in small chunks. The site has a placeholder page that checks the browser; the app
-itself is not ready yet.
+**Status: milestone 4 of 9.** The signal pipeline works on whole recordings and in real time,
+on audio fed in small chunks. The site has a placeholder start page and an audio diagnostic;
+the app itself is not ready yet.
+
+Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
 **This project was written with generative AI.** See [Use of generative AI](#use-of-generative-ai)
 for who did what and what has been checked.
@@ -62,6 +64,14 @@ Until the app is ready, `index.html` is a placeholder that checks the browser: s
 connection, microphone access, audio worklets, screen wake lock, and whether the signal
 pipeline loads.
 
+`diagnostic.html` is the audio diagnostic. It records up to 60 s from a chosen microphone with
+the browser's echo cancellation, noise suppression and automatic gain off (or on, to compare),
+shows the waveform above 2 kHz, and runs the real-time pipeline on the audio as it arrives in a
+background worker. Afterwards it reports what the browser actually applied, the levels, any
+dropouts or interruptions, the readings and the pipeline's load. The recording can be saved as
+a 32-bit float WAV file holding nothing but the audio. A speed test times the pipeline on 60 s
+of a simulated watch.
+
 ## Running the tests
 
 Requires Node 22 or later. There is nothing to install.
@@ -78,6 +88,7 @@ node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat r
 
 ```
 index.html             placeholder page that checks the browser
+diagnostic.html        audio diagnostic (script in js/diagnostic.js)
 docs/hosting.md        setting up GitHub Pages
 js/dsp/filterbank.js   band-pass filter bank and energy envelopes
 js/dsp/cleanup.js      noise levelling, click clipping, mains-hum comb filter
@@ -88,6 +99,11 @@ js/dsp/estimate.js     rate and beat error from the timestamps
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
 js/dsp/tracker.js      Kalman beat tracker
 js/dsp/pipeline.js     real-time pipeline: listening, tracking, lock lost
+js/dsp/session.js      the pipeline plus a record of its computing time; the speed test
+js/dsp/worker.js       runs a session in a background worker
+js/audio/capture.js    microphone choice, raw-audio request, interruptions
+js/audio/capture-worklet.js  audio-thread chunker
+js/audio/wav.js        WAV writer for saved captures
 js/audio/simulator.js  synthetic watch generator
 tests/                 automated tests and the three recordings
 tools/                 command-line runners, and the Python prototype kept for reference
