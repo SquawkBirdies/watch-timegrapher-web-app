@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
+<title>Audio diagnostic · Watch Timegrapher Web App</title>
+<style>
+/* Audio diagnostic for milestone 4: records the microphone as the browser delivers it, runs
+   the pipeline on it live, and times the pipeline on this device. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #1a2030;
+  --muted: #5a6478;
+  --line: #dde2ea;
+  --accent: #27449c;
+  --accent-ink: #ffffff;
+  --good: #1f7a4d;
+  --warn: #8a5a00;
+  --warn-bg: #fff6e0;
+  --bad: #b3261e;
+  --trace: #27449c;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11141a;
+    --surface: #171b23;
+    --ink: #e3e7ef;
+    --muted: #98a2b6;
+    --line: #2a313e;
+    --accent: #93abff;
+    --accent-ink: #11141a;
+    --good: #5fcf96;
+    --warn: #f3c56b;
+    --warn-bg: #2b2414;
+    --bad: #ff8a80;
+    --trace: #93abff;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font); }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main {
+  max-width: 680px; margin: 0 auto; display: grid; gap: 16px;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left));
+}
+h1 { font-size: 26px; line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-size: 17px; margin: 0; }
+p { margin: 0; }
+.eyebrow { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.lede, .note { color: var(--muted); }
+.note { font-size: 14px; }
+.warning { background: var(--warn-bg); color: var(--warn); border: 1px solid currentColor; border-radius: 12px; padding: 12px 14px; font-size: 15px; }
+.warning strong { display: block; }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+label { font-size: 15px; }
+.field { display: grid; gap: 4px; }
+.field > span { font-size: 14px; color: var(--muted); }
+select { font: 16px var(--font); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.switches { display: grid; gap: 6px; }
+.switches label { display: flex; gap: 10px; align-items: center; }
+input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
+button {
+  font: 600 16px var(--font); padding: 11px 18px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+}
+button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+.live { display: grid; gap: 10px; }
+.stat-row { display: flex; flex-wrap: wrap; gap: 8px 18px; font-variant-numeric: tabular-nums; }
+.stat { display: grid; }
+.stat .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.stat .v { font-size: 18px; font-weight: 600; }
+.meter { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.meter > div { height: 100%; width: 0; background: var(--good); transition: width 80ms linear; }
+canvas { width: 100%; height: 120px; display: block; background: var(--bg); border-radius: 8px; border: 1px solid var(--line); }
+.status { font-weight: 600; }
+.status.tracking { color: var(--good); }
+.status.problem { color: var(--bad); }
+pre.report { margin: 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.feedback { font-size: 14px; color: var(--muted); min-height: 1.5em; }
+ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .meter > div { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Milestone 4 · audio diagnostic</div>
+  <h1>Audio diagnostic</h1>
+  <p class="lede">
+    Records the microphone exactly as the browser delivers it, measures the watch from that audio
+    as it arrives, and times the measurement on this device. Nothing leaves your phone unless you
+    save or share the recording.
+  </p>
+
+  <div class="warning" role="note">
+    <strong>Use only with anti-magnetic watches.</strong>
+    The watch sits right against the phone, whose speakers and other parts contain magnets that
+    can magnetise a watch and upset its timekeeping.
+  </div>
+
+  <section aria-labelledby="setup-title">
+    <h2 id="setup-title">1. Set up</h2>
+    <ol class="steps note">
+      <li>Place the watch as you did for your Voice Memos recordings.</li>
+      <li>Keep the room quiet and leave the phone still while it records.</li>
+    </ol>
+    <div class="field">
+      <span>Microphone</span>
+      <select id="device"><option value="">Default microphone</option></select>
+    </div>
+    <div class="switches" role="group" aria-labelledby="processing-label">
+      <span id="processing-label" class="note">Ask the browser to apply (leave all off for raw audio):</span>
+      <label><input type="checkbox" id="echo"> Echo cancellation</label>
+      <label><input type="checkbox" id="noise"> Noise suppression</label>
+      <label><input type="checkbox" id="gain"> Automatic gain</label>
+    </div>
+    <div class="row">
+      <div class="field">
+        <span>Length</span>
+        <select id="length"><option value="30" selected>30 seconds</option><option value="60">60 seconds</option></select>
+      </div>
+      <div class="field">
+        <span>Mains frequency</span>
+        <select id="mains"><option value="60" selected>60 Hz</option><option value="50">50 Hz</option></select>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="record-title">
+    <h2 id="record-title">2. Record</h2>
+    <div class="row">
+      <button id="start" type="button">Start recording</button>
+      <button id="stop" type="button" class="secondary" disabled>Stop</button>
+    </div>
+    <div class="live">
+      <div class="stat-row">
+        <div class="stat"><span class="k">Recorded</span><span class="v" id="elapsed">0.0 s</span></div>
+        <div class="stat"><span class="k">Peak level</span><span class="v" id="peak">–</span></div>
+        <div class="stat"><span class="k">Pipeline load</span><span class="v" id="load">–</span></div>
+      </div>
+      <div class="meter" aria-hidden="true"><div id="meter"></div></div>
+      <canvas id="wave" aria-label="Waveform of the last two seconds, above 2 kHz"></canvas>
+      <p class="note">Waveform of the last two seconds, above 2 kHz. Each tick and tock should show as a separate spike.</p>
+      <p class="status" id="status" aria-live="polite">Not recording.</p>
+      <p class="note" id="reading" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="result-title" id="results" hidden>
+    <h2 id="result-title">3. Send the results</h2>
+    <p class="note">Save the recording to Files, then attach it in your chat with Claude along with the report.</p>
+    <div class="row">
+      <button id="save" type="button">Save or share recording</button>
+      <button id="copy" type="button" class="secondary">Copy report</button>
+    </div>
+    <p class="feedback" id="result-feedback" aria-live="polite"></p>
+    <pre class="report" id="report"></pre>
+  </section>
+
+  <section aria-labelledby="speed-title">
+    <h2 id="speed-title">4. Speed test</h2>
+    <p class="note">
+      Measures 60 seconds of a simulated watch and reports how much faster than real time this
+      device runs the measurement. It takes a few seconds.
+    </p>
+    <div class="row">
+      <button id="bench" type="button" class="secondary">Run speed test</button>
+    </div>
+    <p class="feedback" id="bench-result" aria-live="polite"></p>
+  </section>
+
+  <p class="note"><a href="./">Back to the start page</a></p>
+</main>
+<script type="module" src="js/diagnostic.js"></script>
+</body>
+</html>
