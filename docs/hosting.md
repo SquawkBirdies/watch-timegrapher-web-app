@@ -1,0 +1,89 @@
+# Hosting
+
+The app is a folder of static files with no build step. It must be served over HTTPS, because
+browsers allow the microphone only on secure pages. Opening `index.html` straight from the
+Files app (a `file://` address) does not work.
+
+GitHub Pages serves a public repository over HTTPS for free. The project's own site is at:
+
+```
+https://OWNER.github.io/watch-timegrapher-web-app/
+```
+
+where `OWNER` is the GitHub username that owns the repository.
+
+## Setting up the project's site
+
+These steps are done once. All of them work in Safari on an iPhone except where noted.
+
+### 1. Create the repository
+
+1. Sign in at github.com and choose **New repository** from the **+** menu.
+2. Name it `watch-timegrapher-web-app` and make it **Public**. GitHub Pages is free only for
+   public repositories.
+3. Turn on the option to add a README. This creates the `main` branch. Leave the `.gitignore`
+   and licence options at none: the project has its own.
+4. Create the repository.
+
+### 2. Add the files
+
+Either of these works.
+
+- **Let Claude push them.** Connect GitHub in claude.ai under Settings, then Connectors, and
+  give the Claude GitHub app access to this repository. Claude then pushes the files to a
+  branch and opens a pull request for you to merge.
+- **Upload them yourself.** This needs a computer, because the iPhone's file picker cannot
+  upload folders. Unzip the project, open the repository on github.com, choose **Add file**,
+  then **Upload files**, and drag in everything inside the `watch-timegrapher-web-app` folder.
+  Web uploads are limited to 100 files at a time and 25 MB per file; the project fits both.
+  The hidden files `.gitignore` and `.nojekyll` are optional and can be left out.
+
+### 3. Turn on GitHub Pages
+
+1. In the repository, open **Settings**, then **Pages**.
+2. Under **Build and deployment**, set **Source** to **Deploy from a branch**.
+3. Set the branch to `main` and the folder to `/ (root)`, then **Save**.
+4. After a minute or two the page shows the site's address.
+
+### 4. Check it on the iPhone
+
+Open the site's address in Safari. The placeholder page lists five checks, and all five should
+say **Yes**:
+
+| Check | What it shows |
+| --- | --- |
+| Secure connection | The page arrived over HTTPS |
+| Microphone access offered | Safari can ask for the microphone (the page does not ask) |
+| Audio worklets | Live audio can be received without gaps |
+| Screen wake lock | The screen can be kept on during a measurement |
+| Signal pipeline loads | The measurement code downloaded and started |
+
+If the address shows a 404 page, wait a few minutes and reload, then check that Settings, Pages
+shows the site as live from `main` and `/ (root)`.
+
+## Updates
+
+Every change merged into `main` republishes the site, usually within two minutes. Safari may
+keep showing the old version for a while; pull down on the page to reload it.
+
+## Hosting your own copy
+
+1. Open the repository on github.com and choose **Fork**.
+2. In your fork, follow step 3 above.
+3. Your copy is at `https://YOUR-USERNAME.github.io/watch-timegrapher-web-app/`.
+
+Any other static host that serves HTTPS works too, such as Netlify, Cloudflare Pages or your
+own web server. Serve the folder as it is.
+
+## Testing on a computer
+
+From the repository folder, run:
+
+```
+python3 -m http.server 8000
+```
+
+then open `http://localhost:8000`. Browsers treat `localhost` as secure, so the microphone works
+there. An iPhone that opens the computer's address over Wi-Fi, such as
+`http://192.168.1.20:8000`, is not on a secure page and cannot use the microphone; use GitHub
+Pages for the phone.

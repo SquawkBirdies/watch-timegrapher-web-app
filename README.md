@@ -1,1 +1,136 @@
-# watch-timegrapher-web-app
+# Watch Timegrapher Web App
+
+A mechanical watch timegrapher that runs in a phone's web browser and listens through the
+microphone. It measures rate (seconds per day) and beat error (milliseconds) and will draw a
+real-time trace.
+
+**Status: milestone 3 of 9.** The signal pipeline works on whole recordings and in real time,
+on audio fed in small chunks. The site has a placeholder page that checks the browser; the app
+itself is not ready yet.
+
+**This project was written with generative AI.** See [Use of generative AI](#use-of-generative-ai)
+for who did what and what has been checked.
+
+## What works today
+
+`js/dsp/pipeline.js` takes audio chunks of any size and reports status, beats and readings as
+events. It listens until it finds a beat rate, tracks each beat with a Kalman tracker, and
+blanks the readings when the ticking stops. `js/dsp/offline.js` analyses a whole recording with
+the same stages. Both are checked against synthetic watches with known values and against three
+real recordings.
+
+| Test | Expected | Whole recording | Real time, 128-sample chunks |
+| --- | --- | --- | --- |
+| Synthetic, 28,800 vph, clear ticks | +12.0 s/day, 0.30 ms | +12.00 s/day, 0.31 ms | +12.00 s/day, 0.31 ms, locked at 8 s |
+| Synthetic, 21,600 vph, with mains buzz | -8.0 s/day, 0.80 ms | -7.96 s/day, 0.82 ms | -7.95 s/day, 0.82 ms |
+| Synthetic, 18,000 vph, faint ticks | +45.0 s/day | +44.87 s/day | +45.11 s/day, locked at 57 s with an 80 s history |
+| Synthetic, each of the six beat rates | set rate, 0.50 ms | not run | within 0.07 s/day and 0.01 ms |
+| Synthetic, noise only | no lock | no lock | no lock in 120 s |
+| ETA 2836-2 recording | 28,800 vph, about +6.5 s/day, about 0.43 ms | +6.41 s/day, 0.42 ms | +6.39 s/day, 0.41 ms |
+| Omega 3861 recording | 21,600 vph, about +0.2 s/day, no beat error | +0.55 s/day | +0.55 s/day, locked at 52 s |
+| Omega 3861, second recording | 21,600 vph, no reference value | -2.08 s/day | -2.13 s/day, locked at 12 s |
+
+The expected values for the first two recordings come from the Python prototype in
+`tools/prototype/`. No recording has been compared with a bench timegrapher. On a desktop
+computer the real-time pipeline runs 10 to 14 times faster than real time; it has not been timed
+on a phone.
+
+The beat rate can be given instead of detected: pass `{ bph: 21600 }` to `Pipeline`, or a beat
+rate as the last argument of either command-line tool. Only that rate is then searched. In
+tests this did not make the lock arrive sooner, but it cut the computing spent while listening
+to noise to between 30% and 40%. A wrong rate unrelated to the true one gives no lock. A mix-up
+between 18,000 and 36,000 vph can still lock; the rate in seconds per day is then still right
+and no beat error is shown.
+
+Known limits of the real-time pipeline:
+
+- A faint watch is found only once enough of its ticking is in the history buffer. The default
+  history is 40 s, which uses about 30 MB for stereo audio. The faint synthetic case needs 80 s.
+- The first Omega recording takes 52 s to lock, because its first 14 s are poor and its ticks
+  are faint.
+- A beat error is shown only when both beat types are timed to within 0.2 ms of scatter. A
+  watch with a genuinely ragged trace will therefore show no beat error.
+
+## Hosting
+
+The app is a folder of static files with no build step, served by GitHub Pages over HTTPS.
+Browsers allow the microphone only on secure pages, so the app cannot be opened from a local
+file. [docs/hosting.md](docs/hosting.md) explains how to set up the site, how to host your own
+copy, and how to test on a computer.
+
+Until the app is ready, `index.html` is a placeholder that checks the browser: secure
+connection, microphone access, audio worklets, screen wake lock, and whether the signal
+pipeline loads.
+
+## Running the tests
+
+Requires Node 22 or later. There is nothing to install.
+
+```
+npm test             # about three minutes
+npm run typecheck    # needs TypeScript (tsc) on the path
+node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
+node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
+node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat rate given
+```
+
+## Layout
+
+```
+index.html             placeholder page that checks the browser
+docs/hosting.md        setting up GitHub Pages
+js/dsp/filterbank.js   band-pass filter bank and energy envelopes
+js/dsp/cleanup.js      noise levelling, click clipping, mains-hum comb filter
+js/dsp/acquire.js      beat-rate search by folding, exact and fast
+js/dsp/template.js     averaged tick-tock cycle
+js/dsp/timing.js       matched-filter beat timing, with averaging for faint watches
+js/dsp/estimate.js     rate and beat error from the timestamps
+js/dsp/offline.js      runs all stages over a whole recording or a window of it
+js/dsp/tracker.js      Kalman beat tracker
+js/dsp/pipeline.js     real-time pipeline: listening, tracking, lock lost
+js/audio/simulator.js  synthetic watch generator
+tests/                 automated tests and the three recordings
+tools/                 command-line runners, and the Python prototype kept for reference
+```
+
+The code is plain JavaScript modules with no build step and no runtime dependencies. The files
+in `js/dsp/` use only standard JavaScript and `performance.now()`, so the same code runs in the
+tests and, later, in the app's background worker.
+
+## Test recordings
+
+`tests/fixtures/` holds three iPhone recordings of about a minute each, converted to 16-bit WAV
+with 24 dB of gain. In the first two, the watch lay dial-down with the crown against the phone's
+USB-C port. In `omega-3861-b.wav` the phone was held over the dial with the USB-C port facing
+it, in a different room.
+
+## Use of generative AI
+
+Most of this project was produced by Claude, an AI model made by Anthropic, working in a chat
+with the project's owner. The models used were Claude Fable 5.2 and Claude Opus 5.5.
+
+Written by Claude:
+
+- all the code in this repository: the JavaScript signal pipeline, the Kalman beat tracker, the
+  synthetic watch generator, the tests and the command-line tools
+- the Python prototype in `tools/prototype/`
+- this README and the project's design plan
+- the choice of signal-processing methods, and the expected values the tests check against
+
+Done by Lawrence Fan:
+
+- the idea, the goals and the requirements
+- the design decisions recorded in the plan, including the magnetism warning, the minimum iOS
+  version and the choice of plain JavaScript
+- suggestions taken into the design, including the Kalman beat tracker and the beat-rate override
+- the three watch recordings in `tests/fixtures/`, which are the only test data not produced by
+  AI-written code
+
+What this means for the readings: every result above comes from AI-written code, tested
+against AI-written synthetic signals and against the three real recordings. The expected values
+for the first two recordings also come from AI-written code. No reading has yet been compared
+with a bench timegrapher, so treat rates and beat errors from this project as unverified.
+
+## Licence
+
+MIT. See `LICENSE`.
