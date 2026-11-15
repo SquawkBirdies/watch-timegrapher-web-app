@@ -42,6 +42,12 @@ export function gaussianFrom(uniform) {
  * @property {number} [seed]
  * @property {number} [buzzHz] repetition rate of the mains-locked buzz; 0 disables it
  * @property {number} [buzzLevel] amplitude of the buzz
+ * @property {{dt: number, amp: number, decayMs: number}[]} [tickSounds] sounds of the tick, with
+ *   times in seconds relative to its nominal time; three sounds 7, 4.5 and 0 ms before it when
+ *   absent
+ * @property {{dt: number, amp: number, decayMs: number}[]} [tockSounds] sounds of the tock; the
+ *   tick's sounds at 0.8 times the loudness when absent. Together these let a test give the tick
+ *   and tock different sounds, as a co-axial escapement does
  */
 
 /**
@@ -51,7 +57,7 @@ export function gaussianFrom(uniform) {
  * @returns {{sampleRate: number, channels: Float32Array[], truePeriod: number}}
  */
 export function synthesizeWatch(options) {
-  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3 } = options;
+  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds } = options;
   const fs = sampleRate;
   const n = Math.floor(seconds * fs);
   const randn = gaussianFrom(seededRandom(seed));
@@ -78,7 +84,7 @@ export function synthesizeWatch(options) {
   const burstLength = Math.floor(0.006 * fs);
   const raw = new Float32Array(burstLength);
   const shaped = new Float64Array(burstLength);
-  const sounds = [
+  const sounds = tickSounds || [
     { dt: -0.007, amp: 0.25, decayMs: 0.3 },
     { dt: -0.0045, amp: 0.45, decayMs: 0.4 },
     { dt: 0, amp: 1.0, decayMs: 0.5 },
@@ -89,8 +95,8 @@ export function synthesizeWatch(options) {
       if (t >= seconds - 0.05) break;
       const odd = k % 2 === 1;
       const offset = odd ? beatOffsetMs * 1e-3 : 0;
-      for (const s of sounds) {
-        const level = s.amp * gain * 1e-3 * (odd ? 0.8 : 1);
+      for (const s of odd && tockSounds ? tockSounds : sounds) {
+        const level = s.amp * gain * 1e-3 * (odd && !tockSounds ? 0.8 : 1);
         for (let i = 0; i < burstLength; i++) raw[i] = randn() * Math.exp(-i / (s.decayMs * 1e-3 * fs));
         new Cascade(bandpassSections(fs, 3000, 14000)).process(raw, shaped);
         const pos = (t + offset + s.dt) * fs;

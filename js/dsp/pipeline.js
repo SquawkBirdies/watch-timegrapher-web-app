@@ -37,6 +37,8 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {number} [driftPpm] drift tolerance of the tracker: how far the rate may wander in
  *   one second, in parts per million
  * @property {number} [blockSize] audio samples processed at a time
+ * @property {number[][]} [bands] filter-bank band edges in hertz, replacing the defaults
+ * @property {import('./estimate.js').Escapement} [escapement] 'coaxial' hides the beat error, as in `summarize`
  */
 
 /**
@@ -156,11 +158,13 @@ export class Pipeline {
       readingSeconds: 1,
       driftPpm: 2,
       blockSize: 2048,
+      bands: /** @type {number[][]|undefined} */ (undefined),
+      escapement: /** @type {import('./estimate.js').Escapement} */ ('lever'),
       ...options,
     };
     this.sampleRate = sampleRate;
     this.channelCount = channelCount;
-    this.bank = new FilterBank(sampleRate, channelCount);
+    this.bank = new FilterBank(sampleRate, channelCount, this.options.bands ? { bands: this.options.bands } : {});
     this.fe = this.bank.envelopeRate;
     this.cleanup = new Cleanup(this.fe, this.bank.rowCount, { humHz: this.options.humHz });
     const fe = this.fe;
@@ -336,6 +340,7 @@ export class Pipeline {
         acquireWith: acquireFast,
         accept: (c) => c.secondZ >= 5,
         refineSpan: (600 * fe) / analysed,
+        escapement: o.escapement,
       });
       if (analysis && analysis.locked) {
         this.lockedFrom = start;
@@ -365,6 +370,7 @@ export class Pipeline {
       bph: lock.bph,
       periodPpm: ppm,
       refineSpan: (600 * fe) / length,
+      escapement: this.options.escapement,
     });
     const kept = analysis !== null && analysis.locked && this.install(analysis, rows, start, length, true);
     this.analysisSeconds += (performance.now() - t0) / 1000;
@@ -654,7 +660,7 @@ export class Pipeline {
         zMedian: z.length ? median(z) : 0,
       };
     });
-    const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe);
+    const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement);
     return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], ...r };
   }
 

@@ -125,10 +125,15 @@ ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
       <label><input type="checkbox" id="noise"> Noise suppression</label>
       <label><input type="checkbox" id="gain"> Automatic gain</label>
     </div>
+    <p class="note">Choose Co-axial for Omega co-axial watches. Their tick and tock are different sounds, so no beat error is shown for them.</p>
     <div class="row">
       <div class="field">
         <span>Length</span>
         <select id="length"><option value="30" selected>30 seconds</option><option value="60">60 seconds</option></select>
+      </div>
+      <div class="field">
+        <span>Escapement</span>
+        <select id="escapement"><option value="lever" selected>Swiss lever</option><option value="coaxial">Co-axial</option></select>
       </div>
       <div class="field">
         <span>Mains frequency</span>

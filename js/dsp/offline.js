@@ -42,17 +42,18 @@ export { MAX_OFFSET_SD_MS, MIN_SIMILARITY, MAX_SCATTER_MS } from './estimate.js'
  * Analyse a recording.
  * @param {ArrayLike<number>[]} channels one array of samples per channel
  * @param {number} sampleRate
- * @param {{humHz?: number, bph?: number, startSeconds?: number, endSeconds?: number}} [options]
+ * @param {{humHz?: number, bph?: number, startSeconds?: number, endSeconds?: number, bands?: number[][], escapement?: import('./estimate.js').Escapement}} [options]
+ *   `bands` replaces the filter bank's band edges in hertz; `escapement` as in `summarize`
  * @returns {Analysis}
  */
 export function analyze(channels, sampleRate, options = {}) {
-  const { humHz = 60, bph: forcedBph, startSeconds = 0, endSeconds } = options;
+  const { humHz = 60, bph: forcedBph, startSeconds = 0, endSeconds, bands, escapement } = options;
   const from = Math.max(0, Math.round(startSeconds * sampleRate));
   const to = Math.min(channels[0].length, endSeconds === undefined ? Infinity : Math.round(endSeconds * sampleRate));
   const audio = channels.map((c) => Float32Array.from(/** @type {any} */ (c).subarray ? /** @type {any} */ (c).subarray(from, to) : Array.prototype.slice.call(c, from, to)));
 
   // Stages 2 and 3.
-  const bank = new FilterBank(sampleRate, audio.length);
+  const bank = new FilterBank(sampleRate, audio.length, bands ? { bands } : {});
   const cleanup = new Cleanup(bank.envelopeRate, bank.rowCount, { humHz });
   const rows = cleanup.process(bank.process(audio));
   const fe = bank.envelopeRate;
@@ -60,7 +61,7 @@ export function analyze(channels, sampleRate, options = {}) {
   const dec = bank.decimation;
   /** @param {number} p position in cleaned-envelope samples */
   const toSeconds = (p) => ((p + cleanup.delay) * dec + (dec - 1) / 2 + from) / sampleRate;
-  const result = analyzeRows(rows, fe, toSeconds, { bph: forcedBph });
+  const result = analyzeRows(rows, fe, toSeconds, { bph: forcedBph, escapement });
   if (!result) throw new Error('unreachable: no accept filter was given');
   return { sampleRate, ...result };
 }
@@ -71,14 +72,14 @@ export function analyze(channels, sampleRate, options = {}) {
  * @param {Float32Array[]} rows cleaned envelope rows
  * @param {number} fe envelope sample rate in hertz
  * @param {(p: number) => number} toSeconds converts a position in `rows` to seconds
- * @param {{bph?: number, acquireWith?: typeof acquire, accept?: (c: import('./acquire.js').Candidate) => boolean, periodPpm?: number, refineSpan?: number}} [options]
+ * @param {{bph?: number, acquireWith?: typeof acquire, accept?: (c: import('./acquire.js').Candidate) => boolean, periodPpm?: number, refineSpan?: number, escapement?: import('./estimate.js').Escapement}} [options]
  *   `accept` can reject the chosen beat rate before the costly stages run; `periodPpm` with `bph`
  *   skips the beat-rate search when the period is already known approximately
  * @returns {(Omit<Analysis, 'sampleRate'> & {period: number, split: [Float32Array[], Float32Array[]], tracks: import('./timing.js').BeatTrack[]}) | null}
  *   null when `accept` rejected the candidate
  */
 export function analyzeRows(rows, fe, toSeconds, options = {}) {
-  const { bph: forcedBph, acquireWith = acquire, accept, periodPpm: knownPpm, refineSpan = 30 } = options;
+  const { bph: forcedBph, acquireWith = acquire, accept, periodPpm: knownPpm, refineSpan = 30, escapement = 'lever' } = options;
   // Stage 4.
   /** @type {import('./acquire.js').Candidate[]} */
   let acquisition = [];
@@ -138,7 +139,7 @@ export function analyzeRows(rows, fe, toSeconds, options = {}) {
   });
 
   // Stage 8.
-  const readings = summarize(beats, nominalPeriod, template, clusters, fe);
+  const readings = summarize(beats, nominalPeriod, template, clusters, fe, escapement);
   return {
     envelopeRate: fe,
     acquisition,

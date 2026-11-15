@@ -24,18 +24,25 @@ real recordings.
 | Test | Expected | Whole recording | Real time, 128-sample chunks |
 | --- | --- | --- | --- |
 | Synthetic, 28,800 vph, clear ticks | +12.0 s/day, 0.30 ms | +12.00 s/day, 0.31 ms | +12.00 s/day, 0.31 ms, locked at 8 s |
-| Synthetic, 21,600 vph, with mains buzz | -8.0 s/day, 0.80 ms | -7.96 s/day, 0.82 ms | -7.95 s/day, 0.82 ms |
-| Synthetic, 18,000 vph, faint ticks | +45.0 s/day | +44.87 s/day | +45.11 s/day, locked at 57 s with an 80 s history |
-| Synthetic, each of the six beat rates | set rate, 0.50 ms | not run | within 0.07 s/day and 0.01 ms |
+| Synthetic, 21,600 vph, with mains buzz | -8.0 s/day, 0.80 ms | -7.96 s/day, 0.82 ms | -7.94 s/day, 0.81 ms |
+| Synthetic, 18,000 vph, faint ticks | +45.0 s/day | +45.13 s/day | +45.11 s/day, locked at 57 s with an 80 s history |
+| Synthetic, each of the six beat rates | set rate, 0.50 ms | not run | within 0.06 s/day and 0.01 ms |
 | Synthetic, noise only | no lock | no lock | no lock in 120 s |
-| ETA 2836-2 recording | 28,800 vph, about +6.5 s/day, about 0.43 ms | +6.41 s/day, 0.42 ms | +6.39 s/day, 0.41 ms |
-| Omega 3861 recording | 21,600 vph, about +0.2 s/day, no beat error | +0.55 s/day | +0.55 s/day, locked at 52 s |
-| Omega 3861, second recording | 21,600 vph, no reference value | -2.08 s/day | -2.13 s/day, locked at 12 s |
+| ETA 2836-2 recording | 28,800 vph, about +6.5 s/day, about 0.43 ms | +6.43 s/day, 0.42 ms | +6.40 s/day, 0.41 ms |
+| Omega 3861 recording | 21,600 vph, about +0.2 s/day, no beat error | +0.54 s/day | +0.54 s/day, locked at 52 s |
+| Omega 3861, second recording | 21,600 vph, no reference value | -2.07 s/day | -2.13 s/day, locked at 12 s |
 
 The expected values for the first two recordings come from the Python prototype in
-`tools/prototype/`. No recording has been compared with a bench timegrapher. On a desktop
-computer the real-time pipeline runs 10 to 14 times faster than real time; it has not been timed
-on a phone.
+`tools/prototype/`. No recording has been compared with a bench timegrapher. On an iPhone 17
+Pro Max the real-time pipeline ran 22.6 times faster than real time on two channels. That was
+measured before the filter bank gained its two bands above 14.5 kHz, which cost about a quarter
+of the speed in tests on a computer; the app now uses one channel, which halves the work.
+
+The filter bank covers 1.5 to 22.5 kHz in nine bands. The two top bands were added after the
+first captures from Safari, which carry tick sound up to 22.5 kHz: on those captures they made
+the ticks 1.2 to 2.2 times clearer against the noise and cut the Omega's timestamp scatter by
+about 30%. On the compressed Voice Memos recordings, which carry little above 19 kHz, they left
+the readings unchanged and raised the scatter slightly. At 44.1 kHz the top band is dropped.
 
 The beat rate can be given instead of detected: pass `{ bph: 21600 }` to `Pipeline`, or a beat
 rate as the last argument of either command-line tool. Only that rate is then searched. In
@@ -43,6 +50,13 @@ tests this did not make the lock arrive sooner, but it cut the computing spent w
 to noise to between 30% and 40%. A wrong rate unrelated to the true one gives no lock. A mix-up
 between 18,000 and 36,000 vph can still lock; the rate in seconds per day is then still right
 and no beat error is shown.
+
+The escapement can be set to Swiss lever (the default) or co-axial: pass
+`{ escapement: 'coaxial' }` to `Pipeline` or `analyze`. A co-axial escapement's tick and tock
+are different sounds, so the gap between them is not the beat error. In co-axial mode the rate
+is still measured from both beats, and no beat error is reported. The Omega 3861 captured
+through Safari showed why: in Swiss-lever mode it read a steady 3.4 ms beat error that does not
+describe the watch, and the beat-error checks passed it.
 
 Known limits of the real-time pipeline:
 
@@ -52,6 +66,8 @@ Known limits of the real-time pipeline:
   are faint.
 - A beat error is shown only when both beat types are timed to within 0.2 ms of scatter. A
   watch with a genuinely ragged trace will therefore show no beat error.
+- The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
+  can show a large, steady beat error that is wrong.
 
 ## Hosting
 
@@ -90,12 +106,12 @@ node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat r
 index.html             placeholder page that checks the browser
 diagnostic.html        audio diagnostic (script in js/diagnostic.js)
 docs/hosting.md        setting up GitHub Pages
-js/dsp/filterbank.js   band-pass filter bank and energy envelopes
+js/dsp/filterbank.js   band-pass filter bank, 1.5 to 22.5 kHz, and energy envelopes
 js/dsp/cleanup.js      noise levelling, click clipping, mains-hum comb filter
 js/dsp/acquire.js      beat-rate search by folding, exact and fast
 js/dsp/template.js     averaged tick-tock cycle
 js/dsp/timing.js       matched-filter beat timing, with averaging for faint watches
-js/dsp/estimate.js     rate and beat error from the timestamps
+js/dsp/estimate.js     rate and beat error from the timestamps; the escapement setting
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
 js/dsp/tracker.js      Kalman beat tracker
 js/dsp/pipeline.js     real-time pipeline: listening, tracking, lock lost
