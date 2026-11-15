@@ -47,8 +47,9 @@ Either of these works.
 
 ### 4. Check it on the iPhone
 
-Open the site's address in Safari. The placeholder page lists five checks, and all five should
-say **Yes**:
+Open the site's address in Safari, followed by `check.html`, for example
+`https://YOUR-USERNAME.github.io/watch-timegrapher-web-app/check.html`. The browser check lists
+five checks, and all five should say **Yes**:
 
 | Check | What it shows |
 | --- | --- |

@@ -26,7 +26,8 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {number} [humHz] mains frequency, 50 or 60
  * @property {number} [bph] beat-rate override; all standard rates are searched when absent
  * @property {number} [historySeconds] length of the sliding window of cleaned audio that is kept
- * @property {number} [averagingSeconds] window of the rate and beat-error readings
+ * @property {number} [averagingSeconds] window of the rate and beat-error readings; it may be
+ *   longer than the history, because beats are kept after their audio is dropped
  * @property {number} [attemptSeconds] time between lock attempts while listening
  * @property {number[]} [windows] lengths, in seconds, of the recent audio a lock attempt analyses;
  *   the first is tried at every attempt, the second at every other one, and the whole history at
@@ -53,11 +54,29 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  */
 
 /**
+ * @typedef {Object} Signal
+ * @property {(number|null)[]} z for ticks and tocks: median confidence of the last few
+ *   timestamps, in noise standard deviations; null when that beat type is not timed
+ * @property {(number|null)[]} cycles for ticks and tocks: tick-tock cycles averaged per timestamp
+ */
+
+/**
+ * @typedef {Object} AveragedBeat
+ * @property {0|1} type 0 for a tick, 1 for a tock
+ * @property {Float32Array} values the averaged beat's energy summed over the bands, relative to
+ *   the background noise, one value per envelope sample from `from` to `to`
+ */
+
+/**
  * @typedef {{type: 'status', state: 'listening'|'tracking', reason: string, bph: number|null, cyclesAveraged: (number|null)[]|null, t: number}} StatusEvent
  * @typedef {{type: 'beats', beats: Beat[], replaceFrom: number|null}} BeatsEvent
  *   replaceFrom: when set, beats from that time on are superseded by this list
- * @typedef {{type: 'readings', t: number, window: [number, number]|null} & import('./estimate.js').Readings} ReadingsEvent
- * @typedef {StatusEvent | BeatsEvent | ReadingsEvent} PipelineEvent
+ * @typedef {{type: 'readings', t: number, window: [number, number]|null, signal: Signal|null} & import('./estimate.js').Readings} ReadingsEvent
+ * @typedef {{type: 'waveform', t: number, rate: number, from: number, to: number, cycles: number, beats: AveragedBeat[]}} WaveformEvent
+ *   The averaged tick and tock from the latest analysis. `rate` is the envelope sample rate;
+ *   `from` and `to` are the window's ends in seconds relative to each beat's timestamp;
+ *   `cycles` is the number of tick-tock cycles averaged.
+ * @typedef {StatusEvent | BeatsEvent | ReadingsEvent | WaveformEvent} PipelineEvent
  */
 
 /**
@@ -138,6 +157,17 @@ function lineThrough(ns, ps) {
 const PRE_MS = 8;
 const POST_MS = 12;
 const LAG_MS = 4;
+/** Window of the averaged beat sent to the interface, in milliseconds around the timestamp. */
+const WAVE_BEFORE_MS = 12;
+const WAVE_AFTER_MS = 12;
+/** Timestamps of each beat type whose confidence makes up the signal reading. */
+const SIGNAL_BEATS = 8;
+/**
+ * Fewest independent timestamps of one beat type that a reading should rest on. When faint
+ * ticks need averaging, the averaging window is lengthened to hold this many; with the Omega's
+ * 8-cycle averages a 20 s window held only five, and its rate was off by 12 s/day.
+ */
+const MIN_TIMESTAMPS = 12;
 
 export class Pipeline {
   /**
@@ -150,7 +180,7 @@ export class Pipeline {
       humHz: 60,
       bph: /** @type {number|undefined} */ (undefined),
       historySeconds: 40,
-      averagingSeconds: 40,
+      averagingSeconds: 20,
       attemptSeconds: 4,
       windows: [8, 16],
       refreshSeconds: 20,
@@ -223,6 +253,16 @@ export class Pipeline {
   toSeconds(p) {
     const dec = this.bank.decimation;
     return ((p + this.cleanup.delay) * dec + (dec - 1) / 2) / this.sampleRate;
+  }
+
+  /**
+   * Change the settings that can change while measuring: the averaging window and the
+   * escapement. They apply from the next reading. Other settings need a new pipeline.
+   * @param {{averagingSeconds?: number, escapement?: import('./estimate.js').Escapement}} changes
+   */
+  setOptions(changes) {
+    if (changes.averagingSeconds !== undefined) this.options.averagingSeconds = changes.averagingSeconds;
+    if (changes.escapement !== undefined) this.options.escapement = changes.escapement;
   }
 
   /**
@@ -522,6 +562,31 @@ export class Pipeline {
     if (!lock) return;
     this.events.push({ type: 'status', state: 'tracking', reason: 'locked', bph: lock.bph, cyclesAveraged: lock.types.map((ty) => (ty.tracked ? ty.K : null)), t: this.toSeconds(this.count) });
     this.events.push({ type: 'beats', beats: dots.map((d) => this.beat(d)), replaceFrom: this.toSeconds(start) });
+    this.events.push(this.waveform());
+  }
+
+  /**
+   * The averaged tick and tock of the current template, for the waveform view.
+   * @returns {WaveformEvent}
+   */
+  waveform() {
+    const lock = /** @type {NonNullable<Pipeline['lock']>} */ (this.lock);
+    const fe = this.fe;
+    const before = Math.round(WAVE_BEFORE_MS * 1e-3 * fe);
+    const after = Math.round(WAVE_AFTER_MS * 1e-3 * fe);
+    const nb = lock.template[0].length;
+    /** @type {AveragedBeat[]} */
+    const beats = [];
+    for (let j = 0; j < 2; j++) {
+      const values = new Float32Array(before + after + 1);
+      const centre = Math.round(lock.clusters[j]);
+      for (const row of lock.template) {
+        for (let i = 0; i < values.length; i++) values[i] += row[(((centre - before + i) % nb) + nb) % nb];
+      }
+      beats.push({ type: /** @type {0|1} */ (Math.abs((j + this.shift) % 2)), values });
+    }
+    beats.sort((a, b) => a.type - b.type);
+    return { type: 'waveform', t: this.toSeconds(this.count), rate: fe, from: -before / fe, to: after / fe, cycles: Math.max(0, Math.floor(lock.length / lock.period) - 1), beats };
   }
 
   /**
@@ -592,7 +657,8 @@ export class Pipeline {
         }
       }
     }
-    const oldest = this.count - this.historyLength;
+    // Beats outlive their audio when the averaging window is longer than the history.
+    const oldest = this.count - Math.max(this.historyLength, this.averagingSpan());
     if (this.dots.length && this.dots[0].p < oldest) this.dots = this.dots.filter((d) => d.p >= oldest);
     if (fresh.length && lock.confirmed) this.events.push({ type: 'beats', beats: fresh.map((d) => this.beat(d)), replaceFrom: null });
   }
@@ -633,21 +699,40 @@ export class Pipeline {
     this.nextReading = Infinity;
     const t = this.toSeconds(this.count);
     this.events.push({ type: 'status', state: 'listening', reason, bph: null, cyclesAveraged: null, t });
-    this.events.push({ type: 'readings', t, window: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
+    this.events.push({ type: 'readings', t, window: null, signal: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
   }
 
   /**
-   * Readings over the averaging window, from the raw timestamps.
+   * Length of the averaging window in envelope samples: the setting, or longer when faint ticks
+   * are averaged over several cycles, so that each beat type has enough independent timestamps.
+   * @returns {number}
+   */
+  averagingSpan() {
+    const set = Math.round(this.options.averagingSeconds * this.fe);
+    const lock = this.lock;
+    const tracker = this.tracker;
+    if (!lock || !tracker) return set;
+    const K = Math.max(...lock.types.map((ty) => (ty.tracked ? ty.K : 1)));
+    return Math.max(set, Math.round(MIN_TIMESTAMPS * K * 2 * tracker.period));
+  }
+
+  /**
+   * Readings over the averaging window, from the raw timestamps. The window reaches back no
+   * further than the start of the current lock, and is lengthened for faint ticks (see
+   * `averagingSpan`). Beats are grouped by type rather than by
+   * template cluster, because repeat analyses can number the clusters differently.
    * @returns {ReadingsEvent | null}
    */
   readings() {
     const lock = this.lock;
     if (!lock) return null;
-    const from = Math.max(lock.start, this.count - Math.round(this.options.averagingSeconds * this.fe));
+    const from = Math.max(this.lockedFrom, this.count - this.averagingSpan());
     const inside = this.dots.filter((d) => d.p >= from);
     if (inside.length === 0) return null;
+    // Cluster j of the current template holds beats of type (j + shift) mod 2.
+    const typeOf = (/** @type {number} */ j) => Math.abs((j + this.shift) % 2);
     const beats = [0, 1].map((j) => {
-      const ds = inside.filter((d) => d.j === j);
+      const ds = inside.filter((d) => d.type === typeOf(j));
       const z = Float64Array.from(ds, (d) => d.z);
       return {
         type: /** @type {0|1} */ (j),
@@ -661,7 +746,17 @@ export class Pipeline {
       };
     });
     const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement);
-    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], ...r };
+    /** @type {Signal} */
+    const signal = { z: [null, null], cycles: [null, null] };
+    for (let j = 0; j < 2; j++) {
+      const ty = lock.types[j];
+      if (!ty.tracked) continue;
+      const type = typeOf(j);
+      const recent = this.dots.filter((d) => d.type === type).slice(-SIGNAL_BEATS);
+      signal.z[type] = recent.length ? median(recent.map((d) => d.z)) : null;
+      signal.cycles[type] = ty.K;
+    }
+    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], signal, ...r };
   }
 
   emitReadings() {

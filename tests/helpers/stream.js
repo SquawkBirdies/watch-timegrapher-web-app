@@ -28,7 +28,7 @@ export function stream(channels, sampleRate, how = {}) {
     for (const e of pipeline.push(channels.map((c) => c.subarray(i, Math.min(to, i + chunk))))) {
       if (e.type === 'status') status.push(e);
       else if (e.type === 'readings') readings.push(e);
-      else {
+      else if (e.type === 'beats') {
         const cut = e.replaceFrom;
         if (cut !== null) beats = beats.filter((b) => b.t < cut);
         beats.push(...e.beats);

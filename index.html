@@ -2,157 +2,185 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1217" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/app.css">
 <title>Watch Timegrapher Web App</title>
-<style>
-/* Placeholder page for milestone 3. It shows that the site is hosted correctly and that this
-   browser has what the app will need. The app's own interface replaces it in milestone 5. */
-:root {
-  --bg: #f4f6f9;
-  --surface: #ffffff;
-  --ink: #1a2030;
-  --muted: #5a6478;
-  --line: #dde2ea;
-  --accent: #27449c;
-  --good: #1f7a4d;
-  --bad: #b3261e;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #11141a;
-    --surface: #171b23;
-    --ink: #e3e7ef;
-    --muted: #98a2b6;
-    --line: #2a313e;
-    --accent: #93abff;
-    --good: #5fcf96;
-    --bad: #ff8a80;
-    color-scheme: dark;
-  }
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font); }
-a { color: var(--accent); }
-main {
-  max-width: 640px; margin: 0 auto; display: grid; gap: 20px;
-  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 48px max(20px, env(safe-area-inset-left));
-}
-h1 { font-size: 28px; line-height: 1.15; margin: 0; text-wrap: balance; }
-.status { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
-p { margin: 0; }
-.lede { color: var(--muted); }
-section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px 16px; }
-h2 { font-size: 15px; margin: 12px 0 4px; }
-ul { list-style: none; margin: 0; padding: 0; }
-li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--line); }
-li:first-child { border-top: 0; }
-.what { font-weight: 600; }
-.why { grid-column: 1 / -1; color: var(--muted); font-size: 14px; }
-.result { font-size: 14px; font-weight: 600; white-space: nowrap; }
-.result.yes { color: var(--good); }
-.result.no { color: var(--bad); }
-.result.wait { color: var(--muted); }
-.small { font-size: 13px; color: var(--muted); }
-code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
-</style>
 </head>
 <body>
 <main>
-  <div class="status">Milestone 4 of 9 · placeholder</div>
-  <h1>Watch Timegrapher Web App</h1>
-  <p class="lede">
-    A timegrapher for mechanical watches that listens through your phone's microphone. The app is
-    still being built. This page checks that it is hosted correctly and that this browser has
-    what the app will need.
-  </p>
+  <div class="topbar">
+    <h1>Timegrapher</h1>
+    <button class="icon-button" id="open-settings" type="button" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/>
+        <circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>
+      </svg>
+    </button>
+  </div>
 
-  <section aria-labelledby="checks-title">
-    <h2 id="checks-title">This browser</h2>
-    <ul id="checks"></ul>
+  <section class="card readout" aria-label="Readings">
+    <div class="state" id="state" data-state="idle" role="status">Not running</div>
+    <div class="numbers">
+      <div class="num" id="num-rate">
+        <span class="k">Rate</span>
+        <span class="v"><span id="rate">—</span><small>s/d</small></span>
+        <span class="why" id="rate-why"></span>
+      </div>
+      <div class="num" id="num-amplitude">
+        <span class="k">Amplitude</span>
+        <span class="v"><span id="amplitude">—</span><small>°</small></span>
+        <span class="why" id="amplitude-why">not yet measured</span>
+      </div>
+      <div class="num" id="num-beat-error">
+        <span class="k">Beat error</span>
+        <span class="v"><span id="beat-error">—</span><small>ms</small></span>
+        <span class="why" id="beat-error-why"></span>
+      </div>
+    </div>
+    <div class="sub" id="sub"></div>
   </section>
 
-  <p>
-    <a href="diagnostic.html">Open the audio diagnostic</a> to record the microphone, measure a watch
-    from it and time the measurement on this device.
-  </p>
+  <section class="card" aria-labelledby="trace-title">
+    <div class="card-head">
+      <h2 id="trace-title">Trace</h2>
+      <div class="legend" aria-hidden="true">
+        <span><i class="tick"></i>tick</span><span><i class="tock"></i>tock</span><span><i class="dim"></i>low confidence</span>
+      </div>
+    </div>
+    <canvas id="trace" role="img" aria-label="Trace of beat timings"></canvas>
+    <p class="caption" id="trace-caption">Milliseconds ahead of an ideal clock. A gaining watch climbs; the gap between the lines is the beat error. Touch a dot to read it.</p>
+  </section>
 
-  <p class="small">
-    This project was written with generative AI. See the README in the
-    <a id="source" href="https://github.com/">source repository</a> for who did what.
-    MIT licence.
-  </p>
-  <p class="small">Browser: <code id="agent"></code></p>
+  <section class="card" aria-labelledby="signal-title">
+    <div class="card-head"><h2 id="signal-title">Signal</h2><span class="fine" id="signal-z"></span></div>
+    <div class="meter-row">
+      <div class="meter" role="meter" aria-labelledby="signal-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="meter"><div id="meter-fill"></div></div>
+      <span class="meter-label" id="meter-label">—</span>
+    </div>
+    <p class="guidance" id="guidance">Choose a source below and press Start.</p>
+    <p class="fine" id="levels"></p>
+  </section>
+
+  <section class="card" aria-labelledby="wave-title">
+    <div class="card-head">
+      <h2 id="wave-title">Averaged beat</h2>
+      <div class="legend" aria-hidden="true"><span><i class="tick"></i>tick</span><span><i class="tock"></i>tock</span></div>
+    </div>
+    <canvas id="waveform" role="img" aria-label="Averaged tick and tock"></canvas>
+    <p class="caption" id="wave-caption">Sound level above 1.5 kHz around the moment each beat is timed, averaged over many beats.</p>
+  </section>
+
+  <section class="card" aria-labelledby="source-title">
+    <h2 id="source-title">Source</h2>
+    <div class="tabs" role="tablist" aria-label="Source">
+      <button type="button" role="tab" id="tab-simulator" aria-controls="panel-simulator" aria-selected="true">Simulator</button>
+      <button type="button" role="tab" id="tab-demo" aria-controls="panel-demo" aria-selected="false">Demo</button>
+      <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false">Your file</button>
+    </div>
+
+    <div class="panel" id="panel-simulator" role="tabpanel" aria-labelledby="tab-simulator">
+      <p class="note">A synthetic watch. Rate, beat error and loudness change as you move the sliders, like turning the regulator on a watch under test.</p>
+      <div class="field">
+        <label for="sim-bph">Beat rate</label>
+        <select id="sim-bph"></select>
+      </div>
+      <div class="field">
+        <label for="sim-rate">Rate <output id="sim-rate-out" for="sim-rate"></output></label>
+        <input type="range" id="sim-rate" min="-60" max="60" step="0.5" value="8">
+      </div>
+      <div class="field">
+        <label for="sim-be">Beat error <output id="sim-be-out" for="sim-be"></output></label>
+        <input type="range" id="sim-be" min="0" max="2" step="0.05" value="0.4">
+      </div>
+      <div class="field">
+        <label for="sim-gain">Tick loudness <output id="sim-gain-out" for="sim-gain"></output></label>
+        <input type="range" id="sim-gain" min="0" max="3" step="0.05" value="2">
+      </div>
+    </div>
+
+    <div class="panel" id="panel-demo" role="tabpanel" aria-labelledby="tab-demo" hidden>
+      <p class="note">Recordings made with Voice Memos while this app was being built. Each downloads when you start it.</p>
+      <div class="choices" id="demos"></div>
+    </div>
+
+    <div class="panel" id="panel-file" role="tabpanel" aria-labelledby="tab-file" hidden>
+      <p class="note">A recording of a watch from this device, such as a Voice Memo saved to Files. It stays on this device.</p>
+      <div class="file-pick">
+        <label for="file">Choose a recording…</label>
+        <input type="file" id="file" accept="audio/*,.wav,.m4a,.caf,.aif,.aiff,.mp3">
+        <p class="fine" id="file-info">No file chosen.</p>
+      </div>
+    </div>
+
+    <div class="speed" id="speed-row" hidden>
+      <span class="caption">Speed</span>
+      <div class="tabs" role="radiogroup" aria-label="Replay speed" id="speed">
+        <button type="button" role="radio" data-speed="1" aria-checked="true" aria-selected="true">1×</button>
+        <button type="button" role="radio" data-speed="4" aria-checked="false" aria-selected="false">4×</button>
+        <button type="button" role="radio" data-speed="64" aria-checked="false" aria-selected="false">Fast</button>
+      </div>
+    </div>
+    <div class="progress" id="progress" hidden><div id="progress-fill"></div></div>
+    <p class="fine" id="progress-text" hidden></p>
+  </section>
+
+  <footer>
+    <p>Milestone 5 of 9 · interface. The live microphone comes in milestone 6; until then the
+      <a href="diagnostic.html">audio diagnostic</a> records and measures it. The
+      <a href="check.html">browser check</a> shows whether this browser has what the app needs.</p>
+    <p>Written with generative AI; see the README in the <a id="source-link" href="https://github.com/">source repository</a> for who did what. MIT licence.</p>
+  </footer>
 </main>
 
-<script type="module">
-const checks = [
-  {
-    what: 'Secure connection',
-    why: 'Browsers only allow the microphone on pages served over HTTPS.',
-    test: () => window.isSecureContext,
-  },
-  {
-    what: 'Microphone access offered',
-    why: 'The browser can ask for the microphone. This page does not ask.',
-    test: () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-  },
-  {
-    what: 'Audio worklets',
-    why: 'Used to receive the live audio without gaps.',
-    test: () => typeof AudioWorkletNode === 'function',
-  },
-  {
-    what: 'Screen wake lock',
-    why: 'Keeps the screen on during a measurement.',
-    test: () => 'wakeLock' in navigator,
-  },
-  {
-    what: 'Signal pipeline loads',
-    why: 'The measurement code downloads and starts in this browser.',
-    test: async () => {
-      const { Pipeline } = await import('./js/dsp/pipeline.js');
-      const pipeline = new Pipeline(48000, 1);
-      pipeline.push([new Float32Array(4096)]);
-      return true;
-    },
-  },
-];
+<div class="dock">
+  <div class="dock-inner">
+    <div class="dock-text"><strong id="dock-source">Simulator</strong><span id="dock-detail"></span></div>
+    <button class="primary" id="start" type="button">Start</button>
+  </div>
+</div>
 
-const list = document.getElementById('checks');
-for (const c of checks) {
-  const li = document.createElement('li');
-  li.innerHTML = '<span class="what"></span><span class="result wait">Checking</span><span class="why"></span>';
-  li.querySelector('.what').textContent = c.what;
-  li.querySelector('.why').textContent = c.why;
-  list.appendChild(li);
-  const result = li.querySelector('.result');
-  Promise.resolve()
-    .then(c.test)
-    .then((ok) => {
-      result.textContent = ok ? 'Yes' : 'No';
-      result.className = 'result ' + (ok ? 'yes' : 'no');
-    })
-    .catch((e) => {
-      result.textContent = 'No';
-      result.className = 'result no';
-      li.querySelector('.why').textContent = c.why + ' Error: ' + (e && e.message ? e.message : e);
-    });
-}
+<dialog id="settings" aria-labelledby="settings-title">
+  <form method="dialog" id="settings-form">
+    <h2 id="settings-title">Settings</h2>
+    <div class="field">
+      <label for="set-bph">Beat rate</label>
+      <select id="set-bph" name="bph"></select>
+      <p class="note">Automatic recognises the six standard rates. Choose the watch's rate if you know it, to tell 18,000 from 36,000 vph.</p>
+    </div>
+    <div class="field">
+      <label for="set-escapement">Escapement</label>
+      <select id="set-escapement" name="escapement">
+        <option value="lever">Swiss lever (most watches)</option>
+        <option value="coaxial">Co-axial (Omega)</option>
+      </select>
+      <p class="note">A co-axial escapement's tick and tock are different sounds, so beat error is not shown for it.</p>
+    </div>
+    <div class="field">
+      <label for="set-lift">Lift angle (degrees)</label>
+      <input type="number" id="set-lift" name="liftAngle" min="30" max="70" step="0.5" inputmode="decimal">
+      <p class="note">From the movement's documentation; 52° if unknown. Used for amplitude, which is not measured yet.</p>
+    </div>
+    <div class="field">
+      <label for="set-hum">Mains frequency</label>
+      <select id="set-hum" name="humHz">
+        <option value="60">60 Hz (the Americas, parts of Asia)</option>
+        <option value="50">50 Hz (most other countries)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="set-avg">Averaging window</label>
+      <select id="set-avg" name="averagingSeconds"></select>
+      <p class="note">Longer is steadier; shorter follows changes sooner. Faint ticks lengthen it automatically.</p>
+    </div>
+    <p class="note" id="settings-restart" hidden>Changing the beat rate or mains frequency restarts the measurement.</p>
+    <div class="actions"><button class="primary" value="done">Done</button></div>
+  </form>
+</dialog>
 
-document.getElementById('agent').textContent = navigator.userAgent;
-
-// On GitHub Pages the address is https://OWNER.github.io/REPOSITORY/, so the source is
-// https://github.com/OWNER/REPOSITORY.
-const source = document.getElementById('source');
-const host = location.hostname.match(/^([^.]+)\.github\.io$/);
-const repo = location.pathname.split('/').filter(Boolean)[0];
-if (host && repo) source.href = `https://github.com/${host[1]}/${repo}`;
-</script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>
