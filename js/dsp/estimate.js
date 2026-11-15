@@ -149,6 +149,12 @@ export function jointRate(ticks, tocks, tockShift, nominalPeriod) {
   };
 }
 
+/**
+ * The kind of escapement. 'lever' is the Swiss lever escapement used by most watches;
+ * 'coaxial' is Omega's co-axial escapement.
+ * @typedef {'lever'|'coaxial'} Escapement
+ */
+
 /** Largest uncertainty of the tick-tock offset, in milliseconds, for a beat error to be reported. */
 export const MAX_OFFSET_SD_MS = 0.1;
 /** Smallest tick-tock template similarity for a beat error to be reported. */
@@ -178,9 +184,12 @@ export const MAX_SCATTER_MS = 0.2;
  * @param {Float32Array[]} template averaged tick-tock cycle
  * @param {[number, number]} clusters tick and tock positions in the template, in samples
  * @param {number} envelopeRate
+ * @param {Escapement} [escapement] with 'coaxial' the rate still uses both beats, but no beat
+ *   error is reported: a co-axial escapement's tick and tock are different sounds, so the gap
+ *   between them does not measure the beat error
  * @returns {Readings}
  */
-export function summarize(beats, nominalPeriod, template, clusters, envelopeRate) {
+export function summarize(beats, nominalPeriod, template, clusters, envelopeRate, escapement = 'lever') {
   const fits = beats.map((s) => fitSeries(s, nominalPeriod));
   /** @type {Readings} */
   const result = { fits, rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null };
@@ -197,14 +206,17 @@ export function summarize(beats, nominalPeriod, template, clusters, envelopeRate
     const offset = raw + align.shiftSeconds;
     const offsetSdMs = Math.hypot(fitTick.jitterMs / Math.sqrt(fitTick.count), fitTock.jitterMs / Math.sqrt(fitTock.count));
     result.beatErrorDetail = { offsetMs: offset * 1e3, offsetSdMs, similarity: align.similarity };
-    both = offsetSdMs <= MAX_OFFSET_SD_MS && align.similarity >= MIN_SIMILARITY && Math.max(fitTick.jitterMs, fitTock.jitterMs) <= MAX_SCATTER_MS;
+    const precise = offsetSdMs <= MAX_OFFSET_SD_MS && Math.max(fitTick.jitterMs, fitTock.jitterMs) <= MAX_SCATTER_MS;
+    both = precise && (escapement === 'coaxial' || align.similarity >= MIN_SIMILARITY);
     if (both) {
       const joint = jointRate(beats[0], beats[1], raw, nominalPeriod);
       result.rate = joint.rate;
       result.rateSd = joint.rateSd;
       result.jitterMs = joint.jitterMs;
-      result.beatOffsetMs = offset * 1e3;
-      result.beatErrorMs = Math.abs(offset) * 1e3;
+      if (escapement !== 'coaxial') {
+        result.beatOffsetMs = offset * 1e3;
+        result.beatErrorMs = Math.abs(offset) * 1e3;
+      }
     }
   }
   if (!both) {

@@ -23,6 +23,7 @@ const ui = {
   gain: /** @type {HTMLInputElement} */ ($('gain')),
   length: /** @type {HTMLSelectElement} */ ($('length')),
   mains: /** @type {HTMLSelectElement} */ ($('mains')),
+  escapement: /** @type {HTMLSelectElement} */ ($('escapement')),
   start: /** @type {HTMLButtonElement} */ ($('start')),
   stop: /** @type {HTMLButtonElement} */ ($('stop')),
   elapsed: $('elapsed'),
@@ -70,6 +71,7 @@ const worker = new Worker(new URL('./dsp/worker.js', import.meta.url), { type: '
  * @property {import('./dsp/pipeline.js').ReadingsEvent|null} readings
  * @property {import('./dsp/session.js').Load|null} load
  * @property {boolean} stopped
+ * @property {import('./dsp/estimate.js').Escapement} escapement
  */
 
 /** @type {Run|null} */
@@ -175,6 +177,7 @@ async function start() {
     readings: null,
     load: null,
     stopped: false,
+    escapement: ui.escapement.value === 'coaxial' ? 'coaxial' : 'lever',
   };
   recent = new Float32Array(Math.round(2 * run.sampleRate));
   recentAt = 0;
@@ -199,7 +202,7 @@ function onChunk(chunk) {
   if (r.channelCount === 0) {
     r.channelCount = channels.length;
     r.wallStart = performance.now() - (1000 * channels[0].length) / r.sampleRate;
-    worker.postMessage({ type: 'start', sampleRate: r.sampleRate, channelCount: r.channelCount, options: { humHz: Number(ui.mains.value) } });
+    worker.postMessage({ type: 'start', sampleRate: r.sampleRate, channelCount: r.channelCount, options: { humHz: Number(ui.mains.value), escapement: r.escapement } });
   }
   const room = r.limitFrames - r.frames;
   if (channels[0].length > room) channels = channels.map((c) => c.subarray(0, room));
@@ -305,7 +308,7 @@ worker.onmessage = (event) => {
 /** @param {import('./dsp/pipeline.js').ReadingsEvent} e */
 function readingText(e) {
   if (e.rate === null) return 'No reading.';
-  const be = e.beatErrorMs === null ? 'beat error blank' : `beat error ${e.beatErrorMs.toFixed(2)} ms`;
+  const be = run && run.escapement === 'coaxial' ? 'no beat error for co-axial' : e.beatErrorMs === null ? 'beat error blank' : `beat error ${e.beatErrorMs.toFixed(2)} ms`;
   return `Rate ${signed(e.rate)} s/day · ${be} · scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}`;
 }
 
@@ -362,6 +365,7 @@ function report() {
   const lines = ['Watch Timegrapher audio diagnostic (milestone 4)'];
   lines.push(`Browser: ${navigator.userAgent}`);
   lines.push(`Microphone: ${r.capture.label || 'unnamed'}`);
+  lines.push(`Escapement: ${r.escapement === 'coaxial' ? 'co-axial (beat error not shown)' : 'Swiss lever'}`);
   const onOff = (/** @type {unknown} */ v) => (v ? 'on' : 'off');
   lines.push(`Requested: echo cancellation ${onOff(r.capture.requested.echoCancellation)}, noise suppression ${onOff(r.capture.requested.noiseSuppression)}, automatic gain ${onOff(r.capture.requested.autoGainControl)}`);
   const applied = Object.entries(r.capture.settings)

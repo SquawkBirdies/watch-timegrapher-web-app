@@ -3,7 +3,12 @@
 
 import { Cascade, bandpassSections } from './biquad.js';
 
-/** Default band edges in hertz. Bands that do not fit below the Nyquist limit are dropped. */
+/**
+ * Default band edges in hertz. Bands that do not fit below the Nyquist limit are dropped, so at
+ * 44.1 kHz the top band goes, and at 48 kHz all nine are used. The two bands above 14.5 kHz
+ * were added after the first iPhone captures: Safari delivers tick sound up to 22.5 kHz, and
+ * using it made the ticks 1.2 to 2.2 times clearer.
+ */
 export const DEFAULT_BANDS = [
   [1500, 2500],
   [2500, 3500],
@@ -12,6 +17,8 @@ export const DEFAULT_BANDS = [
   [7000, 9000],
   [9000, 11500],
   [11500, 14500],
+  [14500, 18000],
+  [18000, 22500],
 ];
 
 /**

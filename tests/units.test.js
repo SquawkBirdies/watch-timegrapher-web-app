@@ -65,8 +65,9 @@ test('band-pass filter passes its band and rejects low frequencies', () => {
 });
 
 test('filter bank drops bands above the Nyquist limit', () => {
-  assert.equal(new FilterBank(48000, 2).rowCount, 14);
-  assert.equal(new FilterBank(16000, 1).rowCount, 4);
+  assert.equal(new FilterBank(48000, 2).rowCount, 18, 'all nine bands at 48 kHz, two channels');
+  assert.equal(new FilterBank(44100, 1).rowCount, 8, 'the band to 22.5 kHz is dropped at 44.1 kHz');
+  assert.equal(new FilterBank(16000, 1).rowCount, 4, 'Bluetooth-rate audio keeps the bands below 7.5 kHz');
   assert.equal(new FilterBank(48000, 1).envelopeRate, 12000);
 });
 
