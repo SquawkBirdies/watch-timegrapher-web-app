@@ -68,7 +68,9 @@ test('ETA 2836-2 in real time: same readings as the whole-recording analysis', (
 
 test('Omega 3861 in real time: locks on the faint ticks, about +0.2 s/day, no beat error', () => {
   const wav = readWav(fixture('omega-3861.wav'));
-  const r = stream(wav.channels, wav.sampleRate, { from: 2 * wav.sampleRate, to: 60 * wav.sampleRate });
+  // A 40 s window, as these checks were set for: shorter windows follow the watch's own rate
+  // changes, which over this recording span about 1 s/day.
+  const r = stream(wav.channels, wav.sampleRate, { from: 2 * wav.sampleRate, to: 60 * wav.sampleRate, options: { averagingSeconds: 40 } });
   assert.ok(r.status.length > 0 && r.status.every((s) => s.state === 'tracking'), 'locked and stayed locked');
   assert.equal(r.status[0].bph, 21600);
   assert.ok(r.last && r.last.rate !== null);
@@ -79,7 +81,7 @@ test('Omega 3861 in real time: locks on the faint ticks, about +0.2 s/day, no be
 
 test('Omega 3861, second recording, in real time: locks within 20 s, about -2.1 s/day', () => {
   const wav = readWav(fixture('omega-3861-b.wav'));
-  const r = stream(wav.channels, wav.sampleRate, { from: 2 * wav.sampleRate, to: 73 * wav.sampleRate });
+  const r = stream(wav.channels, wav.sampleRate, { from: 2 * wav.sampleRate, to: 73 * wav.sampleRate, options: { averagingSeconds: 40 } });
   assert.equal(r.status[0].bph, 21600);
   assert.ok(r.status[0].t < 20, `locked after ${r.status[0].t.toFixed(1)} s`);
   assert.ok(r.status.every((s) => s.state === 'tracking'), 'lock never lost');

@@ -1,12 +1,15 @@
 # Watch Timegrapher Web App
 
 A mechanical watch timegrapher that runs in a phone's web browser and listens through the
-microphone. It measures rate (seconds per day) and beat error (milliseconds) and will draw a
+microphone. It measures rate (seconds per day) and beat error (milliseconds) and draws a
 real-time trace.
 
-**Status: milestone 4 of 9.** The signal pipeline works on whole recordings and in real time,
-on audio fed in small chunks. The site has a placeholder start page and an audio diagnostic;
-the app itself is not ready yet.
+**Status: milestone 5 of 9.** The timegrapher screen works, driven by a simulated watch, by
+three demo recordings or by a recording of your own. The live microphone comes to it in
+milestone 6; until then the audio diagnostic records and measures it.
+
+Tested on an iPhone 17 Pro Max with iOS 27.2 and Safari (the audio diagnostic, milestone 4), and
+in Chrome on a computer at phone size (the screen, milestone 5).
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -21,7 +24,7 @@ blanks the readings when the ticking stops. `js/dsp/offline.js` analyses a whole
 the same stages. Both are checked against synthetic watches with known values and against three
 real recordings.
 
-| Test | Expected | Whole recording | Real time, 128-sample chunks |
+| Test | Expected | Whole recording | Real time, 128-sample chunks, 40 s window |
 | --- | --- | --- | --- |
 | Synthetic, 28,800 vph, clear ticks | +12.0 s/day, 0.30 ms | +12.00 s/day, 0.31 ms | +12.00 s/day, 0.31 ms, locked at 8 s |
 | Synthetic, 21,600 vph, with mains buzz | -8.0 s/day, 0.80 ms | -7.96 s/day, 0.82 ms | -7.94 s/day, 0.81 ms |
@@ -32,8 +35,9 @@ real recordings.
 | Omega 3861 recording | 21,600 vph, about +0.2 s/day, no beat error | +0.54 s/day | +0.54 s/day, locked at 52 s |
 | Omega 3861, second recording | 21,600 vph, no reference value | -2.07 s/day | -2.13 s/day, locked at 12 s |
 
-The expected values for the first two recordings come from the Python prototype in
-`tools/prototype/`. No recording has been compared with a bench timegrapher. On an iPhone 17
+The real-time column uses a 40 s averaging window (60 s for the ETA, 80 s for the faint
+synthetic watch). The expected values for the first two recordings come from the Python
+prototype in `tools/prototype/`. No recording has been compared with a bench timegrapher. On an iPhone 17
 Pro Max the real-time pipeline ran 22.6 times faster than real time on two channels. That was
 measured before the filter bank gained its two bands above 14.5 kHz, which cost about a quarter
 of the speed in tests on a computer; the app now uses one channel, which halves the work.
@@ -58,6 +62,14 @@ is still measured from both beats, and no beat error is reported. The Omega 3861
 through Safari showed why: in Swiss-lever mode it read a steady 3.4 ms beat error that does not
 describe the watch, and the beat-error checks passed it.
 
+Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
+reads less steadily. The last readings at 20 s were +6.92 s/day for the ETA, +1.08 s/day for the
+first Omega recording and -1.54 s/day for the second, and after their first 20 s of lock the ETA's
+readings ranged from +6.30 to +6.98 s/day and the second Omega's from -3.11 to -1.30 s/day. On
+synthetic watches every 20 s reading lay within three times its stated uncertainty of the true
+rate. When faint ticks must be averaged over several cycles, the window is lengthened until each
+beat type has at least 12 independent timestamps: on the first Omega recording, to 27 s.
+
 Known limits of the real-time pipeline:
 
 - A faint watch is found only once enough of its ticking is in the history buffer. The default
@@ -68,6 +80,10 @@ Known limits of the real-time pipeline:
   watch with a genuinely ragged trace will therefore show no beat error.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
+- On a co-axial watch a repeat analysis can time a beat type on a different one of its sounds
+  than before. On the second Omega recording the tock line of the trace jumps by almost 4 ms
+  25 s in. The rate readings stayed between -1.3 and -3.0 s/day through the jump, because the
+  line fit sets aside the minority of points that do not follow the rest.
 
 ## Hosting
 
@@ -76,9 +92,17 @@ Browsers allow the microphone only on secure pages, so the app cannot be opened 
 file. [docs/hosting.md](docs/hosting.md) explains how to set up the site, how to host your own
 copy, and how to test on a computer.
 
-Until the app is ready, `index.html` is a placeholder that checks the browser: secure
-connection, microphone access, audio worklets, screen wake lock, and whether the signal
-pipeline loads.
+`index.html` is the timegrapher. Its header shows rate, beat error and (once it is measured)
+amplitude, with the beat rate, lift angle and averaging window under them, and dashes instead of
+stale numbers when there is no lock. Below are the trace, one dot per beat in milliseconds ahead
+of an ideal clock with low-confidence beats dimmed; a signal meter with advice; and the averaged
+tick and tock. The source can be a simulated watch whose rate, beat error and loudness can be
+changed while it runs, one of the three test recordings, or a recording chosen from the phone,
+replayed at real speed or faster. Settings (beat rate, escapement, lift angle, mains frequency,
+averaging window) are kept on the device.
+
+`check.html` checks the browser: secure connection, microphone access, audio worklets, screen
+wake lock, and whether the signal pipeline loads.
 
 `diagnostic.html` is the audio diagnostic. It records up to 60 s from the first channel of a
 chosen microphone with the browser's echo cancellation, noise suppression and automatic gain
@@ -93,7 +117,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about three minutes
+npm test             # about seven minutes
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
@@ -103,7 +127,8 @@ node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat r
 ## Layout
 
 ```
-index.html             placeholder page that checks the browser
+index.html             the timegrapher (script in js/main.js, styles in css/app.css)
+check.html             browser check
 diagnostic.html        audio diagnostic (script in js/diagnostic.js)
 docs/hosting.md        setting up GitHub Pages
 js/dsp/filterbank.js   band-pass filter bank, 1.5 to 22.5 kHz, and energy envelopes
@@ -119,15 +144,22 @@ js/dsp/session.js      the pipeline plus a record of its computing time; the spe
 js/dsp/worker.js       runs a session in a background worker
 js/audio/capture.js    microphone choice, raw-audio request, interruptions
 js/audio/capture-worklet.js  audio-thread chunker
-js/audio/wav.js        WAV writer for saved captures
-js/audio/simulator.js  synthetic watch generator
+js/audio/wav.js        WAV reader for recordings, writer for saved captures
+js/audio/simulator.js  synthetic watch, as whole recordings or endless and adjustable
+js/audio/file-source.js  decodes a recording and hands it out in chunks
+js/audio/player.js     paces a source in real time, or faster
+js/ui/model.js         what the screen shows, worked out from the pipeline's events
+js/ui/trace.js         the trace
+js/ui/waveform.js      the averaged tick and tock
+js/ui/canvas.js        drawing helpers and chart colours
+js/store.js            settings kept on the device
 tests/                 automated tests and the three recordings
 tools/                 command-line runners, and the Python prototype kept for reference
 ```
 
 The code is plain JavaScript modules with no build step and no runtime dependencies. The files
 in `js/dsp/` use only standard JavaScript and `performance.now()`, so the same code runs in the
-tests and, later, in the app's background worker.
+tests and in the app's background worker.
 
 ## Test recordings
 
@@ -144,7 +176,7 @@ with the project's owner. The models used were Claude Fable 5.2 and Claude Opus 
 Written by Claude:
 
 - all the code in this repository: the JavaScript signal pipeline, the Kalman beat tracker, the
-  synthetic watch generator, the tests and the command-line tools
+  synthetic watch generator, the interface, the tests and the command-line tools
 - the Python prototype in `tools/prototype/`
 - this README and the project's design plan
 - the choice of signal-processing methods, and the expected values the tests check against

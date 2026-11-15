@@ -58,7 +58,8 @@ test('noise and mains buzz alone never give a lock', () => {
 for (const [bph, rate] of /** @type {[number, number][]} */ ([[18000, -10], [19800, 20], [21600, -20], [25200, -30], [28800, 30], [36000, 10]])) {
   test(`beat rate ${bph} vph is recognised: ${rate} s/day, 0.50 ms beat error`, () => {
     const w = synthesizeWatch({ bph, rate, beatOffsetMs: 0.5, gain: 1.4, seconds: 40, seed: bph });
-    const r = stream(w.channels, w.sampleRate, { chunk: 512 });
+    // The tolerances suit a 40 s window; the default 20 s window is tested below.
+    const r = stream(w.channels, w.sampleRate, { chunk: 512, options: { averagingSeconds: 40 } });
     assert.equal(r.status[0].bph, bph);
     assert.ok(r.last);
     near(r.last.rate, rate, 0.2, 'rate');

@@ -2,12 +2,15 @@
 // smooth while audio is analysed.
 //
 // Messages in:
-//   {type: 'start', sampleRate, channelCount, options}   begin a session
+//   {type: 'start', id, sampleRate, channelCount, options}
+//                                                         begin a session; id is optional
 //   {type: 'chunk', channels}                             audio for the session
+//   {type: 'settings', changes}                           averaging window or escapement changed
 //   {type: 'stop'}                                        end the session
 //   {type: 'benchmark', options}                          time the pipeline on simulated audio
 // Messages out:
-//   {type: 'events', events, load}                        what the pipeline reported for a chunk
+//   {type: 'events', id, events, load}                    what the pipeline reported for a chunk,
+//                                                         with the id of the session that heard it
 //   {type: 'benchmark', result}
 //   {type: 'error', message}
 
@@ -18,16 +21,21 @@ const scope = /** @type {WorkerScope} */ (/** @type {unknown} */ (self));
 
 /** @type {Session|null} */
 let session = null;
+/** @type {unknown} */
+let sessionId = null;
 
 scope.onmessage = (event) => {
   const m = event.data;
   try {
     if (m.type === 'start') {
       session = new Session(m.sampleRate, m.channelCount, m.options || {});
+      sessionId = m.id === undefined ? null : m.id;
     } else if (m.type === 'chunk') {
       if (!session) return;
       const events = session.push(m.channels);
-      scope.postMessage({ type: 'events', events, load: session.load() });
+      scope.postMessage({ type: 'events', id: sessionId, events, load: session.load() });
+    } else if (m.type === 'settings') {
+      if (session) session.pipeline.setOptions(m.changes || {});
     } else if (m.type === 'stop') {
       session = null;
     } else if (m.type === 'benchmark') {
