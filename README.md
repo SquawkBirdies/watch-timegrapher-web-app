@@ -22,8 +22,8 @@ for who did what and what has been checked.
 `js/dsp/pipeline.js` takes audio chunks of any size and reports status, beats and readings as
 events. It listens until it finds a beat rate, tracks each beat with a Kalman tracker, and
 blanks the readings when the ticking stops. `js/dsp/offline.js` analyses a whole recording with
-the same stages. Both are checked against synthetic watches with known values and against three
-real recordings.
+the same stages. Both are checked against synthetic watches with known values, against three
+real recordings of watches, and against a recording with no watch.
 
 | Test | Expected | Whole recording | Real time, 128-sample chunks, 40 s window |
 | --- | --- | --- | --- |
@@ -35,6 +35,7 @@ real recordings.
 | ETA 2836-2 recording | 28,800 vph, about +6.5 s/day, about 0.43 ms | +6.43 s/day, 0.42 ms | +6.40 s/day, 0.41 ms |
 | Omega 3861 recording | 21,600 vph, about +0.2 s/day, no beat error | +0.54 s/day | +0.54 s/day, locked at 52 s |
 | Omega 3861, second recording | 21,600 vph, no reference value | -2.07 s/day | -2.13 s/day, locked at 12 s |
+| No watch, Safari capture of a quiet room | no lock | no lock | no lock, with the beat rate detected or given as any of the six |
 
 The real-time column uses a 40 s averaging window (60 s for the ETA, 80 s for the faint
 synthetic watch). The expected values for the first two recordings come from the Python
@@ -131,7 +132,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about eight minutes
+npm test             # about nine minutes
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
@@ -167,7 +168,7 @@ js/ui/trace.js         the trace
 js/ui/waveform.js      the averaged tick and tock
 js/ui/canvas.js        drawing helpers and chart colours
 js/store.js            settings kept on the device
-tests/                 automated tests and the three recordings
+tests/                 automated tests and the four recordings
 tools/                 command-line runners, and the Python prototype kept for reference
 ```
 
@@ -177,10 +178,14 @@ tests and in the app's background worker.
 
 ## Test recordings
 
-`tests/fixtures/` holds three iPhone recordings of about a minute each, converted to 16-bit WAV
-with 24 dB of gain. In the first two, the watch lay dial-down with the crown against the phone's
-USB-C port. In `omega-3861-b.wav` the phone was held over the dial with the USB-C port facing
-it, in a different room.
+`tests/fixtures/` holds four iPhone recordings of about a minute each. The three watch
+recordings were made with Voice Memos and converted to 16-bit WAV with 24 dB of gain. In the
+first two, the watch lay dial-down with the crown against the phone's USB-C port. In
+`omega-3861-b.wav` the phone was held over the dial with the USB-C port facing it, in a
+different room. `no-watch-safari.wav` is the null case: 60 s of a quiet room with no watch near
+the phone, saved by the audio diagnostic in Safari. It is the capture exactly as saved, in
+32-bit floating point, mono. Like the others, it holds only the audio format and the samples,
+with no other metadata.
 
 ## Use of generative AI
 
@@ -201,11 +206,11 @@ Done by Lawrence Fan:
 - the design decisions recorded in the plan, including the magnetism warning, the minimum iOS
   version and the choice of plain JavaScript
 - suggestions taken into the design, including the Kalman beat tracker and the beat-rate override
-- the three watch recordings in `tests/fixtures/`, which are the only test data not produced by
-  AI-written code
+- the four recordings in `tests/fixtures/` (three of watches, one with no watch), which are the
+  only test data not produced by AI-written code
 
 What this means for the readings: every result above comes from AI-written code, tested
-against AI-written synthetic signals and against the three real recordings. The expected values
+against AI-written synthetic signals and against the four real recordings. The expected values
 for the first two recordings also come from AI-written code. No reading has yet been compared
 with a bench timegrapher, so treat rates and beat errors from this project as unverified.
 
