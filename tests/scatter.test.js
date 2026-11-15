@@ -1,8 +1,8 @@
 // Scattered timestamps. A beat made of several sounds gives a correlation curve with several
-// peaks, and when the beat is faint the highest is not always the same one. Two measures keep
-// the trace together: a confident peak near where the beat is expected is preferred to a higher
-// one elsewhere, and beats that still scatter are averaged over more cycles, up to twice as
-// many. Neither may hide the irregular running of a watch that can be heard clearly.
+// peaks, and when the beat is faint the highest is not always the same one. A confident peak
+// near where the beat is expected is preferred to a higher one elsewhere. That chooses among the
+// positions one beat could have and never mixes beats, so a watch that really runs irregularly
+// must still show its irregularity in full.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,11 +10,11 @@ import { fileURLToPath } from 'node:url';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
 import { pickPeak, pickPeakNear, runningMedian, NEAR_FRACTION } from '../js/dsp/timing.js';
-import { stream, traceScatter } from './helpers/stream.js';
+import { stream, traceScatter, againstTruth } from './helpers/stream.js';
 import { readWav } from './helpers/wav.js';
 
-/** The timing as it was before the two measures. */
-const BEFORE = { preferNear: false, maxSpreadMs: Infinity };
+/** The timing as it was before: always the highest peak. */
+const BEFORE = { preferNear: false };
 
 /**
  * A correlation curve with rounded peaks at the given lags.
@@ -87,49 +87,41 @@ test('Omega 3861, second recording: the ticks keep to their line', () => {
   };
   const before = ticks(BEFORE);
   const after = ticks({});
-  // Before: about one confident tick in five lay more than 1 ms off the line.
+  // Before: 19 of 93 confident ticks lay more than 1 ms off the line. After: 6 of 93.
   assert.ok(before.tick.far / before.tick.count > 0.15, `before: ${before.tick.far} of ${before.tick.count} ticks stray`);
-  assert.deepEqual(before.tick.cycles, [2]);
-  assert.ok(after.tick.far / after.tick.count < 0.05, `after: ${after.tick.far} of ${after.tick.count} ticks stray`);
-  assert.ok(after.tick.spreadMs < 0.3 && after.tick.spreadMs < 0.65 * before.tick.spreadMs, `tick scatter ${before.tick.spreadMs.toFixed(3)} ms before, ${after.tick.spreadMs.toFixed(3)} ms after`);
-  // The ticks are averaged over more cycles, but no more than twice as many.
-  assert.ok(after.tick.cycles.every((k) => k <= 4) && after.tick.cycles.includes(4), `ticks average ${after.tick.cycles} cycles`);
+  assert.ok(after.tick.far / after.tick.count < 0.09, `after: ${after.tick.far} of ${after.tick.count} ticks stray`);
+  assert.ok(after.tick.spreadMs < 0.85 * before.tick.spreadMs, `tick scatter ${before.tick.spreadMs.toFixed(3)} ms before, ${after.tick.spreadMs.toFixed(3)} ms after`);
+  // The same averaging as before: the dots are as many as they were.
+  assert.deepEqual(after.tick.cycles, before.tick.cycles);
+  assert.equal(after.tick.count, before.tick.count);
   // The tocks were already tight and stay so; the rate reading does not move.
   assert.equal(after.tock.far, 0);
   assert.ok(after.tock.spreadMs < 0.12, `tock scatter ${after.tock.spreadMs.toFixed(3)} ms`);
   assert.ok(Math.abs(after.rate - before.rate) < 0.1, `rate ${before.rate} before, ${after.rate} after`);
 });
 
-test('a clear watch that runs irregularly still shows it', () => {
-  // Every beat is displaced at random, with a standard deviation of 0.4 ms.
-  const w = synthesizeWatch({ bph: 28800, rate: 4, beatOffsetMs: 0.2, gain: 1.6, seconds: 50, seed: 91, jitterMs: 0.4 });
-  const r = stream(w.channels, w.sampleRate, { chunk: 1024 });
-  assert.ok(r.status.length > 0 && r.status.every((s) => s.state === 'tracking'));
-  let beyond = 0;
-  for (const type of /** @type {(0|1)[]} */ ([0, 1])) {
-    const line = traceScatter(r.beats, 28800, type);
-    assert.deepEqual(line.cycles, [1], `type ${type}: every beat is timed on its own`);
-    assert.ok(line.sdMs > 0.3 && line.sdMs < 0.55, `type ${type}: scatter ${line.sdMs.toFixed(3)} ms`);
-    beyond += line.far;
-  }
-  // About one beat in a hundred is displaced by more than 1 ms, and stays where it fell.
-  assert.ok(beyond >= 3, `${beyond} beats more than 1 ms off the line`);
-  const last = /** @type {NonNullable<typeof r.last>} */ (r.last);
-  assert.ok(last.jitterMs !== null && last.jitterMs > 0.3 && last.jitterMs < 0.55, `scatter reading ${last.jitterMs}`);
-});
-
-test('the same irregular watch heard faintly: more averaging, by at most double', () => {
-  const w = synthesizeWatch({ bph: 28800, rate: 4, beatOffsetMs: 0.2, gain: 0.9, seconds: 50, seed: 91, jitterMs: 0.4 });
-  const run = (/** @type {import('../js/dsp/timing.js').TimingOptions} */ timing) => {
-    const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { timing } });
-    assert.ok(r.status.length > 0 && r.status.every((s) => s.state === 'tracking'));
-    return /** @type {(0|1)[]} */ ([0, 1]).map((type) => traceScatter(r.beats, 28800, type));
-  };
-  const before = run({ maxSpreadMs: Infinity });
-  const after = run({});
-  for (const type of [0, 1]) {
-    const least = Math.max(...before[type].cycles);
-    const most = Math.max(...after[type].cycles);
-    assert.ok(most > least && most <= 2 * least, `type ${type}: ${least} cycles before, ${most} after`);
+test('a clear watch that runs irregularly still shows it, beat for beat', () => {
+  // Every beat is displaced at random, with a standard deviation of 0.5 ms and then 1 ms. The
+  // timestamps are compared with when each beat really fell.
+  for (const jitterMs of [0.5, 1]) {
+    const w = synthesizeWatch({ bph: 28800, rate: 4, beatOffsetMs: 0.2, gain: 1.6, seconds: 50, seed: 91, jitterMs });
+    const run = (/** @type {import('../js/dsp/timing.js').TimingOptions} */ timing) => {
+      const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { timing } });
+      assert.ok(r.status.length > 0 && r.status.every((s) => s.state === 'tracking'), `${jitterMs} ms: locked and stayed locked`);
+      return /** @type {(0|1)[]} */ ([0, 1]).map((type) => ({ truth: againstTruth(r.beats, w.beatTimes, w.truePeriod, type), line: traceScatter(r.beats, 28800, type) }));
+    };
+    const before = run(BEFORE);
+    const after = run({});
+    for (const type of [0, 1]) {
+      const a = after[type];
+      const b = before[type];
+      assert.deepEqual(a.line.cycles, [1], `${jitterMs} ms, type ${type}: every beat timed on its own`);
+      assert.ok(a.truth.count > 150, `${jitterMs} ms, type ${type}: ${a.truth.count} timestamps compared`);
+      // The trace shows the irregularity in full: each beat's displacement, not an average.
+      assert.ok(a.truth.follows > 0.85 && a.truth.follows < 1.1, `${jitterMs} ms, type ${type}: follows the true displacements by ${a.truth.follows.toFixed(2)}`);
+      assert.ok(a.line.sdMs > 0.8 * jitterMs, `${jitterMs} ms, type ${type}: trace scatter ${a.line.sdMs.toFixed(2)} ms`);
+      // And the timestamps are no further from the truth than before.
+      assert.ok(a.truth.errorMs <= b.truth.errorMs + 0.02, `${jitterMs} ms, type ${type}: error ${b.truth.errorMs.toFixed(3)} ms before, ${a.truth.errorMs.toFixed(3)} ms after`);
+    }
   }
 });

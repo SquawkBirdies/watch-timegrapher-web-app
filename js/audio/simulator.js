@@ -57,7 +57,9 @@ export function gaussianFrom(uniform) {
  * Generate two channels of background noise, watch ticks and mains-locked buzz.
  * Each beat has three sounds 7, 4.5 and 0 ms before its nominal time, the last one loudest.
  * @param {WatchOptions} options
- * @returns {{sampleRate: number, channels: Float32Array[], truePeriod: number}}
+ * @returns {{sampleRate: number, channels: Float32Array[], truePeriod: number, beatTimes: Float64Array}}
+ *   `beatTimes` holds when each beat really fell, in seconds, beat offset and jitter included:
+ *   the time of its sound at `dt` 0
  */
 export function synthesizeWatch(options) {
   const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds, jitterMs = 0 } = options;
@@ -89,6 +91,8 @@ export function synthesizeWatch(options) {
   const burstLength = Math.floor(0.006 * fs);
   const raw = new Float32Array(burstLength);
   const shaped = new Float64Array(burstLength);
+  /** @type {number[]} */
+  const beatTimes = [];
   const sounds = tickSounds || [
     { dt: -0.007, amp: 0.25, decayMs: 0.3 },
     { dt: -0.0045, amp: 0.45, decayMs: 0.4 },
@@ -100,6 +104,7 @@ export function synthesizeWatch(options) {
       if (t >= seconds - 0.05) break;
       const odd = k % 2 === 1;
       const offset = (odd ? beatOffsetMs * 1e-3 : 0) + (jitterMs > 0 ? displace() * jitterMs * 1e-3 : 0);
+      beatTimes.push(t + offset);
       for (const s of odd && tockSounds ? tockSounds : sounds) {
         const level = s.amp * gain * 1e-3 * (odd && !tockSounds ? 0.8 : 1);
         for (let i = 0; i < burstLength; i++) raw[i] = randn() * Math.exp(-i / (s.decayMs * 1e-3 * fs));
@@ -132,7 +137,7 @@ export function synthesizeWatch(options) {
       }
     }
   }
-  return { sampleRate: fs, channels, truePeriod };
+  return { sampleRate: fs, channels, truePeriod, beatTimes: Float64Array.from(beatTimes) };
 }
 
 /** The three sounds of a simulated beat: time before the beat's nominal time, loudness, decay. */
