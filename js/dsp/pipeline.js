@@ -11,6 +11,13 @@
 // beat is timed against the template from the last analysis, at the position the Kalman
 // tracker predicts. The analysis is repeated on the sliding history window from time to time,
 // which refreshes the template, the averaging and the noise thresholds.
+//
+// A beat's timestamp is the moment a reference point of its sound arrives. Each analysis picks
+// that point afresh, as the loudest part of the averaged beat, and a beat made of several sounds
+// of similar loudness (a co-axial escapement's, for one) can have a different loudest part from
+// one analysis to the next. So that timestamps stay comparable for as long as a lock lasts, each
+// repeat analysis measures how far its timestamps lie from the ones already reported for the
+// same beats, and reports its own moved back by that much.
 
 import { FilterBank } from './filterbank.js';
 import { Cleanup } from './cleanup.js';
@@ -90,6 +97,8 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {number[]} recentZ confidence of the recent timestamps
  * @property {Float64Array[]} weights matched-filter weights
  * @property {number} centre cluster position in the template, in samples
+ * @property {number} adjust samples added to positions measured at `centre`, so that timestamps
+ *   keep the reference point this beat type had when the lock began
  * @property {number} nextCycle next cycle of the current grid to be correlated
  * @property {Float64Array} acc sum of the correlation curves of the current block
  * @property {number} filled cycles in the current block
@@ -102,7 +111,8 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
 /**
  * @typedef {Object} Dot
  * @property {number} n global beat number
- * @property {number} p position in cleaned-envelope samples from the start of the audio
+ * @property {number} p position in cleaned-envelope samples from the start of the audio, at the
+ *   beat type's reference point
  * @property {0|1} j cluster of the current template the beat belongs to
  * @property {0|1} type 0 for a tick, 1 for a tock; stays the same across repeat analyses
  * @property {boolean} ok
@@ -168,6 +178,8 @@ const SIGNAL_BEATS = 8;
  * 8-cycle averages a 20 s window held only five, and its rate was off by 12 s/day.
  */
 const MIN_TIMESTAMPS = 12;
+/** Fewest beats timed both before and after a repeat analysis for the reference to be carried over. */
+const MIN_COMMON_BEATS = 3;
 
 export class Pipeline {
   /**
@@ -449,27 +461,37 @@ export class Pipeline {
     const types = [];
     /** @type {(Line|null)[]} */
     const lines = [];
+    /** @type {number[]} */
+    const adjusts = [];
     for (let j = 0; j < 2; j++) {
       const tr = analysis.tracks[j];
       const tracked = analysis.fits[j] !== null;
       const centre = analysis.clusters[j];
+      const type = /** @type {0|1} */ (Math.abs((j + shift) % 2));
       let nextCycle = 0;
+      /** @type {Dot[]} */
+      const own = [];
+      if (tracked) {
+        for (let i = 0; i < tr.lag.length; i += tr.K) {
+          const cycle = i + (tr.K - 1) / 2;
+          const p = start + cycle * period + centre + tr.lag[i];
+          own.push({ n: 2 * cycle + j + shift, p, j: /** @type {0|1} */ (j), type, ok: tr.value[i] > tr.threshold, z: tr.z[i], K: tr.K });
+          nextCycle = i + tr.K;
+        }
+      }
+      // Keep the reference point this beat type has had since the lock began.
+      const adjust = previous && confirmed ? this.carryReference(own, type, beatPeriod) : 0;
+      adjusts.push(adjust);
       /** @type {number[]} */
       const ns = [];
       /** @type {number[]} */
       const ps = [];
-      if (tracked) {
-        for (let i = 0; i < tr.lag.length; i += tr.K) {
-          const cycle = i + (tr.K - 1) / 2;
-          const ok = tr.value[i] > tr.threshold;
-          const n = 2 * cycle + j + shift;
-          const p = start + cycle * period + centre + tr.lag[i];
-          dots.push({ n, p, j: /** @type {0|1} */ (j), type: /** @type {0|1} */ (Math.abs((j + shift) % 2)), ok, z: tr.z[i], K: tr.K });
-          if (ok) {
-            ns.push(n);
-            ps.push(p);
-          }
-          nextCycle = i + tr.K;
+      for (const d of own) {
+        d.p += adjust;
+        dots.push(d);
+        if (d.ok) {
+          ns.push(d.n);
+          ps.push(d.p);
         }
       }
       lines.push(tracked ? lineThrough(ns, ps) : null);
@@ -501,6 +523,7 @@ export class Pipeline {
         recentZ: [],
         weights: buildWeights(analysis.template, centre, this.pre, this.nTau),
         centre,
+        adjust,
         nextCycle,
         acc: new Float64Array(this.nLag),
         filled: 0,
@@ -519,7 +542,7 @@ export class Pipeline {
     const tick = lines[parity];
     const tock = lines[1 - parity];
     const main = usable.reduce((best, l) => (l.periodVar < best.periodVar ? l : best));
-    const geometry = (analysis.clusters[1] - analysis.clusters[0] - beatPeriod) * (parity === 0 ? 1 : -1);
+    const geometry = (analysis.clusters[1] + adjusts[1] - analysis.clusters[0] - adjusts[0] - beatPeriod) * (parity === 0 ? 1 : -1);
     const offset = tick && tock ? tock.at(n) - tick.at(n) : geometry;
     const seconds = beatPeriod / fe;
     this.tracker = new BeatTracker({
@@ -553,6 +576,34 @@ export class Pipeline {
   }
 
   /**
+   * How far a repeat analysis must move its timestamps of one beat type for them to agree with
+   * the timestamps already reported for the same beats. Every new confident timestamp is
+   * compared with the nearest old one of its type; the median difference is the distance
+   * between the new analysis's reference point and the one in use.
+   * @param {Dot[]} fresh the new analysis's timestamps of one beat type, in time order
+   * @param {0|1} type
+   * @param {number} beatPeriod samples per beat
+   * @returns {number} samples to add to the new timestamps; 0 when too few beats are common to
+   *   both, as when this beat type was not timed before
+   */
+  carryReference(fresh, type, beatPeriod) {
+    const old = this.dots.filter((d) => d.type === type && d.ok);
+    if (old.length === 0) return 0;
+    /** @type {number[]} */
+    const moved = [];
+    let k = 0;
+    for (const d of fresh) {
+      if (!d.ok) continue;
+      while (k + 1 < old.length && Math.abs(old[k + 1].n - d.n) <= Math.abs(old[k].n - d.n)) k++;
+      const o = old[k];
+      // Averaged timestamps sit up to one average's length apart on the two grids.
+      if (Math.abs(o.n - d.n) > 2 * Math.max(o.K, d.K)) continue;
+      moved.push(d.p - o.p - (d.n - o.n) * beatPeriod);
+    }
+    return moved.length >= MIN_COMMON_BEATS ? -median(moved) : 0;
+  }
+
+  /**
    * Report the state and the beats of a fresh analysis.
    * @param {Dot[]} dots
    * @param {number} start
@@ -579,7 +630,7 @@ export class Pipeline {
     const beats = [];
     for (let j = 0; j < 2; j++) {
       const values = new Float32Array(before + after + 1);
-      const centre = Math.round(lock.clusters[j]);
+      const centre = Math.round(lock.clusters[j] + lock.types[j].adjust);
       for (const row of lock.template) {
         for (let i = 0; i < values.length; i++) values[i] += row[(((centre - before + i) % nb) + nb) % nb];
       }
@@ -620,8 +671,10 @@ export class Pipeline {
           ty.step = tracker.period;
           ty.acc.fill(0);
         }
+        // The grid gives where the reference point is expected; the filter's own centre lies
+        // `adjust` samples before it.
         const position = ty.p0 + (n - ty.n0) * ty.step;
-        const startAt = position - this.pre - this.maxLag - this.base;
+        const startAt = position - ty.adjust - this.pre - this.maxLag - this.base;
         if (Math.floor(startAt) + this.segLen + 1 >= filled) continue;
         if (startAt >= 0) correlateAt(this.rows, startAt, ty.weights, this.nLag, ty.acc, this.seg);
         ty.filled++;
@@ -745,7 +798,8 @@ export class Pipeline {
         zMedian: z.length ? median(z) : 0,
       };
     });
-    const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement);
+    const referenceGap = (lock.types[1].adjust - lock.types[0].adjust) / this.fe;
+    const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement, referenceGap);
     /** @type {Signal} */
     const signal = { z: [null, null], cycles: [null, null] };
     for (let j = 0; j < 2; j++) {

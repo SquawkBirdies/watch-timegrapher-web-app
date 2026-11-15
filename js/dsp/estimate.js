@@ -187,9 +187,13 @@ export const MAX_SCATTER_MS = 0.2;
  * @param {Escapement} [escapement] with 'coaxial' the rate still uses both beats, but no beat
  *   error is reported: a co-axial escapement's tick and tock are different sounds, so the gap
  *   between them does not measure the beat error
+ * @param {number} [referenceGap] seconds by which the gap between the tock and tick timestamps
+ *   exceeds the gap that timestamps taken at `clusters` would have. The real-time pipeline
+ *   keeps each beat type's reference point across repeat analyses, while `clusters` are the
+ *   current template's own
  * @returns {Readings}
  */
-export function summarize(beats, nominalPeriod, template, clusters, envelopeRate, escapement = 'lever') {
+export function summarize(beats, nominalPeriod, template, clusters, envelopeRate, escapement = 'lever', referenceGap = 0) {
   const fits = beats.map((s) => fitSeries(s, nominalPeriod));
   /** @type {Readings} */
   const result = { fits, rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null };
@@ -203,7 +207,9 @@ export function summarize(beats, nominalPeriod, template, clusters, envelopeRate
     const commonPeriod = nominalPeriod / (1 + rate / 86400);
     const raw = tockOffset(beats[0], beats[1], commonPeriod);
     const align = templateAlignment(template, clusters[0], clusters[1], envelopeRate);
-    const offset = raw + align.shiftSeconds;
+    // The beat error is judged between the template's own clusters, where the tick and the
+    // tock can be compared.
+    const offset = raw - referenceGap + align.shiftSeconds;
     const offsetSdMs = Math.hypot(fitTick.jitterMs / Math.sqrt(fitTick.count), fitTock.jitterMs / Math.sqrt(fitTock.count));
     result.beatErrorDetail = { offsetMs: offset * 1e3, offsetSdMs, similarity: align.similarity };
     const precise = offsetSdMs <= MAX_OFFSET_SD_MS && Math.max(fitTick.jitterMs, fitTock.jitterMs) <= MAX_SCATTER_MS;

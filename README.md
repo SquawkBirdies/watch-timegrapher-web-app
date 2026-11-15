@@ -8,8 +8,9 @@ real-time trace.
 three demo recordings or by a recording of your own. The live microphone comes to it in
 milestone 6; until then the audio diagnostic records and measures it.
 
-Tested on an iPhone 17 Pro Max with iOS 27.2 and Safari (the audio diagnostic, milestone 4), and
-in Chrome on a computer at phone size (the screen, milestone 5).
+Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
+and the timegrapher replaying the three demo recordings in milestone 5), and in Chrome on a
+computer at phone size.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -70,6 +71,18 @@ synthetic watches every 20 s reading lay within three times its stated uncertain
 rate. When faint ticks must be averaged over several cycles, the window is lengthened until each
 beat type has at least 12 independent timestamps: on the first Omega recording, to 27 s.
 
+A beat's timestamp is the moment one point of its sound arrives, and each analysis picks that
+point afresh, as the loudest part of the averaged beat. When a beat is made of two sounds of
+similar loudness, the loudest part can change from one analysis to the next. The second Omega
+recording showed it: its tock is two sounds 3.7 ms apart, and a repeat analysis 64 s in moved
+the tock timestamps by 3.8 ms, which put a step in the trace. Each repeat analysis now measures
+how far its timestamps lie from the ones already reported for the same beats, and reports its
+own moved back by that much, so a beat type keeps the reference point it had when the lock
+began. On that recording the tock trace is now one line, with no step above 0.4 ms between
+neighbouring 5 s stretches. The rate and beat-error readings of the three recordings are
+unchanged at the default window: all the timestamps of a beat type inside the window move
+together, and the beat error is still judged between the template's own loudest points.
+
 Known limits of the real-time pipeline:
 
 - A faint watch is found only once enough of its ticking is in the history buffer. The default
@@ -80,10 +93,11 @@ Known limits of the real-time pipeline:
   watch with a genuinely ragged trace will therefore show no beat error.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
-- On a co-axial watch a repeat analysis can time a beat type on a different one of its sounds
-  than before. On the second Omega recording the tock line of the trace jumps by almost 4 ms
-  25 s in. The rate readings stayed between -1.3 and -3.0 s/day through the jump, because the
-  line fit sets aside the minority of points that do not follow the rest.
+- A single faint beat made of several sounds can still be timed on a neighbouring sound. On
+  the second Omega recording 20 of the 93 confident tick timestamps lie more than 1 ms off the
+  tick line. The line fit sets them aside, so they scatter the trace without moving the rate.
+- A beat type that stops being timed and is found again later starts from a fresh reference
+  point, so its trace line can resume a few milliseconds from where it stopped.
 
 ## Hosting
 
@@ -117,7 +131,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about seven minutes
+npm test             # about eight minutes
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
