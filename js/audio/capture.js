@@ -76,11 +76,15 @@ export async function openMicrophone(options, onChunk, onChange = () => {}) {
     throw error;
   }
   const source = context.createMediaStreamSource(stream);
+  // Only the first channel is kept. Safari on the iPhone delivers the mono microphone as two
+  // channels with the second one silent; analysing that silent channel doubled the work.
   const node = new AudioWorkletNode(context, 'capture-processor', {
     numberOfInputs: 1,
     numberOfOutputs: 1,
     outputChannelCount: [1],
-    channelCountMode: 'max',
+    channelCount: 1,
+    channelCountMode: 'explicit',
+    channelInterpretation: 'discrete',
     processorOptions: { chunkFrames: options.chunkFrames ?? 4096 },
   });
   // Some browsers only run a node that leads to the speakers, so it is connected through a

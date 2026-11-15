@@ -64,13 +64,13 @@ Until the app is ready, `index.html` is a placeholder that checks the browser: s
 connection, microphone access, audio worklets, screen wake lock, and whether the signal
 pipeline loads.
 
-`diagnostic.html` is the audio diagnostic. It records up to 60 s from a chosen microphone with
-the browser's echo cancellation, noise suppression and automatic gain off (or on, to compare),
-shows the waveform above 2 kHz, and runs the real-time pipeline on the audio as it arrives in a
-background worker. Afterwards it reports what the browser actually applied, the levels, any
-dropouts or interruptions, the readings and the pipeline's load. The recording can be saved as
-a 32-bit float WAV file holding nothing but the audio. A speed test times the pipeline on 60 s
-of a simulated watch.
+`diagnostic.html` is the audio diagnostic. It records up to 60 s from the first channel of a
+chosen microphone with the browser's echo cancellation, noise suppression and automatic gain
+off (or on, to compare), shows the waveform above 2 kHz, and runs the real-time pipeline on the
+audio as it arrives in a background worker. Afterwards it reports what the browser actually
+applied, the levels, any dropouts or interruptions, the readings and the pipeline's load. The
+recording can be saved as a 32-bit float WAV file holding nothing but the audio. A speed test
+times the pipeline on 60 s of a simulated watch.
 
 ## Running the tests
 
