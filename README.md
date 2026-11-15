@@ -65,9 +65,9 @@ through Safari showed why: in Swiss-lever mode it read a steady 3.4 ms beat erro
 describe the watch, and the beat-error checks passed it.
 
 Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
-reads less steadily. The last readings at 20 s were +6.92 s/day for the ETA, +1.08 s/day for the
-first Omega recording and -1.54 s/day for the second, and after their first 20 s of lock the ETA's
-readings ranged from +6.30 to +6.98 s/day and the second Omega's from -3.11 to -1.30 s/day. On
+reads less steadily. The last readings at 20 s were +6.91 s/day for the ETA, +0.45 s/day for the
+first Omega recording and -1.58 s/day for the second, and after their first 20 s of lock the ETA's
+readings ranged from +6.31 to +6.99 s/day and the second Omega's from -3.03 to -1.30 s/day. On
 synthetic watches every 20 s reading lay within three times its stated uncertainty of the true
 rate. When faint ticks must be averaged over several cycles, the window is lengthened until each
 beat type has at least 12 independent timestamps: on the first Omega recording, to 27 s.
@@ -84,6 +84,27 @@ neighbouring 5 s stretches. The rate and beat-error readings of the three record
 unchanged at the default window: all the timestamps of a beat type inside the window move
 together, and the beat error is still judged between the template's own loudest points.
 
+A beat made of several sounds gives a correlation curve with several peaks, and on a faint
+beat the highest was not always the same one. On the second Omega recording, 19 of the 93
+confident tick timestamps lay more than 1 ms from the tick line. Two measures keep the trace
+together:
+
+- A peak within 1 ms of where the beat is expected is preferred to a higher one elsewhere, if
+  it stands above the noise and reaches 60% of the highest. In an analysis, the expected place
+  is the trend of the neighbouring beats; while tracking, it is the tracker's prediction.
+- Beats that are confident but still scatter by more than 0.2 ms about their trend are averaged
+  over more cycles, up to twice as many. Beats that stand 10 noise standard deviations above the
+  noise are left alone: their scatter is taken to be the watch's own.
+
+On that recording the ticks are now averaged over 4 cycles instead of 2. Of 53 confident tick
+timestamps, 1 lies more than 1 ms from the line, and their scatter fell from 0.46 ms to 0.24 ms.
+With the first measure alone it was 6 of 93 and 0.35 ms. The rate readings did not move by more
+than 0.05 s/day on any recording but one: on the first Omega recording the 20 s readings became
+steadier, ending on +0.45 instead of +1.08 s/day, against +0.54 for the whole recording. A
+simulated watch that runs irregularly but can be heard clearly keeps its scatter. On 16 simulated
+watches with faint, blurred beats the rate error fell from 0.75 to 0.60 s/day, and a beat error
+was shown in 130 of 632 readings instead of 55 of 628, with an error of 0.07 ms instead of 0.04.
+
 Known limits of the real-time pipeline:
 
 - A faint watch is found only once enough of its ticking is in the history buffer. The default
@@ -94,9 +115,14 @@ Known limits of the real-time pipeline:
   watch with a genuinely ragged trace will therefore show no beat error.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
-- A single faint beat made of several sounds can still be timed on a neighbouring sound. On
-  the second Omega recording 20 of the 93 confident tick timestamps lie more than 1 ms off the
-  tick line. The line fit sets them aside, so they scatter the trace without moving the rate.
+- A blurred beat still scatters. The second Omega recording's ticks, a sound several
+  milliseconds wide, scatter by 0.24 ms about their line against 0.07 ms for its tocks. A
+  shorter matching window and single frequency bands both timed them worse.
+- When beats are faint, imprecise timing and irregular running cannot be told apart, and the
+  extra averaging smooths both. A simulated watch with 0.4 ms of real scatter, heard faintly,
+  showed 0.17 ms.
+- The noise threshold of each beat type comes from about a hundred off-beat samples per
+  analysis, so the amount of averaging chosen can differ from one analysis to the next.
 - A beat type that stops being timed and is found again later starts from a fresh reference
   point, so its trace line can resume a few milliseconds from where it stopped.
 
@@ -132,7 +158,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about nine minutes
+npm test             # about ten minutes
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
@@ -150,7 +176,7 @@ js/dsp/filterbank.js   band-pass filter bank, 1.5 to 22.5 kHz, and energy envelo
 js/dsp/cleanup.js      noise levelling, click clipping, mains-hum comb filter
 js/dsp/acquire.js      beat-rate search by folding, exact and fast
 js/dsp/template.js     averaged tick-tock cycle
-js/dsp/timing.js       matched-filter beat timing, with averaging for faint watches
+js/dsp/timing.js       matched-filter beat timing, with averaging for faint or scattered beats
 js/dsp/estimate.js     rate and beat error from the timestamps; the escapement setting
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
 js/dsp/tracker.js      Kalman beat tracker

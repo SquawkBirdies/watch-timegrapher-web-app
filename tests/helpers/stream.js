@@ -2,6 +2,7 @@
 
 import { Pipeline } from '../../js/dsp/pipeline.js';
 import { robustLine, median } from '../../js/dsp/mathutil.js';
+import { runningMedian } from '../../js/dsp/timing.js';
 
 /**
  * @typedef {import('../../js/dsp/pipeline.js').StatusEvent} StatusEvent
@@ -88,4 +89,38 @@ export function traceLine(beats, bph, type) {
   let step = 0;
   for (let i = 1; i < medians.length; i++) step = Math.max(step, Math.abs(medians[i] - medians[i - 1]));
   return { count: own.length, cycles: Math.max(...own.map((b) => b.cycles)), slope: fit.b * 86.4, step };
+}
+
+/**
+ * How tightly the confident beats of one type keep to their own trend. The trend is a robust
+ * line through the trace plus a running median over 15 beats of what the line leaves, so that
+ * neither a steady rate nor a slow change of rate counts as scatter.
+ * @param {Beat[]} beats
+ * @param {number} bph
+ * @param {0|1} type
+ * @returns {{count: number, total: number, cycles: number[], far: number, spreadMs: number, sdMs: number}}
+ *   the number of confident beats and of all beats; the numbers of cycles averaged, in order of
+ *   first use; how many confident beats lie more than 1 ms from the trend; their scatter about
+ *   it as a scaled median absolute deviation; and as a standard deviation
+ */
+export function traceScatter(beats, bph, type) {
+  const all = beats.filter((b) => b.type === type);
+  const own = all.filter((b) => b.ok);
+  const cycles = [...new Set(all.map((b) => b.cycles))];
+  if (own.length < 8) return { count: own.length, total: all.length, cycles, far: 0, spreadMs: NaN, sdMs: NaN };
+  const period = 3600 / bph;
+  const ts = own.map((b) => b.t);
+  const ys = own.map((b) => (b.n * period - b.t) * 1000);
+  const fit = robustLine(ts, ys);
+  const left = Float64Array.from(ys, (y, i) => y - fit.a - fit.b * ts[i]);
+  const trend = runningMedian(left, 15);
+  const off = Array.from(left, (y, i) => Math.abs(y - trend[i]));
+  return {
+    count: own.length,
+    total: all.length,
+    cycles,
+    far: off.filter((d) => d > 1).length,
+    spreadMs: 1.4826 * median(off),
+    sdMs: Math.sqrt(off.reduce((sum, d) => sum + d * d, 0) / off.length),
+  };
 }

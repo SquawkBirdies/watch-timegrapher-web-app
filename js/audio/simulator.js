@@ -49,6 +49,8 @@ export function gaussianFrom(uniform) {
  * @property {{dt: number, amp: number, decayMs: number}[]} [tockSounds] sounds of the tock; the
  *   tick's sounds at 0.8 times the loudness when absent. Together these let a test give the tick
  *   and tock different sounds, as a co-axial escapement does
+ * @property {number} [jitterMs] standard deviation of a random displacement given to every beat,
+ *   for a watch that runs irregularly; 0 when absent
  */
 
 /**
@@ -58,10 +60,12 @@ export function gaussianFrom(uniform) {
  * @returns {{sampleRate: number, channels: Float32Array[], truePeriod: number}}
  */
 export function synthesizeWatch(options) {
-  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds } = options;
+  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds, jitterMs = 0 } = options;
   const fs = sampleRate;
   const n = Math.floor(seconds * fs);
   const randn = gaussianFrom(seededRandom(seed));
+  // A generator of its own for the jitter, so that the rest is the same with or without it.
+  const displace = gaussianFrom(seededRandom(seed + 0x51ed270b));
   const channels = [new Float32Array(n), new Float32Array(n)];
 
   // Background: low-frequency-heavy noise plus a little white noise, independent per channel.
@@ -95,7 +99,7 @@ export function synthesizeWatch(options) {
       const t = 0.137 + k * truePeriod;
       if (t >= seconds - 0.05) break;
       const odd = k % 2 === 1;
-      const offset = odd ? beatOffsetMs * 1e-3 : 0;
+      const offset = (odd ? beatOffsetMs * 1e-3 : 0) + (jitterMs > 0 ? displace() * jitterMs * 1e-3 : 0);
       for (const s of odd && tockSounds ? tockSounds : sounds) {
         const level = s.amp * gain * 1e-3 * (odd && !tockSounds ? 0.8 : 1);
         for (let i = 0; i < burstLength; i++) raw[i] = randn() * Math.exp(-i / (s.decayMs * 1e-3 * fs));

@@ -23,7 +23,7 @@ import { FilterBank } from './filterbank.js';
 import { Cleanup } from './cleanup.js';
 import { acquireFast } from './acquire.js';
 import { analyzeRows } from './offline.js';
-import { buildWeights, correlateAt, pickPeak, pickPeaks, matchedFilter, averageCycles } from './timing.js';
+import { buildWeights, correlateAt, pickPeak, pickPeakNear, pickPeaks, matchedFilter, averageCycles, NEAR_MS } from './timing.js';
 import { summarize } from './estimate.js';
 import { BeatTracker } from './tracker.js';
 import { robustLine, median, mean, std, percentile } from './mathutil.js';
@@ -47,6 +47,8 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {number} [blockSize] audio samples processed at a time
  * @property {number[][]} [bands] filter-bank band edges in hertz, replacing the defaults
  * @property {import('./estimate.js').Escapement} [escapement] 'coaxial' hides the beat error, as in `summarize`
+ * @property {import('./timing.js').TimingOptions} [timing] switches for the measures against
+ *   scattered timestamps, as in `trackBeats`
  */
 
 /**
@@ -212,6 +214,8 @@ export class Pipeline {
     const fe = this.fe;
     this.pre = Math.floor(PRE_MS * 1e-3 * fe);
     this.maxLag = Math.floor(LAG_MS * 1e-3 * fe);
+    /** How far from the tracker's prediction a peak is still preferred, in lags. */
+    this.nearLag = Math.round(NEAR_MS * 1e-3 * fe);
     this.nTau = this.pre + Math.floor(POST_MS * 1e-3 * fe) + 1;
     this.nLag = 2 * this.maxLag + 1;
     this.segLen = this.nTau + 2 * this.maxLag;
@@ -393,6 +397,7 @@ export class Pipeline {
         accept: (c) => c.secondZ >= 5,
         refineSpan: (600 * fe) / analysed,
         escapement: o.escapement,
+        timing: o.timing,
       });
       if (analysis && analysis.locked) {
         this.lockedFrom = start;
@@ -423,6 +428,7 @@ export class Pipeline {
       periodPpm: ppm,
       refineSpan: (600 * fe) / length,
       escapement: this.options.escapement,
+      timing: this.options.timing,
     });
     const kept = analysis !== null && analysis.locked && this.install(analysis, rows, start, length, true);
     this.analysisSeconds += (performance.now() - t0) / 1000;
@@ -682,7 +688,10 @@ export class Pipeline {
         progress = true;
         if (ty.filled < ty.K) continue;
         for (let L = 0; L < this.nLag; L++) ty.acc[L] /= ty.K;
-        const peak = pickPeak(ty.acc, this.lags);
+        // The tracker says where the beat is expected: lag 0. A confident peak close to that
+        // is preferred to a higher one on another of the beat's sounds.
+        const preferNear = !this.options.timing || this.options.timing.preferNear !== false;
+        const peak = preferNear ? pickPeakNear(ty.acc, this.lags, 0, this.nearLag, ty.threshold) : pickPeak(ty.acc, this.lags);
         const centreN = ty.n0 + (ty.K - 1);
         const p = ty.p0 + (ty.K - 1) * ty.step + peak.lag;
         const ok = peak.value > ty.threshold;
