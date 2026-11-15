@@ -2,6 +2,7 @@
 
 import { Pipeline } from '../../js/dsp/pipeline.js';
 import { robustLine, median } from '../../js/dsp/mathutil.js';
+import { runningMedian } from '../../js/dsp/timing.js';
 
 /**
  * @typedef {import('../../js/dsp/pipeline.js').StatusEvent} StatusEvent
@@ -88,4 +89,97 @@ export function traceLine(beats, bph, type) {
   let step = 0;
   for (let i = 1; i < medians.length; i++) step = Math.max(step, Math.abs(medians[i] - medians[i - 1]));
   return { count: own.length, cycles: Math.max(...own.map((b) => b.cycles)), slope: fit.b * 86.4, step };
+}
+
+/**
+ * How tightly the confident beats of one type keep to their own trend. The trend is a robust
+ * line through the trace plus a running median over 15 beats of what the line leaves, so that
+ * neither a steady rate nor a slow change of rate counts as scatter.
+ * @param {Beat[]} beats
+ * @param {number} bph
+ * @param {0|1} type
+ * @returns {{count: number, total: number, cycles: number[], far: number, spreadMs: number, sdMs: number}}
+ *   the number of confident beats and of all beats; the numbers of cycles averaged, in order of
+ *   first use; how many confident beats lie more than 1 ms from the trend; their scatter about
+ *   it as a scaled median absolute deviation; and as a standard deviation
+ */
+export function traceScatter(beats, bph, type) {
+  const all = beats.filter((b) => b.type === type);
+  const own = all.filter((b) => b.ok);
+  const cycles = [...new Set(all.map((b) => b.cycles))];
+  if (own.length < 8) return { count: own.length, total: all.length, cycles, far: 0, spreadMs: NaN, sdMs: NaN };
+  const period = 3600 / bph;
+  const ts = own.map((b) => b.t);
+  const ys = own.map((b) => (b.n * period - b.t) * 1000);
+  const fit = robustLine(ts, ys);
+  const left = Float64Array.from(ys, (y, i) => y - fit.a - fit.b * ts[i]);
+  const trend = runningMedian(left, 15);
+  const off = Array.from(left, (y, i) => Math.abs(y - trend[i]));
+  return {
+    count: own.length,
+    total: all.length,
+    cycles,
+    far: off.filter((d) => d > 1).length,
+    spreadMs: 1.4826 * median(off),
+    sdMs: Math.sqrt(off.reduce((sum, d) => sum + d * d, 0) / off.length),
+  };
+}
+
+/**
+ * How closely the timestamps of one beat type follow when the beats really fell, for a
+ * synthetic watch whose true beat times are known. Each timestamp is compared with the mean
+ * true time of the cycles it averages; the comparison takes out one constant, the distance
+ * between the beat's timing point and its sound at `dt` 0.
+ * @param {Beat[]} beats
+ * @param {Float64Array} beatTimes true time of every beat, ticks and tocks alternating
+ * @param {number} truePeriod true beat period in seconds
+ * @param {0|1} type
+ * @returns {{count: number, errorMs: number, wrong: number, follows: number}} the number of
+ *   confident timestamps compared; their root-mean-square error; how many are off by more than
+ *   0.5 ms; and the slope of their displacements against the true displacements, which is 1
+ *   when the trace shows the watch's irregularity in full and 0 when it hides it
+ */
+export function againstTruth(beats, beatTimes, truePeriod, type) {
+  /** @type {{error: number, shown: number, real: number}[] | null} */
+  let best = null;
+  let bestRms = Infinity;
+  // Which parity of the true beats is this type: the one that fits.
+  for (const parity of [0, 1]) {
+    const times = beatTimes.filter((_, k) => k % 2 === parity);
+    const start = 0.137 + parity * truePeriod;
+    /** @type {{measured: number, real: number}[]} */
+    const pairs = [];
+    for (const b of beats) {
+      if (b.type !== type || !b.ok) continue;
+      const centre = (b.t - start) / (2 * truePeriod);
+      const lo = Math.round(centre - (b.cycles - 1) / 2);
+      const hi = lo + b.cycles - 1;
+      if (lo < 0 || hi >= times.length) continue;
+      let real = 0;
+      let nominal = 0;
+      for (let i = lo; i <= hi; i++) {
+        real += times[i];
+        nominal += start + 2 * i * truePeriod;
+      }
+      pairs.push({ measured: b.t - nominal / b.cycles, real: real / b.cycles - nominal / b.cycles });
+    }
+    if (pairs.length === 0) continue;
+    const shift = median(pairs.map((p) => p.measured - p.real));
+    const list = pairs.map((p) => ({ error: (p.measured - shift - p.real) * 1000, shown: (p.measured - shift) * 1000, real: p.real * 1000 }));
+    const rms = Math.sqrt(list.reduce((sum, p) => sum + p.error ** 2, 0) / list.length);
+    if (rms < bestRms) {
+      bestRms = rms;
+      best = list;
+    }
+  }
+  if (!best) return { count: 0, errorMs: NaN, wrong: 0, follows: NaN };
+  const mx = best.reduce((sum, p) => sum + p.real, 0) / best.length;
+  const my = best.reduce((sum, p) => sum + p.shown, 0) / best.length;
+  let sxy = 0;
+  let sxx = 0;
+  for (const p of best) {
+    sxy += (p.real - mx) * (p.shown - my);
+    sxx += (p.real - mx) ** 2;
+  }
+  return { count: best.length, errorMs: bestRms, wrong: best.filter((p) => Math.abs(p.error) > 0.5).length, follows: sxx > 0 ? sxy / sxx : NaN };
 }

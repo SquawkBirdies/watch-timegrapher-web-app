@@ -65,9 +65,9 @@ through Safari showed why: in Swiss-lever mode it read a steady 3.4 ms beat erro
 describe the watch, and the beat-error checks passed it.
 
 Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
-reads less steadily. The last readings at 20 s were +6.92 s/day for the ETA, +1.08 s/day for the
-first Omega recording and -1.54 s/day for the second, and after their first 20 s of lock the ETA's
-readings ranged from +6.30 to +6.98 s/day and the second Omega's from -3.11 to -1.30 s/day. On
+reads less steadily. The last readings at 20 s were +6.91 s/day for the ETA, +0.45 s/day for the
+first Omega recording and -1.58 s/day for the second, and after their first 20 s of lock the ETA's
+readings ranged from +6.31 to +6.99 s/day and the second Omega's from -3.12 to -1.28 s/day. On
 synthetic watches every 20 s reading lay within three times its stated uncertainty of the true
 rate. When faint ticks must be averaged over several cycles, the window is lengthened until each
 beat type has at least 12 independent timestamps: on the first Omega recording, to 27 s.
@@ -84,6 +84,20 @@ neighbouring 5 s stretches. The rate and beat-error readings of the three record
 unchanged at the default window: all the timestamps of a beat type inside the window move
 together, and the beat error is still judged between the template's own loudest points.
 
+A beat made of several sounds gives a correlation curve with several peaks, and on a faint
+beat the highest was not always the same one. On the second Omega recording, 19 of the 93
+confident tick timestamps lay more than 1 ms from the tick line. A peak within 1 ms of where the
+beat is expected is now preferred to a higher one elsewhere, if it stands above the noise and
+reaches 60% of the highest. In an analysis, the expected place is the trend of the neighbouring
+beats; while tracking, it is the tracker's prediction. This only chooses among the positions one
+beat could have; it never mixes beats together. On that recording 6 of the 93 confident tick
+timestamps now lie more than 1 ms from the line, and their scatter fell from 0.46 ms to 0.35 ms.
+The rate readings moved by at most 0.05 s/day, except the first Omega recording's 20 s
+readings, which ended on +0.45 instead of +1.08 s/day, against +0.54 for the whole recording.
+On simulated watches heard clearly whose beats are displaced at random by 0.5 ms or 1 ms, the
+timestamps still follow each beat's true displacement, by a factor of 0.88 to 1.01. They are as
+close to it as before at 0.5 ms, and closer at 1 ms: 0.38 to 0.41 ms rms instead of 0.45 to 0.52.
+
 Known limits of the real-time pipeline:
 
 - A faint watch is found only once enough of its ticking is in the history buffer. The default
@@ -94,9 +108,14 @@ Known limits of the real-time pipeline:
   watch with a genuinely ragged trace will therefore show no beat error.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
-- A single faint beat made of several sounds can still be timed on a neighbouring sound. On
-  the second Omega recording 20 of the 93 confident tick timestamps lie more than 1 ms off the
-  tick line. The line fit sets them aside, so they scatter the trace without moving the rate.
+- A blurred beat still scatters. The second Omega recording's ticks, a sound several
+  milliseconds wide, scatter by 0.35 ms about their line against 0.08 ms for its tocks. A
+  shorter matching window and single frequency bands both timed them worse.
+- Weak-signal averaging cannot tell a faint watch from one that runs irregularly, because both
+  make single beats less confident. A clearly audible simulated watch whose beats were displaced
+  at random by 2 ms had one beat type averaged over 3 cycles, which hid part of its
+  irregularity, and its 20 s rate readings were off by 5.3 s/day rms against a stated ±2.9. A
+  bench timegrapher shows such a watch as a snowstorm of dots and gives no rate.
 - A beat type that stops being timed and is found again later starts from a fresh reference
   point, so its trace line can resume a few milliseconds from where it stopped.
 
@@ -132,7 +151,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about nine minutes
+npm test             # about ten minutes
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks

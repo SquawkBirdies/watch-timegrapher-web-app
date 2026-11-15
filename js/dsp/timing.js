@@ -1,10 +1,21 @@
 // Stages 6 and 7 of the pipeline: time each beat with a matched filter, averaging several
 // consecutive cycles first when single beats are too faint.
+//
+// A beat made of several sounds gives a correlation curve with several peaks. When the beat is
+// faint, the highest of them is not always the same one, and the timestamp jumps by the
+// distance between two sounds. So a peak close to where the beat is expected is preferred to a
+// higher one elsewhere, as long as it stands above the noise and is not much lower. This only
+// chooses among the positions one beat could have; it never mixes beats together.
 
 import { percentile, mean, std, median, parabolicOffset } from './mathutil.js';
 
 /** Numbers of cycles tried for averaging, smallest first. */
 export const AVERAGING_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+
+/** How close to the expected position a peak must be to be preferred, in milliseconds. */
+export const NEAR_MS = 1;
+/** A peak near the expected position is preferred if it is at least this share of the highest. */
+export const NEAR_FRACTION = 0.6;
 
 /**
  * Matched-filter weights for one cluster: the positive part of the template around the cluster,
@@ -77,6 +88,43 @@ export function pickPeak(c, lags) {
   let best = 0;
   for (let L = 1; L < c.length; L++) if (c[L] > c[best]) best = L;
   return { lag: lags[best] + (best > 0 && best < c.length - 1 ? parabolicOffset(c[best - 1], c[best], c[best + 1]) : 0), value: c[best] };
+}
+
+/**
+ * Peak of one correlation curve, preferring a peak near the expected lag to a higher one
+ * elsewhere. The nearer peak is taken when it stands above the noise threshold and reaches
+ * `NEAR_FRACTION` of the highest; a beat that truly arrived elsewhere leaves only noise, or a
+ * weak side peak, at the expected lag, and keeps its highest peak.
+ * @param {Float64Array} c
+ * @param {Int32Array} lags
+ * @param {number} expected lag at which the beat is expected
+ * @param {number} halfWidth how far from it a peak may lie, in lags
+ * @param {number} threshold noise threshold of the peak height
+ * @returns {{lag: number, value: number}}
+ */
+export function pickPeakNear(c, lags, expected, halfWidth, threshold) {
+  const top = pickPeak(c, lags);
+  if (Math.abs(top.lag - expected) <= halfWidth) return top;
+  const centre = Math.round(expected) - lags[0];
+  let best = -1;
+  for (let L = Math.max(1, centre - halfWidth); L <= Math.min(c.length - 2, centre + halfWidth); L++) {
+    if (c[L] >= c[L - 1] && c[L] >= c[L + 1] && (best < 0 || c[L] > c[best])) best = L;
+  }
+  if (best < 0 || c[best] <= threshold || c[best] < NEAR_FRACTION * top.value) return top;
+  return { lag: lags[best] + parabolicOffset(c[best - 1], c[best], c[best + 1]), value: c[best] };
+}
+
+/**
+ * Running median over the values available on each side, without padding at the ends.
+ * @param {Float64Array} values
+ * @param {number} width window length, odd
+ * @returns {Float64Array}
+ */
+export function runningMedian(values, width) {
+  const half = width >> 1;
+  const out = new Float64Array(values.length);
+  for (let i = 0; i < values.length; i++) out[i] = median(values.subarray(Math.max(0, i - half), Math.min(values.length, i + half + 1)));
+  return out;
 }
 
 /**
@@ -179,6 +227,12 @@ export function pickPeaks(corr, lags) {
  */
 
 /**
+ * Switch for the peak preference, for tests and comparisons.
+ * @typedef {Object} TimingOptions
+ * @property {boolean} [preferNear] false always takes the highest peak of a correlation curve
+ */
+
+/**
  * Time the beats of one type (tick or tock), choosing the smallest amount of averaging that
  * makes at least `target` of the estimates stand above the noise.
  * @param {Float32Array[]} rows
@@ -186,29 +240,52 @@ export function pickPeaks(corr, lags) {
  * @param {number} period
  * @param {[Float32Array[], Float32Array[]]} templates even-cycle and odd-cycle templates
  * @param {number} centre
- * @param {{target?: number, steps?: number[]}} [options]
+ * @param {{target?: number, steps?: number[]} & TimingOptions} [options]
  * @returns {BeatTrack}
  */
 export function trackBeats(rows, envelopeRate, period, templates, centre, options = {}) {
-  const { target = 0.85, steps = AVERAGING_STEPS } = options;
+  const { target = 0.85, steps = AVERAGING_STEPS, preferNear = true } = options;
   const signal = matchedFilter(rows, envelopeRate, period, templates, centre);
   const noise = matchedFilter(rows, envelopeRate, period, templates, centre, { dataOffset: period / 4 });
-  /** @type {BeatTrack | null} */
-  let track = null;
-  for (const K of steps) {
-    if (signal.corr.length < K + 2) break;
-    const s = pickPeaks(averageCycles(signal.corr, K), signal.lags);
+  const ms = 1000 / envelopeRate;
+  const near = Math.round(NEAR_MS / ms);
+
+  /**
+   * @param {number} K
+   * @returns {BeatTrack}
+   */
+  const timeWith = (K) => {
+    const curves = averageCycles(signal.corr, K);
+    const s = pickPeaks(curves, signal.lags);
     const nz = pickPeaks(averageCycles(noise.corr, K), noise.lags);
     const threshold = percentile(nz.value, 99);
     const nMean = mean(nz.value);
     const nSd = std(nz.value) + 1e-12;
+    // Where each beat is expected: the trend of the highest peaks, over about eight
+    // independent estimates either way.
+    const trend = runningMedian(s.lag, Math.max(21, 8 * K + 1));
+    if (preferNear) {
+      for (let i = 0; i < curves.length; i++) {
+        if (Math.abs(s.lag[i] - trend[i]) <= near) continue;
+        const peak = pickPeakNear(curves[i], signal.lags, trend[i], near, threshold);
+        s.lag[i] = peak.lag;
+        s.value[i] = peak.value;
+      }
+    }
     let above = 0;
     const z = new Float64Array(s.value.length);
     for (let i = 0; i < s.value.length; i++) {
-      if (s.value[i] > threshold) above++;
       z[i] = (s.value[i] - nMean) / nSd;
+      if (s.value[i] > threshold) above++;
     }
-    track = { K, lag: s.lag, value: s.value, threshold, noiseMean: nMean, noiseSd: nSd, z, confidentFraction: above / s.value.length };
+    return { K, lag: s.lag, value: s.value, threshold, noiseMean: nMean, noiseSd: nSd, z, confidentFraction: above / s.value.length };
+  };
+
+  /** @type {BeatTrack | null} */
+  let track = null;
+  for (const K of steps) {
+    if (signal.corr.length < K + 2) break;
+    track = timeWith(K);
     if (track.confidentFraction >= target) break;
   }
   if (!track) {

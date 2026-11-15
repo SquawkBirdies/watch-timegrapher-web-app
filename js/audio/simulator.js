@@ -49,19 +49,25 @@ export function gaussianFrom(uniform) {
  * @property {{dt: number, amp: number, decayMs: number}[]} [tockSounds] sounds of the tock; the
  *   tick's sounds at 0.8 times the loudness when absent. Together these let a test give the tick
  *   and tock different sounds, as a co-axial escapement does
+ * @property {number} [jitterMs] standard deviation of a random displacement given to every beat,
+ *   for a watch that runs irregularly; 0 when absent
  */
 
 /**
  * Generate two channels of background noise, watch ticks and mains-locked buzz.
  * Each beat has three sounds 7, 4.5 and 0 ms before its nominal time, the last one loudest.
  * @param {WatchOptions} options
- * @returns {{sampleRate: number, channels: Float32Array[], truePeriod: number}}
+ * @returns {{sampleRate: number, channels: Float32Array[], truePeriod: number, beatTimes: Float64Array}}
+ *   `beatTimes` holds when each beat really fell, in seconds, beat offset and jitter included:
+ *   the time of its sound at `dt` 0
  */
 export function synthesizeWatch(options) {
-  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds } = options;
+  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds, jitterMs = 0 } = options;
   const fs = sampleRate;
   const n = Math.floor(seconds * fs);
   const randn = gaussianFrom(seededRandom(seed));
+  // A generator of its own for the jitter, so that the rest is the same with or without it.
+  const displace = gaussianFrom(seededRandom(seed + 0x51ed270b));
   const channels = [new Float32Array(n), new Float32Array(n)];
 
   // Background: low-frequency-heavy noise plus a little white noise, independent per channel.
@@ -85,6 +91,8 @@ export function synthesizeWatch(options) {
   const burstLength = Math.floor(0.006 * fs);
   const raw = new Float32Array(burstLength);
   const shaped = new Float64Array(burstLength);
+  /** @type {number[]} */
+  const beatTimes = [];
   const sounds = tickSounds || [
     { dt: -0.007, amp: 0.25, decayMs: 0.3 },
     { dt: -0.0045, amp: 0.45, decayMs: 0.4 },
@@ -95,7 +103,8 @@ export function synthesizeWatch(options) {
       const t = 0.137 + k * truePeriod;
       if (t >= seconds - 0.05) break;
       const odd = k % 2 === 1;
-      const offset = odd ? beatOffsetMs * 1e-3 : 0;
+      const offset = (odd ? beatOffsetMs * 1e-3 : 0) + (jitterMs > 0 ? displace() * jitterMs * 1e-3 : 0);
+      beatTimes.push(t + offset);
       for (const s of odd && tockSounds ? tockSounds : sounds) {
         const level = s.amp * gain * 1e-3 * (odd && !tockSounds ? 0.8 : 1);
         for (let i = 0; i < burstLength; i++) raw[i] = randn() * Math.exp(-i / (s.decayMs * 1e-3 * fs));
@@ -128,7 +137,7 @@ export function synthesizeWatch(options) {
       }
     }
   }
-  return { sampleRate: fs, channels, truePeriod };
+  return { sampleRate: fs, channels, truePeriod, beatTimes: Float64Array.from(beatTimes) };
 }
 
 /** The three sounds of a simulated beat: time before the beat's nominal time, loudness, decay. */
