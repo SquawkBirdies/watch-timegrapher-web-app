@@ -137,29 +137,51 @@ test('the endless simulator gives the same audio whatever the chunk sizes', () =
   }
 });
 
-test('beat variability set while the simulator runs brings the irregular-beat warning, and taking it away clears it', () => {
+test('beat variability set while the simulator runs brings the irregular-beat warning within seconds, and taking it away clears it', () => {
+  for (const bph of [28800, 18000]) {
+    const sim = new WatchStream({ bph, rate: 8, beatOffsetMs: 0.4, gain: 2, seed: 3 });
+    const pipeline = new Pipeline(sim.sampleRate, 1);
+    const readingsOf = (/** @type {PipelineEvent[]} */ events) => /** @type {ReadingsEvent[]} */ (events.filter((e) => e.type === 'readings' && e.rate !== null));
+    const label = `${bph} vph`;
+    const steady = readingsOf(run(pipeline, (n) => sim.next(n), 20));
+    assert.ok(steady.length > 5 && steady.every((x) => !x.irregular), `${label}: a steady watch, no warning`);
+    assert.equal(irregularWarning(steady[steady.length - 1]), null);
+    // Each beat now falls early or late at random, by 2 ms (one standard deviation). The
+    // pipeline notices the scatter in the beats it tracks and re-analyses the latest 8 s at once.
+    sim.jitterMs = 2;
+    const events = run(pipeline, (n) => sim.next(n), 40);
+    assert.ok(!events.some((e) => e.type === 'status' && e.state === 'listening'), `${label}: stayed locked`);
+    const wild = readingsOf(events);
+    const first = wild.find((x) => x.irregular);
+    assert.ok(first && first.t < 20 + 12, `${label}: warning at ${first ? first.t.toFixed(0) : '-'} s, 20 s being the change`);
+    const after = wild.filter((x) => x.t >= /** @type {ReadingsEvent} */ (first).t);
+    assert.ok(after.every((x) => x.irregular && x.beatErrorMs === null), `${label}: irregular from then on, with no beat error`);
+    // The readings after the warning rest only on beats since the change.
+    const z = after.map((x) => (/** @type {number} */ (x.rate) - 8) / /** @type {number} */ (x.rateSd));
+    assert.ok(z.every((v) => Math.abs(v) < 3), `${label}: rate within 3 stated uncertainties of +8 s/day (worst ${Math.max(...z.map(Math.abs)).toFixed(1)})`);
+    const last = wild[wild.length - 1];
+    assert.ok(last.jitterMs !== null && last.jitterMs > 1.5 && last.jitterMs < 2.6, `${label}: scatter reading ${last.jitterMs}`);
+    assert.match(/** @type {string} */ (irregularWarning(last)), new RegExp(`^Beats wander by ${last.jitterMs.toFixed(1)} ms `));
+    sim.jitterMs = 0;
+    const calm = readingsOf(run(pipeline, (n) => sim.next(n), 40));
+    const cleared = calm.find((x) => !x.irregular);
+    assert.ok(cleared && cleared.t < 60 + 12, `${label}: warning cleared at ${cleared ? cleared.t.toFixed(0) : '-'} s, 60 s being the change`);
+    const end = calm[calm.length - 1];
+    assert.ok(!end.irregular && end.beatErrorMs !== null && Math.abs(end.beatErrorMs - 0.4) < 0.05, `${label}: steady again, beat error ${end.beatErrorMs}`);
+    assert.equal(pipeline.changesFound, 2, `${label}: two changes found`);
+  }
+});
+
+test('a short burst of scatter on a steady watch brings no warning and no extra analysis', () => {
   const sim = new WatchStream({ bph: 28800, rate: 8, beatOffsetMs: 0.4, gain: 2, seed: 3 });
   const pipeline = new Pipeline(sim.sampleRate, 1);
-  const readingsOf = (/** @type {PipelineEvent[]} */ events) => /** @type {ReadingsEvent[]} */ (events.filter((e) => e.type === 'readings' && e.rate !== null));
-  const steady = readingsOf(run(pipeline, (n) => sim.next(n), 30));
-  assert.ok(steady.length > 10 && steady.every((x) => !x.irregular), 'a steady watch: no warning');
-  assert.equal(irregularWarning(steady[steady.length - 1]), null);
-  // Each beat now falls early or late at random, by 2 ms (one standard deviation). Repeat
-  // analyses decide; the history holds 40 s, so the warning comes within about half a minute.
+  run(pipeline, (n) => sim.next(n), 20);
   sim.jitterMs = 2;
-  const events = run(pipeline, (n) => sim.next(n), 45);
-  assert.ok(!events.some((e) => e.type === 'status' && e.state === 'listening'), 'stayed locked');
-  const wild = readingsOf(events);
-  const first = wild.find((x) => x.irregular);
-  assert.ok(first, 'the readings say the watch runs irregularly');
-  const last = wild[wild.length - 1];
-  assert.ok(last.irregular && last.beatErrorMs === null, 'still irregular, with no beat error');
-  assert.ok(last.jitterMs !== null && last.jitterMs > 1.5 && last.jitterMs < 2.6, `scatter reading ${last.jitterMs}`);
-  assert.match(/** @type {string} */ (irregularWarning(last)), new RegExp(`^Beats wander by ${last.jitterMs.toFixed(1)} ms `));
+  const burst = run(pipeline, (n) => sim.next(n), 3);
   sim.jitterMs = 0;
-  const calm = readingsOf(run(pipeline, (n) => sim.next(n), 45));
-  const end = calm[calm.length - 1];
-  assert.ok(!end.irregular && end.beatErrorMs !== null && Math.abs(end.beatErrorMs - 0.4) < 0.05, `steady again: beat error ${end.beatErrorMs}`);
+  const events = burst.concat(run(pipeline, (n) => sim.next(n), 37));
+  assert.ok(!events.some((e) => e.type === 'readings' && e.irregular), 'no warning');
+  assert.equal(pipeline.changeChecks, 0, 'no early analysis');
 });
 
 test('the endless simulator is measured right, and a turn of the regulator shows', () => {

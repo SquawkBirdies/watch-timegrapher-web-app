@@ -164,9 +164,15 @@ Known limits of the real-time pipeline:
 - When an irregular watch's beat is two sounds of similar loudness, like the co-axial tock, the
   timestamps jump between them: on a simulated watch with 1.5 ms of scatter, 87 of 224 tocks
   were on the wrong sound.
-- When a watch starts or stops running irregularly while it is measured, the warning follows
-  within about 30 s, as the repeat analyses catch up. On the simulator, beat variability of
-  0.8 ms or more brings the warning at the first lock; 0.6 ms took 28 s.
+- When a watch starts or stops running irregularly while it is measured, the pipeline notices
+  the change in the scatter of the beats it tracks and re-analyses the last 8 s at once. On the
+  simulator, the warning came 7 to 10 s after beat variability was turned up, and went 4 to 9 s
+  after it was turned off, where scheduled analyses took 40 s. The readings then start afresh
+  from the change, so for a while they rest on fewer beats and state a wider uncertainty. In the
+  seconds before the change is confirmed, the readings can still flatter: one read
+  +7.4 ± 0.2 s/day, 8 s after 2 ms of variability came on, for a watch at +8. Both beat types
+  must be timed for a change to be noticed; otherwise the scheduled analyses decide. On the
+  simulator, beat variability of 0.8 ms or more brings the warning at the first lock.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
 - A blurred beat still scatters. The second Omega recording's ticks, a sound several
