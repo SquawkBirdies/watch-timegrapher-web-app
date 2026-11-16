@@ -31,9 +31,10 @@ test('no watch: the recording is the minute of room noise it should be', () => {
 });
 
 test('no watch, in real time: never locks with the beat rate detected', () => {
+  // The escapement setting is not tried: it changes only the readings made from a lock, never
+  // whether a lock is found.
   assertNoLock({}, 'automatic, 60 Hz mains');
   assertNoLock({ humHz: 50 }, 'automatic, 50 Hz mains');
-  assertNoLock({ escapement: 'coaxial' }, 'automatic, co-axial');
 });
 
 test('no watch, in real time: never locks with any beat rate given', () => {

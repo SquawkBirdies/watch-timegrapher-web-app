@@ -2,19 +2,16 @@
 // each analysis picks that point afresh as the loudest part of the averaged beat. When a beat is
 // made of two sounds of similar loudness, as a co-axial escapement's can be, the loudest part
 // can change from one analysis to the next. The real-time pipeline carries each beat type's
-// reference point over from one analysis to the next, so that the trace has no step.
+// reference point over from one analysis to the next, so that the trace has no step. The same
+// is checked on the second Omega recording in scatter.test.js, on the run made there.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
 import { analyze } from '../js/dsp/offline.js';
 import { summarize } from '../js/dsp/estimate.js';
 import { stream, join, traceLine } from './helpers/stream.js';
-import { readWav } from './helpers/wav.js';
-
-const fixture = (/** @type {string} */ name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
 test('a tock keeps its timing reference when another of its sounds becomes the loudest', () => {
   // The tock is two sounds 3.7 ms apart. After 48 s the second becomes the louder one, by a
@@ -54,21 +51,6 @@ test('a tock keeps its timing reference when another of its sounds becomes the l
   }
   const late = r.readings.filter((x) => x.rate !== null && x.t > 30);
   assert.ok(late.every((x) => Math.abs(/** @type {number} */ (x.rate)) < 0.5), 'rate readings stay within 0.5 s/day of the truth');
-});
-
-test('Omega 3861, second recording: the tock trace has no step', () => {
-  // Without the carried reference, the analysis at 64 s moved the tock's timestamps by 3.8 ms,
-  // and the trace through the tocks sloped at +3.9 s/day instead of about -2.
-  const wav = readWav(fixture('omega-3861-b.wav'));
-  const r = stream(wav.channels, wav.sampleRate, { chunk: 1024, options: { escapement: 'coaxial' } });
-  assert.ok(r.status.length > 3 && r.status.every((s) => s.state === 'tracking'));
-  const lines = /** @type {(0|1)[]} */ ([0, 1]).map((type) => traceLine(r.beats, 21600, type));
-  // The tock is the fainter beat here: its timestamps average several cycles.
-  const tock = lines[0].cycles > lines[1].cycles ? lines[0] : lines[1];
-  const tick = tock === lines[0] ? lines[1] : lines[0];
-  assert.ok(tock.cycles >= 4 && tock.count > 25, `${tock.count} confident tocks averaging up to ${tock.cycles} cycles`);
-  assert.ok(tock.step < 1, `largest step in the tock trace ${tock.step.toFixed(2)} ms`);
-  assert.ok(Math.abs(tock.slope - tick.slope) < 1, `tock trace ${tock.slope.toFixed(2)} s/day, tick trace ${tick.slope.toFixed(2)} s/day`);
 });
 
 test('the beat error does not depend on where the timing references are', () => {

@@ -37,6 +37,18 @@ function fakeTrack(ms, confident = 200, K = 1) {
 /** @param {import('../js/dsp/pipeline.js').StatusEvent[]} status */
 const lockLost = (status) => status.some((s, i) => s.state === 'listening' && status.slice(0, i).some((p) => p.state === 'tracking'));
 
+/** The first basket-case watch's run as the pipeline now times it, kept for the second test
+ *  that uses it. @type {{w: ReturnType<typeof basketCase>, r: ReturnType<typeof stream>}|null} */
+let firstBasket = null;
+/** @param {number} seed */
+const basket = (seed) => {
+  if (seed === 1 && firstBasket) return firstBasket;
+  const w = basketCase(seed);
+  const run = { w, r: stream(w.channels, w.sampleRate, { chunk: 1024 }) };
+  if (seed === 1) firstBasket = run;
+  return run;
+};
+
 test('a watch counts as irregular only when both beat types scatter', () => {
   const judge = (/** @type {import('../js/dsp/timing.js').BeatTrack[]} */ singles, /** @type {import('../js/dsp/timing.js').BeatTrack[]} */ averaged) => judgeScatter(singles, FE, { both: true, averaged }).irregular;
   const none = [fakeTrack(0, 0, 4), fakeTrack(0, 0, 4)];
@@ -147,8 +159,7 @@ test('a basket case is shown as the snow storm it is, with no flattering reading
   /** @type {number[]} */
   const zs = [];
   for (const seed of [1, 2, 3]) {
-    const w = basketCase(seed);
-    const r = stream(w.channels, w.sampleRate, { chunk: 1024 });
+    const { w, r } = basket(seed);
     const label = `seed ${seed}`;
     const first = r.status.find((s) => s.state === 'tracking');
     assert.ok(first && first.bph === w.bph, `${label}: locked at ${w.bph} vph`);
@@ -204,13 +215,10 @@ test('a basket case was smoothed before', () => {
   // The same watch timed as before and as now, measured the same way: before, the beats were
   // averaged and the trace showed little more than half of the scatter that the trace now
   // shows beat by beat (which the test above holds to the truth).
-  const w = basketCase(1);
-  const lines = (/** @type {import('../js/dsp/timing.js').TimingOptions} */ timing) => {
-    const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { timing } });
-    return /** @type {(0|1)[]} */ ([0, 1]).map((type) => traceScatter(r.beats, w.bph, type));
-  };
-  const before = lines(BEFORE);
-  const now = lines({});
+  const { w, r } = basket(1);
+  const lines = (/** @type {ReturnType<typeof stream>} */ run) => /** @type {(0|1)[]} */ ([0, 1]).map((type) => traceScatter(run.beats, w.bph, type));
+  const before = lines(stream(w.channels, w.sampleRate, { chunk: 1024, options: { timing: BEFORE } }));
+  const now = lines(r);
   assert.ok(before.every((l) => l.cycles.some((K) => K > 1)), `cycles averaged before ${before.map((l) => l.cycles.join('/'))}`);
   for (const type of [0, 1]) {
     assert.ok(before[type].spreadMs < 0.75 * now[type].spreadMs, `type ${type}: trace scatter ${before[type].spreadMs.toFixed(2)} ms before, ${now[type].spreadMs.toFixed(2)} ms now`);

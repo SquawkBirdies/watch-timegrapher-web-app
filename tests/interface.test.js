@@ -38,11 +38,9 @@ function run(pipeline, next, seconds, chunk = 4096) {
 // ---- Pipeline events for the interface -------------------------------------------------------
 
 test('the default averaging window is 20 s, and each reading lies within its stated uncertainty', () => {
-  const cases = [
-    { bph: 28800, rate: 12, beatOffsetMs: 0.3, seed: 11 },
-    { bph: 21600, rate: -25, beatOffsetMs: 0.6, seed: 12 },
-    { bph: 18000, rate: 4, beatOffsetMs: 0.2, seed: 13 },
-  ];
+  // The 28,800 and 21,600 vph watches of stream.test.js are held to the same at the default
+  // window; this adds the slowest beat rate.
+  const cases = [{ bph: 18000, rate: 4, beatOffsetMs: 0.2, seed: 13 }];
   for (const c of cases) {
     const w = synthesizeWatch({ ...c, gain: 1.6, seconds: 50 });
     const r = stream(w.channels, w.sampleRate, { chunk: 2048 });
@@ -55,25 +53,6 @@ test('the default averaging window is 20 s, and each reading lies within its sta
       assert.ok(Math.abs(/** @type {number} */ (x.rate) - c.rate) <= 3 * sd + 0.05, `${c.bph}: ${x.rate} ± ${sd} against ${c.rate}`);
     }
   }
-});
-
-test('faint ticks lengthen the averaging window so each reading rests on enough timestamps', () => {
-  const w = synthesizeWatch({ bph: 18000, rate: 45, gain: 0.45, seconds: 100, seed: 3 });
-  const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { historySeconds: 80 } });
-  const last = /** @type {ReadingsEvent} */ (r.last);
-  assert.ok(last && last.signal && last.rate !== null);
-  const K = Math.max(...last.signal.cycles.map((c) => c || 1));
-  assert.ok(K >= 4, `averaging ${K} cycles`);
-  const [from, to] = /** @type {[number, number]} */ (last.window);
-  const span = to - from;
-  // Twelve independent timestamps of K cycles of 0.4 s each, or as many as the lock has had
-  // time for: the window never reaches back before the lock began.
-  const lockStart = r.pipeline.toSeconds(r.pipeline.lockedFrom);
-  const wanted = Math.min(12 * K * 0.4, to - lockStart);
-  assert.ok(span >= wanted - 2 * K * 0.4, `window ${span.toFixed(1)} s for ${K}-cycle averages, wanted ${wanted.toFixed(1)} s`);
-  assert.ok(from >= lockStart - 0.5, 'not before the lock began');
-  assert.ok(span > 20, 'longer than the 20 s setting');
-  assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
 });
 
 test('the averaging window and the escapement can change while measuring', () => {

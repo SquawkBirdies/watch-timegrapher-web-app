@@ -35,16 +35,14 @@ test('Swiss-lever mode misreads a co-axial watch, which is why the setting exist
 });
 
 test('co-axial mode measures the rate from both beats and shows no beat error', () => {
+  // In real time only: each of the pipeline's analyses is a whole-recording analysis of its
+  // window, and the next test checks the setting reaches a whole-recording analysis.
   const w = synthesizeWatch(coaxial);
-  const whole = analyze(w.channels, w.sampleRate, { escapement: 'coaxial' });
-  assert.equal(whole.beatErrorMs, null);
-  assert.equal(whole.beatOffsetMs, null);
-  assert.ok(whole.fits.every((f) => f !== null), 'ticks and tocks both timed');
-  assert.ok(whole.rate !== null && Math.abs(whole.rate - 3) < 0.2, `rate ${whole.rate}`);
   const live = stream(w.channels, w.sampleRate, { chunk: 1024, options: { escapement: 'coaxial' } });
   assert.equal(live.status[0].bph, 21600);
-  assert.ok(live.readings.length > 0 && live.readings.every((x) => x.beatErrorMs === null), 'no beat error at any time');
-  assert.ok(live.last && live.last.rate !== null && Math.abs(live.last.rate - 3) < 0.2, `live rate ${live.last?.rate}`);
+  assert.ok(live.readings.length > 0 && live.readings.every((x) => x.beatErrorMs === null && x.beatOffsetMs === null), 'no beat error at any time');
+  assert.ok(live.last && live.last.fits.every((f) => f !== null), 'ticks and tocks both timed');
+  assert.ok(live.last.rate !== null && Math.abs(live.last.rate - 3) < 0.2, `live rate ${live.last.rate}`);
 });
 
 test('co-axial mode on a Swiss-lever watch still gives the right rate', () => {

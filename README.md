@@ -22,8 +22,8 @@ for who did what and what has been checked.
 `js/dsp/pipeline.js` takes audio chunks of any size and reports status, beats and readings as
 events. It listens until it finds a beat rate, tracks each beat with a Kalman tracker, and
 blanks the readings when the ticking stops. `js/dsp/offline.js` analyses a whole recording with
-the same stages. Both are checked against synthetic watches with known values, against three
-real recordings of watches, and against a recording with no watch.
+the same stages. The pipeline is checked against synthetic watches with known values, and both
+are checked against three real recordings of watches and against a recording with no watch.
 
 | Test | Expected | Whole recording | Real time, 128-sample chunks, 40 s window |
 | --- | --- | --- | --- |
@@ -37,8 +37,10 @@ real recordings of watches, and against a recording with no watch.
 | Omega 3861, second recording | 21,600 vph, no reference value | -2.07 s/day | -2.13 s/day, locked at 12 s |
 | No watch, Safari capture of a quiet room | no lock | no lock | no lock, with the beat rate detected or given as any of the six |
 
-The real-time column uses a 40 s averaging window (60 s for the ETA, 80 s for the faint
-synthetic watch). The expected values for the first two recordings come from the Python
+The real-time column uses a 40 s averaging window (60 s for the ETA; the faint synthetic watch's
+lengthens by itself to 91 s). The whole-recording figures for the synthetic watches were measured
+in milestone 1. The tests now hold those watches to their expected values in real time only,
+because each analysis the real-time pipeline makes runs the same stages. The expected values for the first two recordings come from the Python
 prototype in `tools/prototype/`. No recording has been compared with a bench timegrapher. On an iPhone 17
 Pro Max the real-time pipeline ran 22.6 times faster than real time on two channels. That was
 measured before the filter bank gained its two bands above 14.5 kHz, which cost about a quarter
@@ -273,7 +275,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about ten minutes on a fast computer
+npm test             # about eight minutes on a fast computer
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
