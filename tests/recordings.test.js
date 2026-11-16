@@ -2,6 +2,7 @@
 // from the Python prototype (tools/prototype); those watches lay dial-down with the crown
 // against the phone. In the third the phone was held over the dial of the Omega, in a different
 // room. Each recording is analysed whole, and then fed to the real-time pipeline in small chunks.
+// The last tests use the Safari captures of the same two watches, saved by the audio diagnostic.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 import { readWav } from './helpers/wav.js';
 import { analyze } from '../js/dsp/offline.js';
+import { DEFAULT_BANDS } from '../js/dsp/filterbank.js';
+import { medianZ } from '../js/dsp/timing.js';
 import { stream } from './helpers/stream.js';
 
 /** @param {string} name */
@@ -96,4 +99,92 @@ test('Omega 3861, second recording, in real time: locks within 20 s, about -2.1 
   assert.ok(r.last && r.last.rate !== null);
   assert.ok(Math.abs(r.last.rate + 2.1) <= 0.5, `rate ${r.last.rate.toFixed(2)}`);
   assert.equal(r.last.beatErrorMs, null);
+});
+
+/**
+ * A Safari capture as the app hears it. Safari delivered the iPhone's mono microphone as two
+ * channels with the second one silent, and the app analyses only the first.
+ * @param {string} name
+ */
+function safariCapture(name) {
+  const wav = readWav(fixture(name));
+  assert.equal(wav.channels.length, 2);
+  assert.ok(wav.channels[1].every((v) => v === 0), 'the second channel is silent');
+  return { sampleRate: wav.sampleRate, channels: [wav.channels[0]] };
+}
+
+/**
+ * What a run of a regular watch must never show: the irregular-watch path, its wider search,
+ * or an early look for a change in regularity.
+ * @param {ReturnType<typeof stream>} r
+ */
+function regularThroughout(r) {
+  assert.ok(r.readings.every((x) => !x.irregular), 'never irregular');
+  assert.equal(r.pipeline.maxLag, Math.floor(4e-3 * r.pipeline.fe), 'the usual search width');
+  assert.equal(r.pipeline.changeChecks, 0, 'no early look for a change in regularity');
+}
+
+// The expected rates below are the pipeline's own, cross-checked with a simple timing of each
+// beat's loudest moment above 5 kHz that shares no code with it: +1.64 s/day for the ETA and
+// +0.49 s/day for the Omega.
+
+test('ETA 2836-2, Safari capture, in real time: locks within 10 s, about +1.7 s/day and 0.3 ms, every beat timed on its own', () => {
+  const cap = safariCapture('eta-2836-2-safari.wav');
+  const r = stream(cap.channels, cap.sampleRate, { chunk: 4096 });
+  assert.equal(r.status[0].state, 'tracking');
+  assert.equal(r.status[0].bph, 28800);
+  assert.ok(r.status[0].t < 10, `locked after ${r.status[0].t.toFixed(1)} s`);
+  assert.ok(r.status.every((s) => s.state === 'tracking'), 'lock never lost');
+  assert.ok(r.beats.every((b) => b.cycles === 1), 'every beat timed on its own');
+  const last = r.last;
+  assert.ok(last && last.rate !== null && last.beatErrorMs !== null && last.jitterMs !== null && last.signal);
+  assert.ok(Math.abs(last.rate - 1.7) <= 0.3, `rate ${last.rate.toFixed(2)}`);
+  const errors = r.readings.filter((x) => x.beatErrorMs !== null).map((x) => /** @type {number} */ (x.beatErrorMs));
+  assert.ok(errors.length > 10 && errors.every((e) => Math.abs(e - 0.3) <= 0.08), `beat error ${Math.min(...errors).toFixed(2)} to ${Math.max(...errors).toFixed(2)} ms`);
+  // Far clearer than the Voice Memos recording of the same watch, whose ticks and tocks stand
+  // 14 and 19 noise spreads above the noise, with 0.074 ms of scatter.
+  assert.ok(last.jitterMs < 0.06, `scatter ${last.jitterMs.toFixed(3)} ms`);
+  assert.ok(last.signal.z.every((z) => z !== null && z > 60), `ticks and tocks ${last.signal.z.map((z) => z?.toFixed(0))} noise spreads above the noise`);
+  regularThroughout(r);
+});
+
+test('Omega 3861, Safari capture, in real time and co-axial: locks within 10 s, every tick and tock timed on its own, about +0.4 s/day, no beat error', () => {
+  const cap = safariCapture('omega-3861-safari.wav');
+  // Its 20 s readings wander smoothly between -0.2 and +1.6 s/day over the minute, far more
+  // than their stated +-0.09, so the watch's own rate moves; a 40 s window, as for the other
+  // Omega recordings.
+  const r = stream(cap.channels, cap.sampleRate, { chunk: 4096, options: { escapement: 'coaxial', averagingSeconds: 40 } });
+  assert.equal(r.status[0].bph, 21600);
+  assert.ok(r.status[0].t < 10, `locked after ${r.status[0].t.toFixed(1)} s`);
+  assert.ok(r.status.every((s) => s.state === 'tracking'), 'lock never lost');
+  // In the Voice Memos recordings the Omega's beats had to be averaged over several cycles.
+  assert.ok(r.beats.every((b) => b.cycles === 1), 'every beat timed on its own');
+  for (const type of [0, 1]) {
+    const confident = r.beats.filter((b) => b.type === type && b.ok).length;
+    assert.ok(confident > 150, `type ${type}: ${confident} confident timestamps`);
+  }
+  assert.ok(r.readings.length > 0 && r.readings.every((x) => x.beatErrorMs === null), 'no beat error at any time');
+  assert.ok(r.last && r.last.rate !== null && Math.abs(r.last.rate - 0.4) <= 0.5, `rate ${r.last?.rate}`);
+  regularThroughout(r);
+});
+
+test('Omega 3861, Safari capture, first 30 s: the bands above 14.5 kHz make its beats clearer, and Swiss-lever mode misreads it', () => {
+  const cap = safariCapture('omega-3861-safari.wav');
+  // Half the capture shows both as clearly as the whole minute, in a third of the time.
+  const window = { startSeconds: 0, endSeconds: 30 };
+  const all = analyze(cap.channels, cap.sampleRate, window);
+  const lower = analyze(cap.channels, cap.sampleRate, { ...window, bands: DEFAULT_BANDS.filter(([lo]) => lo < 14500) });
+  assert.equal(all.bph, 21600);
+  // The two top bands were added because Safari captures carry tick sound up to 22.5 kHz. With
+  // them the beats stand 2.3 and 2.2 times higher above the noise, and scatter about half as much.
+  for (const type of [0, 1]) {
+    const gain = medianZ(all.beats[type]) / medianZ(lower.beats[type]);
+    assert.ok(gain > 1.5, `type ${type}: ${gain.toFixed(2)} times clearer`);
+  }
+  assert.ok(all.jitterMs !== null && lower.jitterMs !== null && all.jitterMs < 0.7 * lower.jitterMs, `scatter ${all.jitterMs?.toFixed(3)} ms with them, ${lower.jitterMs?.toFixed(3)} ms without`);
+  // The co-axial tick and tock are different sounds, and in Swiss-lever mode the gap between
+  // them reads as a steady 3.4 ms beat error that does not describe the watch. The simple
+  // independent timing finds the same 3.4 ms. This is why the escapement setting exists; if a
+  // later version learns to measure this correctly, this check should change.
+  assert.ok(all.beatErrorMs !== null && all.beatErrorMs > 3, `beat error ${all.beatErrorMs}`);
 });
