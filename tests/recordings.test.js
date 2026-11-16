@@ -14,10 +14,19 @@ import { stream } from './helpers/stream.js';
 /** @param {string} name */
 const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
+/** The ETA recording and its whole-recording analysis, made once for the two tests that use it. */
+let eta = /** @type {{wav: ReturnType<typeof readWav>, whole: ReturnType<typeof analyze>}|null} */ (null);
+const etaWhole = () => {
+  if (!eta) {
+    const wav = readWav(fixture('eta-2836-2.wav'));
+    // The first 2 s and everything after 54 s contain handling noise.
+    eta = { wav, whole: analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 54 }) };
+  }
+  return eta;
+};
+
 test('ETA 2836-2: 28,800 vph, about +6.5 s/day, about 0.43 ms beat error, every beat timed', () => {
-  const wav = readWav(fixture('eta-2836-2.wav'));
-  // The first 2 s and everything after 54 s contain handling noise.
-  const r = analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 54 });
+  const r = etaWhole().whole;
   assert.equal(r.bph, 28800);
   assert.ok(r.rate !== null && r.beatErrorMs !== null);
   assert.ok(Math.abs(r.rate - 6.5) <= 0.5, `rate ${r.rate.toFixed(2)}`);
@@ -47,11 +56,10 @@ test('Omega 3861, second recording: 21,600 vph, about -2.1 s/day, ticks too blur
 });
 
 test('ETA 2836-2 in real time: same readings as the whole-recording analysis', () => {
-  const wav = readWav(fixture('eta-2836-2.wav'));
+  const { wav, whole } = etaWhole();
   const from = 2 * wav.sampleRate;
   const to = 54 * wav.sampleRate;
   const r = stream(wav.channels, wav.sampleRate, { from, to, options: { historySeconds: 60, averagingSeconds: 60 } });
-  const whole = analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 54 });
   assert.equal(r.status[0].state, 'tracking');
   assert.equal(r.status[0].bph, 28800);
   assert.ok(r.status[0].t < 12, `locked after ${r.status[0].t.toFixed(1)} s`);

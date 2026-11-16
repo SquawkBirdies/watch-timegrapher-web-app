@@ -1,5 +1,6 @@
 // The real-time pipeline, fed in small chunks as the microphone will feed it. The synthetic
-// cases and their pass criteria are the ones the offline analysis must meet.
+// cases and their pass criteria are the prototype's, which the offline analysis was first held
+// to; the pipeline runs the same stages, so they are checked here only.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,9 +15,35 @@ function near(actual, expected, tolerance, what) {
   assert.ok(actual !== null && Math.abs(actual - expected) <= tolerance, `${what}: got ${actual === null ? 'nothing' : actual.toFixed(3)}, expected ${expected} within ${tolerance}`);
 }
 
+/**
+ * At the default 20 s averaging window, every reading once the window has filled spans about
+ * 20 s and lies within three times its stated uncertainty of the true rate.
+ * @param {ReturnType<typeof stream>} r
+ * @param {number} rate the true rate
+ */
+function readingsWithinStatedUncertainty(r, rate) {
+  const late = r.readings.filter((x) => x.rate !== null && x.t > 30);
+  assert.ok(late.length > 10, 'readings after the window filled');
+  for (const x of late) {
+    const span = /** @type {[number, number]} */ (x.window)[1] - /** @type {[number, number]} */ (x.window)[0];
+    assert.ok(span > 18 && span <= 20.5, `window ${span.toFixed(1)} s`);
+    const sd = /** @type {number} */ (x.rateSd);
+    assert.ok(Math.abs(/** @type {number} */ (x.rate) - rate) <= 3 * sd + 0.05, `${x.rate} ± ${sd} against ${rate}`);
+  }
+}
+
+/** The clear 28,800 vph watch, streamed once for the two tests that use it. */
+let clearRun = /** @type {ReturnType<typeof stream>|null} */ (null);
+const clear = () => {
+  if (!clearRun) {
+    const w = synthesizeWatch({ bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds: 50, seed: 1 });
+    clearRun = stream(w.channels, w.sampleRate);
+  }
+  return clearRun;
+};
+
 test('clear ticks at 28,800 vph: +12 s/day, 0.30 ms beat error, locked within 10 s', () => {
-  const w = synthesizeWatch({ bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds: 50, seed: 1 });
-  const r = stream(w.channels, w.sampleRate);
+  const r = clear();
   assert.equal(r.status[0].state, 'tracking');
   assert.equal(r.status[0].bph, 28800);
   assert.ok(r.status[0].t < 10, `locked at ${r.status[0].t.toFixed(1)} s`);
@@ -25,6 +52,7 @@ test('clear ticks at 28,800 vph: +12 s/day, 0.30 ms beat error, locked within 10
   near(r.last.rate, 12, 0.2, 'rate');
   near(r.last.beatErrorMs, 0.3, 0.05, 'beat error');
   assert.ok(r.beats.every((b) => b.cycles <= 2), 'timed beat by beat');
+  readingsWithinStatedUncertainty(r, 12);
 });
 
 test('21,600 vph with a mains buzz almost in step with the watch: -8 s/day, 0.80 ms', () => {
@@ -34,17 +62,32 @@ test('21,600 vph with a mains buzz almost in step with the watch: -8 s/day, 0.80
   assert.ok(r.last);
   near(r.last.rate, -8, 0.2, 'rate');
   near(r.last.beatErrorMs, 0.8, 0.05, 'beat error');
+  readingsWithinStatedUncertainty(r, -8);
 });
 
-test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a longer history', () => {
+test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a longer history, with the readings window lengthened to match', () => {
   const w = synthesizeWatch({ bph: 18000, rate: 45, beatOffsetMs: 0, gain: 0.45, seconds: 100, seed: 3 });
-  const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { historySeconds: 80, averagingSeconds: 80 } });
+  // The averaging window is left at its 20 s default: it must lengthen by itself.
+  const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { historySeconds: 80 } });
   assert.ok(r.status.length > 0 && r.status.every((s) => s.state === 'tracking'), 'locked and stayed locked');
   assert.equal(r.status[0].bph, 18000, 'not mistaken for 36,000 vph');
-  assert.ok(r.last);
-  near(r.last.rate, 45, 0.3, 'rate');
+  const last = r.last;
+  assert.ok(last && last.signal && last.rate !== null);
+  near(last.rate, 45, 0.3, 'rate');
   assert.ok(Math.max(...r.beats.map((b) => b.cycles)) >= 4, 'weak-signal averaging was needed');
-  if (r.last.beatErrorMs !== null) near(r.last.beatErrorMs, 0, 0.1, 'beat error');
+  if (last.beatErrorMs !== null) near(last.beatErrorMs, 0, 0.1, 'beat error');
+  // Twelve independent timestamps of K cycles of 0.4 s each, or as many as the lock has had
+  // time for: the window never reaches back before the lock began.
+  const K = Math.max(...last.signal.cycles.map((c) => c || 1));
+  assert.ok(K >= 4, `averaging ${K} cycles`);
+  const [from, to] = /** @type {[number, number]} */ (last.window);
+  const span = to - from;
+  const lockStart = r.pipeline.toSeconds(r.pipeline.lockedFrom);
+  const wanted = Math.min(12 * K * 0.4, to - lockStart);
+  assert.ok(span >= wanted - 2 * K * 0.4, `window ${span.toFixed(1)} s for ${K}-cycle averages, wanted ${wanted.toFixed(1)} s`);
+  assert.ok(from >= lockStart - 0.5, 'not before the lock began');
+  assert.ok(span > 20, 'longer than the 20 s setting');
+  assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
 });
 
 test('noise and mains buzz alone never give a lock', () => {
@@ -58,7 +101,7 @@ test('noise and mains buzz alone never give a lock', () => {
 for (const [bph, rate] of /** @type {[number, number][]} */ ([[18000, -10], [19800, 20], [21600, -20], [25200, -30], [28800, 30], [36000, 10]])) {
   test(`beat rate ${bph} vph is recognised: ${rate} s/day, 0.50 ms beat error`, () => {
     const w = synthesizeWatch({ bph, rate, beatOffsetMs: 0.5, gain: 1.4, seconds: 40, seed: bph });
-    // The tolerances suit a 40 s window; the default 20 s window is tested below.
+    // The tolerances suit a 40 s window; the default 20 s window is tested above.
     const r = stream(w.channels, w.sampleRate, { chunk: 512, options: { averagingSeconds: 40 } });
     assert.equal(r.status[0].bph, bph);
     assert.ok(r.last);
@@ -140,8 +183,8 @@ test('the result does not depend on how the audio is cut into chunks', () => {
 });
 
 test('the pipeline runs several times faster than real time', () => {
-  const w = synthesizeWatch({ bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds: 50, seed: 1 });
-  const r = stream(w.channels, w.sampleRate);
+  // Timed on the run of the clear watch above.
+  const r = clear();
   const speed = r.audioSeconds / r.elapsedSeconds;
   assert.ok(speed >= 3, `${speed.toFixed(1)} times real time`);
 });

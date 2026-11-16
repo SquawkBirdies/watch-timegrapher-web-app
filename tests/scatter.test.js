@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
 import { pickPeak, pickPeakNear, runningMedian, NEAR_FRACTION } from '../js/dsp/timing.js';
-import { stream, traceScatter, againstTruth } from './helpers/stream.js';
+import { stream, traceScatter, traceLine, againstTruth } from './helpers/stream.js';
 import { readWav } from './helpers/wav.js';
 
 /** The timing as it was before: always the highest peak. */
@@ -75,7 +75,7 @@ test('faint beats of three sounds: most of the stray timestamps return to the li
   assert.ok(after.beatError !== null && Math.abs(after.beatError - 0.3) < 0.08, `beat error ${after.beatError}`);
 });
 
-test('Omega 3861, second recording: the ticks keep to their line', () => {
+test('Omega 3861, second recording: the ticks keep to their line, and the tock trace has no step', () => {
   const wav = readWav(fileURLToPath(new URL('./fixtures/omega-3861-b.wav', import.meta.url)));
   const ticks = (/** @type {import('../js/dsp/timing.js').TimingOptions} */ timing) => {
     const r = stream(wav.channels, wav.sampleRate, { chunk: 1024, options: { escapement: 'coaxial', timing } });
@@ -83,7 +83,7 @@ test('Omega 3861, second recording: the ticks keep to their line', () => {
     const lines = /** @type {(0|1)[]} */ ([0, 1]).map((type) => traceScatter(r.beats, 21600, type));
     // The tick is the beat type timed with less averaging when the lock begins.
     const tick = lines[0].cycles[0] <= lines[1].cycles[0] ? lines[0] : lines[1];
-    return { tick, tock: tick === lines[0] ? lines[1] : lines[0], rate: /** @type {number} */ (/** @type {NonNullable<typeof r.last>} */ (r.last).rate) };
+    return { r, tick, tock: tick === lines[0] ? lines[1] : lines[0], rate: /** @type {number} */ (/** @type {NonNullable<typeof r.last>} */ (r.last).rate) };
   };
   const before = ticks(BEFORE);
   const after = ticks({});
@@ -98,6 +98,17 @@ test('Omega 3861, second recording: the ticks keep to their line', () => {
   assert.equal(after.tock.far, 0);
   assert.ok(after.tock.spreadMs < 0.12, `tock scatter ${after.tock.spreadMs.toFixed(3)} ms`);
   assert.ok(Math.abs(after.rate - before.rate) < 0.1, `rate ${before.rate} before, ${after.rate} after`);
+
+  // Each beat type keeps its timing reference across repeat analyses (reference.test.js).
+  // Without that, the analysis at 64 s moved the tock's timestamps by 3.8 ms, and the trace
+  // through the tocks sloped at +3.9 s/day instead of about -2.
+  const lines = /** @type {(0|1)[]} */ ([0, 1]).map((type) => traceLine(after.r.beats, 21600, type));
+  // The tock is the fainter beat here: its timestamps average several cycles.
+  const tock = lines[0].cycles > lines[1].cycles ? lines[0] : lines[1];
+  const tick = tock === lines[0] ? lines[1] : lines[0];
+  assert.ok(tock.cycles >= 4 && tock.count > 25, `${tock.count} confident tocks averaging up to ${tock.cycles} cycles`);
+  assert.ok(tock.step < 1, `largest step in the tock trace ${tock.step.toFixed(2)} ms`);
+  assert.ok(Math.abs(tock.slope - tick.slope) < 1, `tock trace ${tock.slope.toFixed(2)} s/day, tick trace ${tick.slope.toFixed(2)} s/day`);
 });
 
 test('a clear watch that runs irregularly still shows it, beat for beat', () => {
