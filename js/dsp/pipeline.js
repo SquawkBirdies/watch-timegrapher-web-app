@@ -23,7 +23,7 @@ import { FilterBank } from './filterbank.js';
 import { Cleanup } from './cleanup.js';
 import { acquireFast } from './acquire.js';
 import { analyzeRows } from './offline.js';
-import { buildWeights, correlateAt, pickPeak, pickPeakNear, pickPeaks, matchedFilter, averageCycles, NEAR_MS } from './timing.js';
+import { buildWeights, correlateAt, pickPeak, pickPeakNear, pickPeaks, matchedFilter, averageCycles, NEAR_MS, LAG_MS } from './timing.js';
 import { summarize } from './estimate.js';
 import { BeatTracker } from './tracker.js';
 import { robustLine, median, mean, std, percentile } from './mathutil.js';
@@ -80,7 +80,8 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @typedef {{type: 'status', state: 'listening'|'tracking', reason: string, bph: number|null, cyclesAveraged: (number|null)[]|null, t: number}} StatusEvent
  * @typedef {{type: 'beats', beats: Beat[], replaceFrom: number|null}} BeatsEvent
  *   replaceFrom: when set, beats from that time on are superseded by this list
- * @typedef {{type: 'readings', t: number, window: [number, number]|null, signal: Signal|null} & import('./estimate.js').Readings} ReadingsEvent
+ * @typedef {{type: 'readings', t: number, window: [number, number]|null, signal: Signal|null, irregular: boolean} & import('./estimate.js').Readings} ReadingsEvent
+ *   irregular: true when the beats fall at scattered times; every timestamp is then one beat
  * @typedef {{type: 'waveform', t: number, rate: number, from: number, to: number, cycles: number, beats: AveragedBeat[]}} WaveformEvent
  *   The averaged tick and tock from the latest analysis. `rate` is the envelope sample rate;
  *   `from` and `to` are the window's ends in seconds relative to each beat's timestamp;
@@ -168,7 +169,6 @@ function lineThrough(ns, ps) {
 
 const PRE_MS = 8;
 const POST_MS = 12;
-const LAG_MS = 4;
 /** Window of the averaged beat sent to the interface, in milliseconds around the timestamp. */
 const WAVE_BEFORE_MS = 12;
 const WAVE_AFTER_MS = 12;
@@ -213,15 +213,15 @@ export class Pipeline {
     this.cleanup = new Cleanup(this.fe, this.bank.rowCount, { humHz: this.options.humHz });
     const fe = this.fe;
     this.pre = Math.floor(PRE_MS * 1e-3 * fe);
-    this.maxLag = Math.floor(LAG_MS * 1e-3 * fe);
     /** How far from the tracker's prediction a peak is still preferred, in lags. */
     this.nearLag = Math.round(NEAR_MS * 1e-3 * fe);
     this.nTau = this.pre + Math.floor(POST_MS * 1e-3 * fe) + 1;
-    this.nLag = 2 * this.maxLag + 1;
-    this.segLen = this.nTau + 2 * this.maxLag;
-    this.lags = new Int32Array(this.nLag);
-    for (let i = 0; i < this.nLag; i++) this.lags[i] = i - this.maxLag;
-    this.seg = new Float64Array(this.segLen);
+    this.maxLag = 0;
+    this.nLag = 0;
+    this.segLen = 0;
+    this.lags = new Int32Array(0);
+    this.seg = new Float64Array(0);
+    this.setReach(LAG_MS);
 
     /** Incoming audio is regrouped into fixed blocks, so results do not depend on chunk sizes. */
     this.block = Array.from({ length: channelCount }, () => new Float32Array(this.options.blockSize));
@@ -242,7 +242,7 @@ export class Pipeline {
     this.nextAttempt = Math.round(this.options.windows[0] * fe);
     /** Start of the audio the current lock was first found in. */
     this.lockedFrom = 0;
-    /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number}} */
+    /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number, irregular: boolean}} */
     this.lock = null;
     /** @type {BeatTracker|null} */
     this.tracker = null;
@@ -259,6 +259,22 @@ export class Pipeline {
     this.events = [];
     /** Seconds spent in the lock analyses, for the speed check. */
     this.analysisSeconds = 0;
+  }
+
+  /**
+   * Set how far either side of the predicted position each beat is looked for. An irregular
+   * watch needs more than a regular one.
+   * @param {number} lagMs
+   */
+  setReach(lagMs) {
+    const maxLag = Math.floor(lagMs * 1e-3 * this.fe);
+    if (maxLag === this.maxLag && this.nLag > 0) return;
+    this.maxLag = maxLag;
+    this.nLag = 2 * maxLag + 1;
+    this.segLen = this.nTau + 2 * maxLag;
+    this.lags = new Int32Array(this.nLag);
+    for (let i = 0; i < this.nLag; i++) this.lags[i] = i - maxLag;
+    this.seg = new Float64Array(this.segLen);
   }
 
   /**
@@ -427,6 +443,7 @@ export class Pipeline {
       bph: lock.bph,
       periodPpm: ppm,
       refineSpan: (600 * fe) / length,
+      irregular: lock.irregular ? { lagMs: (1000 * this.maxLag) / fe, beats: this.dots.filter((d) => d.ok && d.K === 1 && d.p >= start).map((d) => ({ q: d.p - lock.types[d.j].adjust - start, n: d.n })) } : null,
       escapement: this.options.escapement,
       timing: this.options.timing,
     });
@@ -455,6 +472,7 @@ export class Pipeline {
     const period = analysis.period;
     const beatPeriod = period / 2;
     const previous = this.tracker;
+    this.setReach(analysis.lagMs);
     // Beat numbers continue from the previous lock when there is one, so that a tick stays a
     // tick. Local beat 0 is the first cluster of the first analysed cycle.
     let shift = 0;
@@ -510,7 +528,7 @@ export class Pipeline {
         /** @type {number[]} */
         const peaks = [];
         for (const dataOffset of [period / 4, (3 * period) / 4]) {
-          const noise = matchedFilter(rows, fe, period, [analysis.template, analysis.template], centre, { dataOffset });
+          const noise = matchedFilter(rows, fe, period, [analysis.template, analysis.template], centre, { dataOffset, lagMs: analysis.lagMs });
           peaks.push(...pickPeaks(averageCycles(noise.corr, tr.K), noise.lags).value);
         }
         if (peaks.length >= 8) {
@@ -569,7 +587,7 @@ export class Pipeline {
     });
     // Beats inside the analysed window are superseded by the ones just computed.
     this.dots = this.dots.filter((d) => d.p < start).concat(dots).sort((a, b) => a.p - b.p);
-    this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0 };
+    this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0, irregular: analysis.irregular };
     this.shift = shift;
     this.lastTrusted = start + length;
     this.trackingSince = this.count;
@@ -690,7 +708,8 @@ export class Pipeline {
         for (let L = 0; L < this.nLag; L++) ty.acc[L] /= ty.K;
         // The tracker says where the beat is expected: lag 0. A confident peak close to that
         // is preferred to a higher one on another of the beat's sounds.
-        const preferNear = !this.options.timing || this.options.timing.preferNear !== false;
+        // An irregular watch gives no reason to expect its beat near the prediction.
+        const preferNear = !lock.irregular && (!this.options.timing || this.options.timing.preferNear !== false);
         const peak = preferNear ? pickPeakNear(ty.acc, this.lags, 0, this.nearLag, ty.threshold) : pickPeak(ty.acc, this.lags);
         const centreN = ty.n0 + (ty.K - 1);
         const p = ty.p0 + (ty.K - 1) * ty.step + peak.lag;
@@ -761,7 +780,7 @@ export class Pipeline {
     this.nextReading = Infinity;
     const t = this.toSeconds(this.count);
     this.events.push({ type: 'status', state: 'listening', reason, bph: null, cyclesAveraged: null, t });
-    this.events.push({ type: 'readings', t, window: null, signal: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
+    this.events.push({ type: 'readings', t, window: null, signal: null, irregular: false, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
   }
 
   /**
@@ -808,7 +827,7 @@ export class Pipeline {
       };
     });
     const referenceGap = (lock.types[1].adjust - lock.types[0].adjust) / this.fe;
-    const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement, referenceGap);
+    const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement, referenceGap, lock.irregular);
     /** @type {Signal} */
     const signal = { z: [null, null], cycles: [null, null] };
     for (let j = 0; j < 2; j++) {
@@ -819,7 +838,7 @@ export class Pipeline {
       signal.z[type] = recent.length ? median(recent.map((d) => d.z)) : null;
       signal.cycles[type] = ty.K;
     }
-    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], signal, ...r };
+    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], signal, irregular: lock.irregular, ...r };
   }
 
   emitReadings() {

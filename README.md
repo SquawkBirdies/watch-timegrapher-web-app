@@ -98,6 +98,53 @@ On simulated watches heard clearly whose beats are displaced at random by 0.5 ms
 timestamps still follow each beat's true displacement, by a factor of 0.88 to 1.01. They are as
 close to it as before at 0.5 ms, and closer at 1 ms: 0.38 to 0.41 ms rms instead of 0.45 to 0.52.
 
+A watch that runs badly does not keep its beats on a regular grid: each beat falls a little
+early or late, by an amount that changes from beat to beat. The pipeline used to take such a
+watch for a faint one, because scattered beats match an averaged beat poorly, and it averaged
+several cycles per timestamp, which hid most of the scatter. Now each analysis also times the
+beats one at a time. When single beats of both types scatter by more than 0.5 ms, the watch
+counts as irregular (`js/dsp/irregular.js`). A regular watch keeps its single beats within about
+0.1 ms. A wide sound scatters only its own beat type: in short windows the second Omega
+recording's tick scattered by up to 1.4 ms while its tock kept within 0.32 ms. For an irregular
+watch:
+
+- the beat's shape is rebuilt from beats each lined up on its own position, three times over;
+- each beat is looked for as far from where it is expected as three times the scatter, up to
+  16 ms, and the peak nearest the expected place is not preferred;
+- every timestamp is one beat; beats too faint to be timed alone are left out, never averaged;
+- repeat analyses start from the beats already timed instead of folding the audio again, because
+  scattered beats do not give the beat period away precisely enough for a fold;
+- the rate combines both beat types, with its uncertainty widened when they disagree, and the
+  scatter reading pools them, so the beat type that happens to look tighter cannot flatter the
+  watch. Readings carry `irregular: true`.
+
+A regular watch never takes this path: the three recordings and the two Safari captures give
+the same readings as before. On a clearly audible simulated 28,800 vph watch whose beats scatter
+by 2 ms, one beat type used to be averaged over 3 cycles, 171 of 281 confident timestamps lay
+more than 0.5 ms from where their beats fell, and the lock was lost once; now every beat has its
+own timestamp, 4 of 419 are that far off, and the lock holds. At 5 ms of scatter the lock used to
+be lost twice, one beat type was not timed, and the rate was 153 s/day off against a stated
+±12 s/day; now 4 of 356 timestamps are off and the lock holds. Over twelve 60 s runs each, the
+final rate reading lay within twice its stated uncertainty of the true rate every time, at 2 ms
+and at 5 ms. The ETA recording with every beat moved by a random 3 ms (the audio is stretched
+and squeezed between beats) used to be averaged over 2 and 4 cycles with 111 of 151 timestamps
+more than 0.5 ms off; now 2 of 284 are.
+
+The tests include a "basket case", after the snowstorm trace in the collector guide on reading
+timegrapher results: an 18,000 vph watch gaining 60 s/day whose beats scatter by 2 ms, whose rate
+wanders, with one beat in thirty knocked up to 8 ms out, beats of uneven loudness, a rattle
+between them and a real 2 ms beat error. Once the watch is recognised as irregular, the trace
+must show each beat where it fell, with all of its scatter, and the scatter reading must stay
+above 1.5 ms. No beat error may ever be shown (a confused timegrapher shows 0.0 ms). The rate
+readings' errors, against the rate the watch actually ran at over each 20 s window, must stay
+below 1.5 times their stated uncertainty, rms, with no more than 1 in 20 beyond 3 times it. On
+three such watches the app on
+the main branch averaged up to 8 cycles per timestamp, put 233 of 323 timestamps more than
+0.5 ms from their beats, showed a scatter as low as 0.25 ms, and its rate readings were off by
+3.3 times their stated uncertainty, rms, and by up to 15.6 times. Now 19 of 506 timestamps are
+that far off, 14 of them on the quieter tock, and the rate readings are off by 1.2 times their
+stated uncertainty, rms.
+
 Known limits of the real-time pipeline:
 
 - A faint watch is found only once enough of its ticking is in the history buffer. The default
@@ -106,16 +153,25 @@ Known limits of the real-time pipeline:
   are faint.
 - A beat error is shown only when both beat types are timed to within 0.2 ms of scatter. A
   watch with a genuinely ragged trace will therefore show no beat error.
+- An irregular watch is recognised only once single beats of both types have been heard. When
+  one beat type is too faint for that in the first short analysis, the first readings are made
+  as for a regular watch, averaged and sometimes flattering: one simulated basket case read
+  +163 ± 18 s/day for 4 s while it ran at +62. Of twelve simulated basket cases, eight were
+  recognised at their first lock and three within 10 s of it; the twelfth lost its first lock
+  and was recognised 28 s after it. A watch that is faint and irregular may not be recognised at
+  all.
+- A stray beat on an otherwise regular watch, more than 4 ms out, is not found.
+- When an irregular watch's beat is two sounds of similar loudness, like the co-axial tock, the
+  timestamps jump between them: on a simulated watch with 1.5 ms of scatter, 87 of 224 tocks
+  were on the wrong sound.
+- The screen does not yet say that a watch runs irregularly.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
 - A blurred beat still scatters. The second Omega recording's ticks, a sound several
   milliseconds wide, scatter by 0.35 ms about their line against 0.08 ms for its tocks. A
   shorter matching window and single frequency bands both timed them worse.
-- Weak-signal averaging cannot tell a faint watch from one that runs irregularly, because both
-  make single beats less confident. A clearly audible simulated watch whose beats were displaced
-  at random by 2 ms had one beat type averaged over 3 cycles, which hid part of its
-  irregularity, and its 20 s rate readings were off by 5.3 s/day rms against a stated ±2.9. A
-  bench timegrapher shows such a watch as a snowstorm of dots and gives no rate.
+- A quartz clock ticking once a second can be taken for a watch. With its clicks peaking at
+  −46 dBFS in a quiet room, a simulated one locked at 21,600 vph.
 - A beat type that stops being timed and is found again later starts from a fresh reference
   point, so its trace line can resume a few milliseconds from where it stopped.
 
@@ -151,7 +207,7 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about ten minutes
+npm test             # about ten minutes on a fast computer
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
@@ -170,6 +226,7 @@ js/dsp/cleanup.js      noise levelling, click clipping, mains-hum comb filter
 js/dsp/acquire.js      beat-rate search by folding, exact and fast
 js/dsp/template.js     averaged tick-tock cycle
 js/dsp/timing.js       matched-filter beat timing, with averaging for faint watches
+js/dsp/irregular.js    irregular watches: every beat timed on its own
 js/dsp/estimate.js     rate and beat error from the timestamps; the escapement setting
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
 js/dsp/tracker.js      Kalman beat tracker

@@ -175,10 +175,29 @@ export const MAX_SCATTER_MS = 0.2;
  */
 
 /**
+ * The rate from two independent fits, weighted by their uncertainties. When the two disagree by
+ * more than those uncertainties allow, the combined uncertainty is widened by the same factor.
+ * The scatter is the two fits' pooled scatter.
+ * @param {BeatFit} a
+ * @param {BeatFit} b
+ * @returns {{rate: number, rateSd: number, jitterMs: number}}
+ */
+export function combineFits(a, b) {
+  const wa = 1 / (a.rateSd * a.rateSd);
+  const wb = 1 / (b.rateSd * b.rateSd);
+  const rate = (a.rate * wa + b.rate * wb) / (wa + wb);
+  const disagreement = Math.abs(a.rate - b.rate) / Math.hypot(a.rateSd, b.rateSd);
+  const rateSd = Math.max(1, disagreement) / Math.sqrt(wa + wb);
+  const jitterMs = Math.sqrt((a.count * a.jitterMs ** 2 + b.count * b.jitterMs ** 2) / (a.count + b.count));
+  return { rate, rateSd, jitterMs };
+}
+
+/**
  * Stage 8 in one call: rate, beat error and the checks that decide whether a beat error may be
  * shown. The beat error is reported only when both beat types are timed precisely and the tick
  * and tock look alike, so the two timestamps refer to the same event in each beat. Otherwise
- * the rate comes from the better-timed beat type alone.
+ * the rate comes from the better-timed beat type alone; for a watch that runs irregularly, from
+ * both (see `irregular`).
  * @param {BeatSeries[]} beats the ticks and the tocks
  * @param {number} nominalPeriod nominal beat period in seconds
  * @param {Float32Array[]} template averaged tick-tock cycle
@@ -191,9 +210,14 @@ export const MAX_SCATTER_MS = 0.2;
  *   exceeds the gap that timestamps taken at `clusters` would have. The real-time pipeline
  *   keeps each beat type's reference point across repeat analyses, while `clusters` are the
  *   current template's own
+ * @param {boolean} [irregular] true when the watch's beats fall at scattered times. Both beat
+ *   types then scatter alike, and when one looks tighter than the other in a reading, that is
+ *   chance: choosing it would flatter the watch. So the rate combines the two, its uncertainty
+ *   widens when they disagree by more than their uncertainties allow, and the scatter reading
+ *   pools them
  * @returns {Readings}
  */
-export function summarize(beats, nominalPeriod, template, clusters, envelopeRate, escapement = 'lever', referenceGap = 0) {
+export function summarize(beats, nominalPeriod, template, clusters, envelopeRate, escapement = 'lever', referenceGap = 0, irregular = false) {
   const fits = beats.map((s) => fitSeries(s, nominalPeriod));
   /** @type {Readings} */
   const result = { fits, rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null };
@@ -225,7 +249,12 @@ export function summarize(beats, nominalPeriod, template, clusters, envelopeRate
       }
     }
   }
-  if (!both) {
+  if (!both && irregular && fitTick && fitTock) {
+    const combined = combineFits(fitTick, fitTock);
+    result.rate = combined.rate;
+    result.rateSd = combined.rateSd;
+    result.jitterMs = combined.jitterMs;
+  } else if (!both) {
     const only = fitTick && fitTock ? (fitTick.rateSd <= fitTock.rateSd ? fitTick : fitTock) : fitTick || fitTock;
     if (only) {
       result.rate = only.rate;
