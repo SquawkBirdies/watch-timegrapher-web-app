@@ -30,10 +30,14 @@ python3 -I tools/prototype/coaxial/analyze.py tests/fixtures/omega-3861-safari.w
 python3 -I tools/prototype/coaxial/analyze.py tests/fixtures/omega-3861-safari.wav /tmp/omega.beats.json 36 --app
 python3 -I tools/prototype/coaxial/checks.py vary tests/fixtures/omega-3861-safari.wav /tmp/omega.beats.json 36
 python3 -I tools/prototype/coaxial/checks.py sims /tmp/sims        # about twenty minutes
+node tools/prototype/coaxial/beats.mjs stream tests/fixtures/omega-3861-safari.wav /tmp/omega
+python3 -I tools/prototype/coaxial/checks.py kalman tests/fixtures/omega-3861-safari.wav /tmp/omega 36
+python3 -I tools/prototype/coaxial/checks.py kalman-sims /tmp/kalman   # about ten minutes
 ```
 
-`beats.mjs` runs the app's own analysis for the timestamps. The last argument of `analyze.py`
-is the lift angle. `--app` works on envelopes made the way the app's filter bank makes them.
+`beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
+stream` its real-time pipeline. The last argument of `analyze.py` is the lift angle. `--app`
+works on envelopes made the way the app's filter bank makes them.
 
 | File | What it does |
 | --- | --- |
@@ -66,6 +70,33 @@ error of 0, 0.5, 1 and 2 ms, sixteen runs all read within 0.10 ms, and amplitude
 310° read 1° to 5° low. With the unlock 2 dB over the noise or less, or with only 20 s of
 audio, nothing was shown.
 
+## With the real-time pipeline and a Kalman beat tracker
+
+The readings above line the beats up on the timestamps of the app's whole-recording analysis.
+`checks.py kalman` lines them up instead on what the app would have in real time: the timestamps
+its real-time pipeline reports, or the beat times of a Kalman tracker (`js/dsp/tracker.js`, run
+again over those timestamps with the pipeline's drift settings), either as the tracker expected
+each beat before it came or as it placed it afterwards. The first 12 beats of each type are left
+out while the tracker settles.
+
+| Omega 3861, Safari capture, beats lined up on | Beat error | Amplitude | Unlock over the noise of the average |
+| --- | --- | --- | --- |
+| whole-recording timestamps | 0.31 ± 0.03 ms | 284° | 12.6 dB |
+| real-time timestamps | 0.30 ± 0.04 ms | 284° | 12.5 dB |
+| the Kalman tracker's expected times | 0.33 ± 0.03 ms | 284° | 12.4 dB |
+| the Kalman tracker's settled times | 0.32 ± 0.03 ms | 284° | 12.4 dB |
+
+The tracker works as the source of beat times and changes nothing that matters. A beat's own
+timestamp scatters about the tracker's time by only 0.05 ms (ticks) or 0.10 ms (tocks), and the
+unlock takes about half a millisecond to rise, so lining up on one or the other moves little. With the
+audio building up as it would in real time, the gates held the reading back at 20 s and showed it
+from 30 s on, the same for all three. The ETA reads 0.14 to 0.15 ms and 263° all four ways.
+
+On sixteen simulated co-axial watches, lining the beats up on the tracker moved the unlock's
+level by between -0.1 and +0.4 dB, and the readings were shown about as often: 6 of 16 on the
+real-time timestamps, 6 and 7 on the tracker's expected and settled times. No reading, shown or
+held, was more than 0.08 ms from the truth.
+
 ## Limits
 
 - That the first sound is the unlock in both beats is a reading of the patents' sequence of
@@ -75,5 +106,8 @@ audio, nothing was shown.
 - The two beats take 8% different times from unlock to lock. The prototype uses their mean;
   what a timing machine's co-axial mode does is not published.
 - The 3861's unlock stands only 3.5 to 5.5 dB over the noise, mostly above 18 kHz. It took
-  about a minute of beats to find reliably, and compressed recordings do not show it.
-- One watch and one capture. Whole recordings only: nothing here runs in real time.
+  30 to 60 s of beats to find reliably, and compressed recordings do not show it.
+- The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
+  a good reading back.
+- One watch and one capture. The averaging itself runs on a whole recording, in Python, even
+  when the beat times come from the real-time pipeline.
