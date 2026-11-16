@@ -285,6 +285,7 @@ node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat r
 ## Layout
 
 ```
+CLAUDE.md              guidance for AI agents working in this repository
 index.html             the timegrapher (script in js/main.js, styles in css/app.css)
 check.html             browser check
 diagnostic.html        audio diagnostic (script in js/diagnostic.js)
@@ -345,7 +346,7 @@ Written by Claude:
 - all the code in this repository: the JavaScript signal pipeline, the Kalman beat tracker, the
   synthetic watch generator, the interface, the tests and the command-line tools
 - the Python prototype in `tools/prototype/`
-- this README and the project's design plan
+- this README, `CLAUDE.md` and the project's design plan
 - the choice of signal-processing methods, and the expected values the tests check against
 
 Done by Lawrence Fan:
