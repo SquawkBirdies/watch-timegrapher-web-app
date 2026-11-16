@@ -113,6 +113,8 @@ canvas { display: block; width: 100%; touch-action: pan-y; }
 .tabs button {
   font: 600 14px var(--font); border: 0; border-radius: 8px; padding: 9px 4px; background: transparent; color: var(--muted); cursor: pointer;
 }
+.source-tabs { display: flex; }
+.source-tabs button { flex: 1 1 auto; padding: 9px 6px; white-space: nowrap; }
 .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
 .panel { display: grid; gap: 12px; }
 .field { display: grid; gap: 4px; }
@@ -160,6 +162,14 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 28px; ma
 }
 .primary[data-running] { background: transparent; color: var(--accent); }
 .primary:disabled { opacity: 0.45; cursor: default; }
+.secondary {
+  font: 600 15px var(--font); padding: 10px 14px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+}
+.secondary:disabled { opacity: 0.45; cursor: default; }
+.steps { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.steps strong { color: var(--ink); }
+.save-row { display: grid; gap: 6px; justify-items: start; }
 
 footer { display: grid; gap: 6px; padding: 4px 4px 0; font-size: 13px; color: var(--muted); }
 
@@ -171,7 +181,8 @@ dialog {
 dialog::backdrop { background: rgb(0 0 0 / 0.4); }
 dialog form { display: grid; gap: 14px; padding: 18px; }
 dialog h2 { font-size: 18px; }
-dialog .actions { display: flex; justify-content: flex-end; }
+dialog .actions { display: flex; justify-content: flex-end; gap: 10px; }
+dialog p { font-size: 15px; }
 .note { font-size: 13px; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {

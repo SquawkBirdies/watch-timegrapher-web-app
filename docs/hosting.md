@@ -88,3 +88,15 @@ then open `http://localhost:8000`. Browsers treat `localhost` as secure, so the 
 there. An iPhone that opens the computer's address over Wi-Fi, such as
 `http://192.168.1.20:8000`, is not on a secure page and cannot use the microphone; use GitHub
 Pages for the phone.
+
+Chrome can play a recording into the app in place of the microphone, which is how the
+microphone path was tested on a computer:
+
+```
+google-chrome --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
+  --use-file-for-fake-audio-capture=/path/to/recording.wav http://localhost:8000
+```
+
+The first flag allows the microphone without asking. A 16-bit WAV file works. Chrome plays it in
+a loop and may deliver it at another sample rate: 44.1 kHz when this was tested. A few seconds of
+digital silence inserted into the file make an interruption.

@@ -68,6 +68,17 @@ export class Measurement {
     this.audioSeconds = seconds;
   }
 
+  /**
+   * The audio stopped (the microphone was interrupted). The readings blank at once; the trace
+   * keeps what it has, and a later lock continues it after the gap.
+   */
+  interrupt() {
+    if (this.state === 'idle') return;
+    this.state = 'listening';
+    this.readings = null;
+    this.waveform = null;
+  }
+
   /** @param {PipelineEvent} e */
   apply(e) {
     if (e.type === 'status') {
@@ -154,6 +165,22 @@ export class Measurement {
     }
     return null;
   }
+}
+
+/**
+ * The same event with its times moved later by `dt` seconds. A live measurement restarts the
+ * pipeline after an interruption, and the pipeline counts time from its own start; this places
+ * the new segment's events after the gap on the run's timeline.
+ * @param {PipelineEvent} e
+ * @param {number} dt
+ * @returns {PipelineEvent}
+ */
+export function shiftEvent(e, dt) {
+  if (dt === 0) return e;
+  if (e.type === 'status') return { ...e, t: e.t + dt };
+  if (e.type === 'beats') return { ...e, beats: e.beats.map((b) => ({ ...b, t: b.t + dt })), replaceFrom: e.replaceFrom === null ? null : e.replaceFrom + dt };
+  if (e.type === 'readings') return { ...e, t: e.t + dt, window: e.window === null ? null : [e.window[0] + dt, e.window[1] + dt] };
+  return { ...e, t: e.t + dt };
 }
 
 /**
@@ -309,15 +336,31 @@ export function irregularWarning(readings) {
 }
 
 /**
+ * What the screen needs to know about the source.
+ * @typedef {Object} SourceState
+ * @property {boolean} running
+ * @property {boolean} finished a recording reached its end
+ * @property {boolean} [interrupted] the microphone is interrupted
+ * @property {boolean} [resumed] the microphone came back after an interruption
+ */
+
+/**
  * One line of advice under the signal meter.
  * @param {Measurement} m
- * @param {{running: boolean, finished: boolean}} source
+ * @param {SourceState} source
  * @returns {string}
  */
 export function guidance(m, source) {
   if (!source.running && !source.finished && m.state === 'idle') return 'Choose a source below and press Start.';
+  if (source.running && source.interrupted) {
+    return 'The microphone was interrupted, by a call, another app or the screen locking. Measuring starts again when the sound comes back.';
+  }
+  if (!source.running && !source.finished) {
+    return m.state === 'tracking' ? 'Stopped. The numbers are the last reading. Press Start to measure again.' : 'Stopped. Press Start to measure again.';
+  }
   if (m.state !== 'tracking') {
     if (source.finished) return m.lockedAt !== null ? 'The beat was lost before the end of the recording.' : 'No steady beat was found in this recording.';
+    if (source.running && source.resumed) return 'The sound is back after an interruption. Listening for a steady beat again.';
     if (m.lockedAt !== null) return 'Lost the beat. Listening again.';
     return 'Listening for a steady beat. This usually takes 8 to 20 seconds.';
   }
@@ -337,12 +380,46 @@ export function guidance(m, source) {
 /**
  * The state line above the readout.
  * @param {Measurement} m
- * @param {{running: boolean, finished: boolean}} source
+ * @param {SourceState} source
  * @returns {string}
  */
 export function stateText(m, source) {
-  if (m.state === 'tracking') return source.finished ? 'End of recording' : 'Locked';
+  if (source.running && source.interrupted) return 'Interrupted';
+  if (m.state === 'tracking') return source.finished ? 'End of recording' : source.running ? 'Locked' : 'Stopped';
   if (source.running) return 'No lock · listening';
   if (source.finished) return 'End of recording · no lock';
-  return 'Not running';
+  return m.state === 'idle' ? 'Not running' : 'Stopped';
+}
+
+/**
+ * What to tell the user when the microphone cannot be opened.
+ * @param {unknown} error from getUserMedia or the audio context
+ * @returns {string}
+ */
+export function microphoneProblem(error) {
+  const name = error instanceof Error || (error && typeof error === 'object' && 'name' in error) ? String(/** @type {{name: unknown}} */ (error).name) : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return "Microphone access was not allowed. Allow it in the browser's website settings for this site, then press Start.";
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No microphone was found. Connect one, or choose another input, then press Start.';
+  if (name === 'NotReadableError' || name === 'AbortError') return 'The microphone is in use by something else, such as a call or another app. Press Start when it is free.';
+  const message = error instanceof Error ? error.message : String(error);
+  return `The microphone could not be opened: ${message}`;
+}
+
+/**
+ * The active input as shown under the picker: its name, its sample rate, and a caution for
+ * Bluetooth inputs, which usually run at 16 kHz against 44.1 or 48 kHz for a phone's own
+ * microphone.
+ * @param {string} label as the browser names it; may be empty
+ * @param {number|null} sampleRate the input's own rate, when known
+ * @returns {{text: string, bluetooth: boolean}}
+ */
+export function describeInput(label, sampleRate) {
+  const bluetooth = /bluetooth|airpods|beats|hands-?free|\bbt\b|buds/i.test(label) || (sampleRate !== null && sampleRate <= 16000);
+  const parts = [label || 'Microphone'];
+  if (sampleRate) parts.push(`${(sampleRate / 1000).toFixed(sampleRate % 1000 ? 1 : 0)} kHz`);
+  let text = parts.join(' · ');
+  if (bluetooth) text += '. Bluetooth inputs are experimental: their sound is coarser than a wired or built-in microphone.';
+  return { text, bluetooth };
 }
