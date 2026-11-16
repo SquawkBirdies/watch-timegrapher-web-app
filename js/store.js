@@ -9,6 +9,8 @@
  * @property {number} liftAngle degrees, for amplitude
  * @property {50|60} humHz mains frequency
  * @property {number} averagingSeconds window of the rate and beat-error readings
+ * @property {string} microphoneId the input chosen in the microphone picker; '' for the default
+ * @property {boolean} magnetNoticeSeen the magnetism notice has been read once
  */
 
 /** @type {Readonly<Settings>} */
@@ -18,6 +20,8 @@ export const DEFAULTS = Object.freeze({
   liftAngle: 52,
   humHz: 60,
   averagingSeconds: 20,
+  microphoneId: '',
+  magnetNoticeSeen: false,
 });
 
 export const BEAT_RATES = [18000, 19800, 21600, 25200, 28800, 36000];
@@ -42,6 +46,8 @@ export function clean(raw) {
   if (hum === 50 || hum === 60) s.humHz = hum;
   const avg = Number(raw.averagingSeconds);
   if (AVERAGING_CHOICES.includes(avg)) s.averagingSeconds = avg;
+  if (typeof raw.microphoneId === 'string' && raw.microphoneId.length <= 256) s.microphoneId = raw.microphoneId;
+  if (raw.magnetNoticeSeen === true) s.magnetNoticeSeen = true;
   return s;
 }
 

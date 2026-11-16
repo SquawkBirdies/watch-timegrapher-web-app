@@ -4,13 +4,13 @@ A mechanical watch timegrapher that runs in a phone's web browser and listens th
 microphone. It measures rate (seconds per day) and beat error (milliseconds) and draws a
 real-time trace.
 
-**Status: milestone 5 of 9.** The timegrapher screen works, driven by a simulated watch, by
-three demo recordings or by a recording of your own. The live microphone comes to it in
-milestone 6; until then the audio diagnostic records and measures it.
+**Status: milestone 6 of 9.** The timegrapher listens to the phone's microphone. It can also be
+driven by a simulated watch, by three demo recordings or by a recording of your own.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
 and the timegrapher replaying the three demo recordings in milestone 5), and in Chrome on a
-computer at phone size.
+computer at phone size, where the microphone was tested with a recording played in as a
+simulated microphone. The live microphone has not yet been tested on the iPhone.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -183,6 +183,62 @@ Known limits of the real-time pipeline:
 - A beat type that stops being timed and is found again later starts from a fresh reference
   point, so its trace line can resume a few milliseconds from where it stopped.
 
+## Live microphone
+
+The Microphone tab is the first source and the default. Start asks for the microphone. The
+first time, a notice explains that a phone's magnets can magnetise a watch: only an antimagnetic
+watch should rest against the phone, and any other should be heard through a wired earbud
+microphone held against the crown. The same advice stays above the input picker. The picker
+lists the inputs the browser offers, named once the microphone has been allowed, and remembers
+the choice. When the chosen input is gone, the default input is used. The active input's name
+and sample rate are shown, and Bluetooth inputs are marked experimental. The audio is requested
+with echo cancellation, noise suppression and automatic gain off, and only its first channel is
+used, as in the audio diagnostic.
+
+While it measures, the app keeps the screen on, because iOS stops the microphone when the screen
+locks. Where the browser cannot keep the screen on, the panel suggests turning Auto-Lock off.
+
+A call, another app taking the audio, the screen locking or the app going to the background
+interrupts the microphone. The app notices when the browser reports the audio suspended or the
+microphone muted or ended, or when the audio is exact digital silence for 0.3 s, which a working
+microphone never delivers. The readings blank at once, the screen says so, and nothing heard
+during the interruption is analysed. When sound comes back, the pipeline starts afresh and must
+lock again, which takes 8 to 20 s as at the start, and the trace continues after a gap as long
+as the interruption. A microphone closed while the app was in the background is reopened when
+the app returns. Changing the input, the beat rate or the mains frequency while measuring
+starts the measurement again without closing the microphone.
+
+The last 60 s of what the microphone heard since the last interruption are kept in memory, about
+11 MB at 48 kHz. "Save the last minute" hands them over as a 32-bit float WAV file, through the
+share sheet where there is one (on the iPhone, Save to Files) or as a download. Replayed under
+Your file, the saved minute is the very audio that was analysed.
+
+In Chrome on a computer, with the ETA recording played in as a simulated microphone (Chrome
+delivers it at 44.1 kHz), the live reading after 50 s was +6.9 s/day and 0.40 ms. The recording
+itself, streamed through the pipeline, reads +6.88 s/day and 0.38 ms at the same point, and the
+saved minute replayed under Your file read +6.9 s/day and 0.40 ms. With 3 s of digital silence
+inserted into the recording at 40 s, the app showed the interruption, resumed when the sound
+came back and locked again 9 s later. The automated tests drive the same code with a stand-in
+for the microphone: a simulated watch cut off for 2 s gives no readings during the gap, no
+confident dots in it and a fresh lock after it, and its saved minute matches the analysed audio
+sample for sample and replays to the same reading within 0.1 s/day.
+
+Not yet tested on the iPhone: the interruptions as iOS reports them (calls, Siri, other apps,
+locking the screen, switching apps, a Home Screen app sent to the background), the screen
+staying on, and wired earbud and Bluetooth inputs.
+
+Known limits of the live microphone:
+
+- After an interruption the measurement starts over, and its readings use only the audio since
+  the gap. The tick and tock lines can trade places across the gap, as after any lost lock.
+- If iOS does not give the audio back when the app returns, the app keeps waiting; press Stop,
+  then Start.
+- In the 0.3 s before digital silence counts as an interruption, the trace may show a dim dot or
+  two where beats were due.
+- Saving keeps only the audio since the last interruption.
+- The microphone cannot wait for the analysis. If the analysis falls more than 8 s behind, the
+  measurement stops with a message. The iPhone ran the pipeline 22.6 times faster than real time.
+
 ## Hosting
 
 The app is a folder of static files with no build step, served by GitHub Pages over HTTPS.
@@ -192,13 +248,14 @@ copy, and how to test on a computer.
 
 `index.html` is the timegrapher. Its header shows rate, beat error and (once it is measured)
 amplitude, with the beat rate, lift angle and averaging window under them, and dashes instead of
-stale numbers when there is no lock. When the watch runs irregularly, a warning below them says
+stale numbers when there is no lock or the microphone is interrupted. When the watch runs irregularly, a warning below them says
 by how much its beats wander from one to the next. Below are the trace, one dot per beat in milliseconds ahead
 of an ideal clock with low-confidence beats dimmed; a signal meter with advice; and the averaged
-tick and tock. The source can be a simulated watch whose rate, beat error, beat variability and
-loudness can be changed while it runs, one of the three test recordings, or a recording chosen from the phone,
-replayed at real speed or faster. Settings (beat rate, escapement, lift angle, mains frequency,
-averaging window) are kept on the device.
+tick and tock. The source can be the microphone, a simulated watch whose rate, beat error, beat
+variability and loudness can be changed while it runs, one of the three test recordings, or a
+recording chosen from the phone, replayed at real speed or faster. Settings (beat rate,
+escapement, lift angle, mains frequency, averaging window), the chosen microphone and whether
+the magnetism notice has been read are kept on the device.
 
 `check.html` checks the browser: secure connection, microphone access, audio worklets, screen
 wake lock, and whether the signal pipeline loads.
@@ -244,6 +301,8 @@ js/dsp/session.js      the pipeline plus a record of its computing time; the spe
 js/dsp/worker.js       runs a session in a background worker
 js/audio/capture.js    microphone choice, raw-audio request, interruptions
 js/audio/capture-worklet.js  audio-thread chunker
+js/audio/live.js       the microphone as a source: interruptions, resuming, the last minute
+js/audio/ring.js       the most recent stretch of audio, in fixed memory
 js/audio/wav.js        WAV reader for recordings, writer for saved captures
 js/audio/simulator.js  synthetic watch, as whole recordings or endless and adjustable
 js/audio/file-source.js  decodes a recording and hands it out in chunks
@@ -252,6 +311,8 @@ js/ui/model.js         what the screen shows, worked out from the pipeline's eve
 js/ui/trace.js         the trace
 js/ui/waveform.js      the averaged tick and tock
 js/ui/canvas.js        drawing helpers and chart colours
+js/ui/wake.js          keeps the screen on while measuring
+js/ui/save.js          hands a saved file to the share sheet or a download
 js/store.js            settings kept on the device
 tests/                 automated tests and the four recordings
 tools/                 command-line runners, and the Python prototype kept for reference

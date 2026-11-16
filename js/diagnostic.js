@@ -3,6 +3,7 @@
 
 import { listMicrophones, openMicrophone } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
+import { offerFile } from './ui/save.js';
 import { Cascade, highpass, BUTTERWORTH4_Q } from './dsp/biquad.js';
 
 /**
@@ -426,25 +427,9 @@ async function save() {
   const pad = (/** @type {number} */ v) => String(v).padStart(2, '0');
   const name = `timegrapher-capture-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}.wav`;
   const blob = new Blob([encodeWav(joinedChannels(), r.sampleRate)], { type: 'audio/wav' });
-  const file = new File([blob], name, { type: 'audio/wav' });
-  try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: name });
-      ui.resultFeedback.textContent = 'Shared. Choose Save to Files if you have not already.';
-      return;
-    }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') return;
-  }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-  ui.resultFeedback.textContent = `Saved as ${name}.`;
+  const how = await offerFile(blob, name);
+  if (how === 'shared') ui.resultFeedback.textContent = 'Shared. Choose Save to Files if you have not already.';
+  else if (how === 'downloaded') ui.resultFeedback.textContent = `Saved as ${name}.`;
 }
 
 async function copyReport() {

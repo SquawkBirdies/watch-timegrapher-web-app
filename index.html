@@ -80,13 +80,32 @@
 
   <section class="card" aria-labelledby="source-title">
     <h2 id="source-title">Source</h2>
-    <div class="tabs" role="tablist" aria-label="Source">
-      <button type="button" role="tab" id="tab-simulator" aria-controls="panel-simulator" aria-selected="true">Simulator</button>
+    <div class="tabs source-tabs" role="tablist" aria-label="Source">
+      <button type="button" role="tab" id="tab-microphone" aria-controls="panel-microphone" aria-selected="true">Microphone</button>
+      <button type="button" role="tab" id="tab-simulator" aria-controls="panel-simulator" aria-selected="false">Simulator</button>
       <button type="button" role="tab" id="tab-demo" aria-controls="panel-demo" aria-selected="false">Demo</button>
       <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false">Your file</button>
     </div>
 
-    <div class="panel" id="panel-simulator" role="tabpanel" aria-labelledby="tab-simulator">
+    <div class="panel" id="panel-microphone" role="tabpanel" aria-labelledby="tab-microphone">
+      <ul class="steps note">
+        <li><strong>Antimagnetic watch:</strong> rest the crown against the bottom edge of the phone, beside the microphone. Keep the watch off the back of the phone, where many phones hold magnets for chargers and cases.</li>
+        <li><strong>Any other watch:</strong> plug in wired earbuds and hold the earbud microphone against the crown, so the watch stays clear of the phone's magnets.</li>
+        <li>Keep the room quiet and the phone still.</li>
+      </ul>
+      <div class="field">
+        <label for="mic-input">Input</label>
+        <select id="mic-input"><option value="">Default microphone</option></select>
+        <p class="fine" id="mic-info">Start asks for the microphone. The sound stays on this device.</p>
+      </div>
+      <p class="note" id="mic-wake" hidden>This browser cannot keep the screen on, and the microphone stops when the screen locks. Set Auto-Lock to Never while measuring, in the phone's display settings.</p>
+      <div class="save-row">
+        <button type="button" class="secondary" id="mic-save" disabled>Save the last minute</button>
+        <p class="fine" id="mic-save-info">Saves up to 60 s of what the microphone heard as a WAV file, which you can replay under Your file.</p>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-simulator" role="tabpanel" aria-labelledby="tab-simulator" hidden>
       <p class="note">A synthetic watch. Rate, beat error, variability and loudness change as you move the sliders, like adjusting a watch under test. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
       <div class="field">
         <label for="sim-bph">Beat rate</label>
@@ -137,9 +156,9 @@
   </section>
 
   <footer>
-    <p>Milestone 5 of 9 · interface. The live microphone comes in milestone 6; until then the
-      <a href="diagnostic.html">audio diagnostic</a> records and measures it. The
-      <a href="check.html">browser check</a> shows whether this browser has what the app needs.</p>
+    <p>Milestone 6 of 9 · live microphone. The <a href="diagnostic.html">audio diagnostic</a> shows
+      which capture settings the browser applied, and the <a href="check.html">browser check</a>
+      shows whether this browser has what the app needs.</p>
     <p>Written with generative AI; see the README in the <a id="source-link" href="https://github.com/">source repository</a> for who did what. MIT licence.</p>
   </footer>
 </main>
@@ -150,6 +169,22 @@
     <button class="primary" id="start" type="button">Start</button>
   </div>
 </div>
+
+<dialog id="magnet" aria-labelledby="magnet-title">
+  <form method="dialog">
+    <h2 id="magnet-title">Magnets and watches</h2>
+    <p>A phone's speakers and other parts contain magnets. A watch held against the phone can be
+      magnetised, and a magnetised watch runs fast and erratically until it is demagnetised.</p>
+    <p><strong>Rest the watch against the phone only if it is antimagnetic.</strong> For any other
+      watch, plug in wired earbuds, hold the earbud microphone against the crown, and choose it
+      under Input.</p>
+    <p class="note">This is shown once. The same advice stays above the Input picker.</p>
+    <div class="actions">
+      <button type="submit" class="secondary" value="cancel">Cancel</button>
+      <button type="submit" class="primary" value="continue" id="magnet-continue">Continue</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="settings" aria-labelledby="settings-title">
   <form method="dialog" id="settings-form">

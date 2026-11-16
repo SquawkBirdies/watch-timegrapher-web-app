@@ -1,13 +1,19 @@
-// Start-up and wiring of the timegrapher screen. A source (the simulator, a demo recording or
-// the user's own file) is paced in real time and sent to the pipeline in a worker; the worker's
-// events update the measurement model, and the screen is redrawn from the model.
+// Start-up and wiring of the timegrapher screen. A source (the microphone, the simulator, a demo
+// recording or the user's own file) is sent to the pipeline in a worker as it arrives, or paced
+// in real time for the simulator and recordings; the worker's events update the measurement
+// model, and the screen is redrawn from the model.
 
-import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning } from './ui/model.js';
+import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput } from './ui/model.js';
 import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
+import { ScreenWake } from './ui/wake.js';
+import { offerFile, stampedName } from './ui/save.js';
 import { WatchStream } from './audio/simulator.js';
 import { decodeRecording, RecordingSource } from './audio/file-source.js';
 import { Player } from './audio/player.js';
+import { LiveInput } from './audio/live.js';
+import { listMicrophones } from './audio/capture.js';
+import { encodeWav } from './audio/wav.js';
 import { loadSettings, saveSettings, clean, BEAT_RATES, AVERAGING_CHOICES } from './store.js';
 
 /**
@@ -28,6 +34,10 @@ const DEMOS = [
 const TRACE_SECONDS = 30;
 /** Chunks the pipeline may have waiting before a replay pauses for it. */
 const MAX_BACKLOG = 3;
+/** Seconds of microphone audio the pipeline may have waiting before the measurement stops: the
+ *  microphone cannot wait, so a device too slow to keep up would fall further and further
+ *  behind. */
+const LIVE_MAX_BACKLOG_SECONDS = 8;
 
 /** @param {string} id */
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -65,6 +75,13 @@ const ui = {
   progress: $('progress'),
   progressFill: $('progress-fill'),
   progressText: $('progress-text'),
+  micInput: /** @type {HTMLSelectElement} */ ($('mic-input')),
+  micInfo: $('mic-info'),
+  micWake: $('mic-wake'),
+  micSave: /** @type {HTMLButtonElement} */ ($('mic-save')),
+  micSaveInfo: $('mic-save-info'),
+  magnet: /** @type {HTMLDialogElement} */ ($('magnet')),
+  magnetContinue: $('magnet-continue'),
   dockSource: $('dock-source'),
   dockDetail: $('dock-detail'),
   start: /** @type {HTMLButtonElement} */ ($('start')),
@@ -74,8 +91,9 @@ const ui = {
 };
 
 let settings = loadSettings();
-/** @type {'simulator'|'demo'|'file'} */
-let tab = 'simulator';
+/** @typedef {'microphone'|'simulator'|'demo'|'file'} SourceKind */
+/** @type {SourceKind} */
+let tab = 'microphone';
 let demoId = DEMOS[0].id;
 /** @type {{name: string, recording: Recording}|null} */
 let userFile = null;
@@ -86,7 +104,7 @@ let speed = 1;
 /**
  * What is running, or ran last.
  * @typedef {Object} Run
- * @property {'simulator'|'demo'|'file'} kind
+ * @property {SourceKind} kind
  * @property {string} name
  * @property {number|null} duration seconds, for recordings
  * @property {number} sampleRate
@@ -97,6 +115,12 @@ let speed = 1;
  * @property {number} fed frames sent to the pipeline
  * @property {number} posted chunks sent to the pipeline
  * @property {number} answered chunks the pipeline has finished with
+ * @property {number} offset seconds on the run's timeline where the pipeline's time starts; the
+ *   microphone restarts the pipeline after each interruption
+ * @property {boolean} interrupted the microphone is interrupted
+ * @property {boolean} resumed the microphone came back after an interruption, and the pipeline
+ *   has not locked since
+ * @property {number} interruptions so far
  */
 /** @type {Run|null} */
 let run = null;
@@ -104,6 +128,10 @@ let run = null;
 let player = null;
 /** @type {WatchStream|null} */
 let simulator = null;
+/** The microphone of the current or last microphone run; kept after stopping, for saving.
+ *  @type {LiveInput|null} */
+let live = null;
+let saveMessage = '';
 let sessionId = 0;
 let loading = '';
 /** @type {Load|null} */
@@ -115,12 +143,14 @@ const measurement = new Measurement();
 const traceView = new TraceView(ui.trace);
 const waveView = new WaveformView(ui.waveform);
 const worker = new Worker(new URL('./dsp/worker.js', import.meta.url), { type: 'module' });
+const wake = new ScreenWake();
 
 worker.onmessage = (event) => {
   const m = event.data;
   if (m.type === 'events') {
     if (m.id !== sessionId || !run) return;
-    for (const e of /** @type {PipelineEvent[]} */ (m.events)) measurement.apply(e);
+    for (const e of /** @type {PipelineEvent[]} */ (m.events)) measurement.apply(shiftEvent(e, run.offset));
+    if (measurement.state === 'tracking') run.resumed = false;
     load = m.load;
     run.answered++;
     finishIfDone(run);
@@ -172,10 +202,16 @@ async function loadDemo(demo, id) {
 
 async function start() {
   stopPlayer();
+  stopLive();
   const id = ++sessionId;
   // The tab may change while a demo downloads; the run is of the source chosen now.
   const kind = tab;
   problem = '';
+  saveMessage = '';
+  if (kind === 'microphone') {
+    startMicrophone(id);
+    return;
+  }
   /** @type {import('./audio/player.js').PacedSource} */
   let source;
   /** @type {Run} */
@@ -191,7 +227,8 @@ async function start() {
         seed: Math.floor(Math.random() * 2 ** 31),
       });
       source = simulator;
-      next = { kind: 'simulator', name: 'Simulator', duration: null, sampleRate: simulator.sampleRate, escapement: settings.escapement, running: true, ended: false, finished: false, fed: 0, posted: 0, answered: 0 };
+      next = newRun('simulator', 'Simulator', null, simulator.sampleRate, settings.escapement);
+      next.running = true;
     } else {
       simulator = null;
       /** @type {Recording} */
@@ -202,7 +239,7 @@ async function start() {
       if (kind === 'demo') {
         const demo = DEMOS.find((d) => d.id === demoId) || DEMOS[0];
         loading = 'Downloading';
-        run = { kind: 'demo', name: demo.name, duration: null, sampleRate: 48000, escapement, running: false, ended: false, finished: false, fed: 0, posted: 0, answered: 0 };
+        run = newRun('demo', demo.name, null, 48000, escapement);
         schedule();
         recording = await loadDemo(demo, id);
         name = demo.name;
@@ -219,7 +256,8 @@ async function start() {
       }
       if (id !== sessionId) return;
       source = new RecordingSource(recording);
-      next = { kind, name, duration: recording.duration, sampleRate: recording.sampleRate, escapement, running: true, ended: false, finished: false, fed: 0, posted: 0, answered: 0 };
+      next = newRun(kind, name, recording.duration, recording.sampleRate, escapement);
+      next.running = true;
     }
   } catch (error) {
     if (id !== sessionId) return;
@@ -267,7 +305,165 @@ async function start() {
     busy: () => thisRun.posted - thisRun.answered > MAX_BACKLOG,
   });
   player.start();
+  wake.want(true);
   schedule();
+}
+
+/**
+ * @param {SourceKind} kind
+ * @param {string} name
+ * @param {number|null} duration
+ * @param {number} sampleRate
+ * @param {Escapement} escapement
+ * @returns {Run}
+ */
+function newRun(kind, name, duration, sampleRate, escapement) {
+  return { kind, name, duration, sampleRate, escapement, running: false, ended: false, finished: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0 };
+}
+
+/**
+ * Measure from the microphone. This runs inside the tap on Start, or on Continue in the
+ * magnetism notice: iOS only lets audio start in response to the user, so the audio context is
+ * created before anything waits.
+ * @param {number} id session of this start
+ */
+async function startMicrophone(id) {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    problem = 'This browser does not offer the microphone to this page. It needs a secure (https) address.';
+    schedule();
+    return;
+  }
+  const thisRun = newRun('microphone', 'Microphone', null, 48000, settings.escapement);
+  const input = new LiveInput({
+    onAudio: (channels) => {
+      if (live !== input || !thisRun.running) return;
+      // The arrays are handed to the worker, which empties them, so they are measured first.
+      const frames = channels[0].length;
+      let peak = 0;
+      for (const v of channels[0]) {
+        const a = Math.abs(v);
+        if (a > peak) peak = a;
+      }
+      inputPeak = Math.max(peak, inputPeak * 0.8);
+      thisRun.fed += frames;
+      thisRun.posted++;
+      measurement.setPosition(input.position());
+      worker.postMessage({ type: 'chunk', channels }, channels.map((c) => c.buffer));
+      if ((thisRun.posted - thisRun.answered) * frames > LIVE_MAX_BACKLOG_SECONDS * thisRun.sampleRate) {
+        problem = 'This device could not analyse the sound as fast as it arrived, so the measurement stopped.';
+        stop();
+        return;
+      }
+      schedule();
+    },
+    onInterrupt: () => {
+      if (live !== input || !thisRun.running) return;
+      // The pipeline's session ends here; answers still on their way are ignored.
+      thisRun.interrupted = true;
+      thisRun.interruptions++;
+      sessionId++;
+      worker.postMessage({ type: 'stop' });
+      measurement.interrupt();
+      measurement.setPosition(input.position());
+      schedule();
+    },
+    onResume: () => {
+      if (live !== input || !thisRun.running) return;
+      thisRun.interrupted = false;
+      thisRun.resumed = true;
+      beginLiveSession(thisRun, input.segmentStart);
+    },
+    onEnd: (message) => {
+      if (live !== input) return;
+      problem = message;
+      stop();
+    },
+  });
+  live = input;
+  run = thisRun;
+  loading = 'Waiting for the microphone';
+  schedule();
+  try {
+    await input.open(settings.microphoneId);
+  } catch (error) {
+    if (id !== sessionId) return;
+    loading = '';
+    problem = microphoneProblem(error);
+    schedule();
+    return;
+  }
+  if (id !== sessionId || live !== input) {
+    input.close();
+    return;
+  }
+  loading = '';
+  thisRun.sampleRate = input.sampleRate;
+  thisRun.running = true;
+  measurement.start();
+  inputPeak = 0;
+  beginLiveSession(thisRun, 0);
+  wake.want(true);
+  refreshMicrophones();
+}
+
+/**
+ * Start a pipeline session for the microphone, whose time begins at `offset` on the run's
+ * timeline: at the start, after an interruption, or after a restart.
+ * @param {Run} r
+ * @param {number} offset
+ */
+function beginLiveSession(r, offset) {
+  r.offset = offset;
+  r.fed = 0;
+  r.posted = 0;
+  r.answered = 0;
+  load = null;
+  worker.postMessage({
+    type: 'start',
+    id: sessionId,
+    sampleRate: r.sampleRate,
+    channelCount: 1,
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds },
+  });
+  schedule();
+}
+
+/** The microphone run starts again from nothing, keeping the microphone open. */
+function restartMicrophone() {
+  const r = run;
+  if (!r || !live || r.kind !== 'microphone' || !r.running) return;
+  sessionId++;
+  worker.postMessage({ type: 'stop' });
+  live.restart();
+  measurement.start();
+  measurement.setPosition(live.position());
+  inputPeak = 0;
+  saveMessage = '';
+  if (r.interrupted) {
+    // The new session begins when the sound comes back.
+    r.offset = 0;
+    schedule();
+  } else {
+    beginLiveSession(r, 0);
+  }
+}
+
+/** Fill the input picker. Names are only given once the microphone has been allowed. */
+async function refreshMicrophones() {
+  let inputs;
+  try {
+    inputs = await listMicrophones();
+  } catch {
+    return;
+  }
+  /** @type {[string, string][]} */
+  const options = [['', 'Default microphone']];
+  inputs.forEach((d, i) => {
+    if (!d.deviceId || d.deviceId === 'default') return;
+    options.push([d.deviceId, d.label || `Microphone ${i + 1}`]);
+  });
+  fill(ui.micInput, options);
+  ui.micInput.value = options.some(([value]) => value === settings.microphoneId) ? settings.microphoneId : '';
 }
 
 /**
@@ -280,6 +476,7 @@ function finishIfDone(r) {
   r.running = false;
   r.finished = true;
   worker.postMessage({ type: 'stop' });
+  wake.want(false);
 }
 
 function stopPlayer() {
@@ -287,18 +484,30 @@ function stopPlayer() {
   player = null;
 }
 
+/** Close the microphone. Its last minute of audio stays available for saving. */
+function stopLive() {
+  if (live) live.close();
+}
+
 function stop() {
   stopPlayer();
+  stopLive();
   sessionId++;
   loading = '';
   worker.postMessage({ type: 'stop' });
-  if (run) run.running = false;
+  if (run) {
+    run.running = false;
+    run.interrupted = false;
+  }
+  wake.want(false);
   schedule();
 }
 
 /** Start again with the same source, for settings the pipeline cannot change while running. */
 function restart() {
-  if (run && run.running) start();
+  if (!run || !run.running) return;
+  if (run.kind === 'microphone') restartMicrophone();
+  else start();
 }
 
 // ---- Drawing -------------------------------------------------------------------------------
@@ -315,12 +524,19 @@ function schedule() {
 
 function render() {
   const m = measurement;
-  const src = { running: !!(run && run.running), finished: !!(run && run.finished) };
+  const micRun = run && run.kind === 'microphone' ? run : null;
+  /** @type {import('./ui/model.js').SourceState} */
+  const src = {
+    running: !!(run && run.running),
+    finished: !!(run && run.finished),
+    interrupted: !!(micRun && micRun.running && micRun.interrupted),
+    resumed: !!(micRun && micRun.resumed),
+  };
   const tracking = m.state === 'tracking';
   const r = m.readings;
 
   ui.state.textContent = loading ? 'Loading' : stateText(m, src);
-  ui.state.dataset.state = tracking ? 'tracking' : src.running ? 'listening' : 'idle';
+  ui.state.dataset.state = tracking && (src.running || src.finished) ? 'tracking' : src.running ? 'listening' : 'idle';
 
   // Header readout. Numbers are only shown while locked; otherwise a dash, never a stale value.
   ui.rate.textContent = tracking && r ? formatRate(r.rate) : '—';
@@ -350,7 +566,7 @@ function render() {
   const whole = src.finished || (!src.running && run && run.kind !== 'simulator');
   const from = whole ? 0 : Math.max(0, now - TRACE_SECONDS);
   const to = whole ? Math.max(now, 1) : Math.max(TRACE_SECONDS, now);
-  const message = tracking ? 'Waiting for beats' : src.running ? 'Listening for a steady beat' : run && run.posted ? 'No lock' : 'Press Start';
+  const message = tracking ? 'Waiting for beats' : src.interrupted ? 'Interrupted' : src.running ? 'Listening for a steady beat' : run && (run.posted || run.interruptions) ? 'No lock' : 'Press Start';
   const points = m.points(from, to);
   traceView.set(points, from, to, loading || message);
   ui.trace.setAttribute(
@@ -361,6 +577,7 @@ function render() {
   ui.traceCaption.textContent =
     'Milliseconds ahead of an ideal clock. A gaining watch climbs; the gap between the lines is the beat error.' +
     (note ? ` ${note}` : '') +
+    (micRun && micRun.interruptions ? ' Gaps are interruptions of the microphone.' : '') +
     ' Touch a dot to read it.';
 
   // Signal.
@@ -376,7 +593,7 @@ function render() {
   ui.levels.textContent = levels.join(' · ');
 
   // Averaged beat.
-  waveView.set(tracking ? m.waveform : null, src.running ? 'Shown once locked' : run && run.posted ? 'No lock' : 'Press Start');
+  waveView.set(tracking ? m.waveform : null, src.interrupted ? 'Interrupted' : src.running ? 'Shown once locked' : run && run.posted ? 'No lock' : 'Press Start');
   ui.waveCaption.textContent =
     tracking && m.waveform
       ? `Average of ${m.waveform.cycles} tick–tock cycles: sound level above 1.5 kHz around the moment each beat is timed.`
@@ -384,7 +601,17 @@ function render() {
 
   // Source and dock.
   const recordingRun = run && run.kind !== 'simulator' && run.duration !== null;
-  ui.speedRow.hidden = tab === 'simulator';
+  ui.speedRow.hidden = tab === 'simulator' || tab === 'microphone';
+  const listening = !!(micRun && micRun.running && live && !live.closed);
+  ui.micInfo.textContent = listening && live ? describeInput(live.label, live.inputSampleRate || live.sampleRate).text : 'Start asks for the microphone. The sound stays on this device.';
+  ui.micWake.hidden = wake.supported;
+  const kept = live ? live.recordedSeconds : 0;
+  ui.micSave.disabled = kept < 1;
+  ui.micSaveInfo.textContent =
+    saveMessage ||
+    (kept >= 1
+      ? `Saves the last ${Math.min(60, Math.floor(kept))} s${micRun && micRun.interrupted && micRun.running ? ' before the interruption' : micRun && micRun.interruptions ? ' since the last interruption' : ''} as a WAV file, which you can replay under Your file.`
+      : 'Saves up to 60 s of what the microphone heard as a WAV file, which you can replay under Your file.');
   ui.progress.hidden = ui.progressText.hidden = !(recordingRun && run && (run.running || run.finished) && run.kind === tab);
   if (recordingRun && run && run.duration) {
     const seconds = run.fed / run.sampleRate;
@@ -401,7 +628,11 @@ function render() {
     : src.running && run
       ? run.kind === 'simulator'
         ? 'Running'
-        : run.ended
+        : run.kind === 'microphone'
+          ? run.interrupted
+            ? 'Interrupted · waiting for sound'
+            : `Listening · ${(live && live.label) || 'microphone'}`
+          : run.ended
           ? 'Finishing'
           : speed > 16
             ? 'Replaying as fast as this device allows'
@@ -414,6 +645,7 @@ function render() {
 }
 
 function selectedName() {
+  if (tab === 'microphone') return 'Microphone';
   if (tab === 'simulator') return 'Simulator';
   if (tab === 'demo') return (DEMOS.find((d) => d.id === demoId) || DEMOS[0]).name;
   return userFile ? userFile.name : 'Your file';
@@ -500,7 +732,7 @@ ui.file.addEventListener('change', async () => {
 const tabButtons = Array.from(document.querySelectorAll('[role="tab"]'));
 for (const button of tabButtons) {
   button.addEventListener('click', () => {
-    tab = /** @type {'simulator'|'demo'|'file'} */ (button.id.replace('tab-', ''));
+    tab = /** @type {SourceKind} */ (button.id.replace('tab-', ''));
     for (const b of tabButtons) {
       const selected = b === button;
       b.setAttribute('aria-selected', String(selected));
@@ -526,8 +758,65 @@ for (const button of speedButtons) {
 
 ui.start.addEventListener('click', () => {
   if (loading || (run && run.running)) stop();
+  // The magnetism notice comes once, before the first microphone measurement.
+  else if (tab === 'microphone' && !settings.magnetNoticeSeen) ui.magnet.showModal();
   else start();
 });
+
+ui.magnetContinue.addEventListener('click', () => {
+  settings = { ...settings, magnetNoticeSeen: true };
+  saveSettings(settings);
+  // Still inside the tap, so the microphone may start.
+  start();
+});
+
+ui.micInput.addEventListener('change', async () => {
+  settings = { ...settings, microphoneId: ui.micInput.value };
+  saveSettings(settings);
+  const input = live;
+  if (input && !input.closed && run && run.running && run.kind === 'microphone') {
+    try {
+      await input.switchInput(settings.microphoneId);
+    } catch (error) {
+      if (live === input) {
+        problem = microphoneProblem(error);
+        stop();
+      }
+      return;
+    }
+    if (live === input) restartMicrophone();
+  }
+  schedule();
+});
+
+ui.micSave.addEventListener('click', async () => {
+  const recording = live && live.recording();
+  if (!recording) return;
+  const seconds = recording.channels[0].length / recording.sampleRate;
+  const name = stampedName('timegrapher-live', 'wav');
+  const blob = new Blob([encodeWav(recording.channels, recording.sampleRate)], { type: 'audio/wav' });
+  const how = await offerFile(blob, name);
+  if (how === 'shared') saveMessage = `Shared ${Math.round(seconds)} s as ${name}. Choose Save to Files if you have not already.`;
+  else if (how === 'downloaded') saveMessage = `Saved ${Math.round(seconds)} s as ${name}.`;
+  schedule();
+});
+
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', refreshMicrophones);
+refreshMicrophones();
+
+// Coming back to the page: reopen or restart the microphone if the system took it away.
+const wakeMicrophone = () => {
+  if (document.visibilityState === 'visible' && live && !live.closed && run && run.running) live.wake();
+};
+document.addEventListener('visibilitychange', wakeMicrophone);
+window.addEventListener('pageshow', wakeMicrophone);
+// While the microphone is interrupted no audio arrives, so the clock moves the trace on.
+setInterval(() => {
+  if (live && !live.closed && run && run.running && run.interrupted) {
+    measurement.setPosition(live.position());
+    schedule();
+  }
+}, 500);
 
 // ---- Settings ------------------------------------------------------------------------------
 
@@ -553,7 +842,8 @@ ui.settingsForm.addEventListener('change', () => {
   const values = Object.fromEntries(new FormData(ui.settingsForm));
   // An empty or out-of-range lift angle keeps the previous value.
   if (values.liftAngle === '' || !Number.isFinite(Number(values.liftAngle))) values.liftAngle = String(before.liftAngle);
-  settings = clean(values);
+  // Settings kept elsewhere on the screen (the microphone) are not in this form.
+  settings = clean({ ...before, ...values });
   saveSettings(settings);
   if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
     restart();
