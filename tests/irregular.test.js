@@ -71,6 +71,7 @@ test('regular watches, clear or faint, are not taken for irregular ones', () => 
     assert.ok(r.readings.length >= 10, `${name}: ${r.readings.length} readings`);
     assert.ok(r.readings.every((x) => !x.irregular), `${name}: never irregular`);
     assert.equal(r.pipeline.maxLag, Math.floor(4e-3 * r.pipeline.fe), `${name}: the usual search width`);
+    assert.equal(r.pipeline.changeChecks, 0, `${name}: no early look for a change in regularity`);
   }
   // A faint regular watch still averages, as it should: its beats are where the grid says.
   const faint = synthesizeWatch({ bph: 28800, rate: 4, beatOffsetMs: 0.2, gain: 0.9, seconds: 30, seed: 91 });

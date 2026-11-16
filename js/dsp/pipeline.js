@@ -25,6 +25,7 @@ import { acquireFast } from './acquire.js';
 import { analyzeRows } from './offline.js';
 import { buildWeights, correlateAt, pickPeak, pickPeakNear, pickPeaks, matchedFilter, averageCycles, NEAR_MS, LAG_MS } from './timing.js';
 import { summarize } from './estimate.js';
+import { SCATTER_LIMIT_MS } from './irregular.js';
 import { BeatTracker } from './tracker.js';
 import { robustLine, median, mean, std, percentile } from './mathutil.js';
 
@@ -182,6 +183,18 @@ const SIGNAL_BEATS = 8;
 const MIN_TIMESTAMPS = 12;
 /** Fewest beats timed both before and after a repeat analysis for the reference to be carried over. */
 const MIN_COMMON_BEATS = 3;
+/** Recent timestamps of each beat type watched for a change in how regularly the watch runs. */
+const CHANGE_BEATS = 24;
+/** Audio analysed when the watch's regularity seems to have changed, in seconds. */
+const CHANGE_WINDOW_SECONDS = 8;
+/** Seconds before a suspected change is looked at again, when the last look found none. */
+const CHANGE_RETRY_SECONDS = 4;
+/**
+ * Scatter of recent timestamps below which an irregular watch seems to have settled, in
+ * milliseconds. Lower than the limit for becoming irregular, so that a watch close to it does
+ * not flip between the two.
+ */
+const SETTLED_MS = 0.3;
 
 export class Pipeline {
   /**
@@ -204,6 +217,8 @@ export class Pipeline {
       blockSize: 2048,
       bands: /** @type {number[][]|undefined} */ (undefined),
       escapement: /** @type {import('./estimate.js').Escapement} */ ('lever'),
+      /** Re-analyse at once when the watch starts or stops running irregularly. */
+      watchChanges: true,
       ...options,
     };
     this.sampleRate = sampleRate;
@@ -255,6 +270,18 @@ export class Pipeline {
     this.trackingSince = 0;
     this.nextRefresh = Infinity;
     this.nextReading = Infinity;
+    /**
+     * For each beat type, tick and tock: where the highest correlation peak of each recent
+     * confident timestamp lay from the tracker's prediction, in samples, scaled by √K. Kept
+     * across repeat analyses, and cleared when the verdict on the watch's regularity changes.
+     * @type {[number[], number[]]}
+     */
+    this.recentLag = [[], []];
+    /** No look at a suspected change in regularity before this position. */
+    this.changeHold = 0;
+    /** Early analyses made because the regularity seemed to change, and how many changed it. */
+    this.changeChecks = 0;
+    this.changesFound = 0;
     /** @type {PipelineEvent[]} */
     this.events = [];
     /** Seconds spent in the lock analyses, for the speed check. */
@@ -363,6 +390,8 @@ export class Pipeline {
         this.lose('no trusted beat for several seconds');
       } else if (this.count >= this.nextRefresh) {
         this.refresh();
+      } else if (lock.confirmed && this.options.watchChanges && this.count >= this.changeHold && this.regularityChanged()) {
+        this.reanalyseChange();
       }
     }
     if (this.state === 'tracking' && this.count >= this.nextReading) {
@@ -429,6 +458,67 @@ export class Pipeline {
   }
 
   /** Tracking: repeat the analysis on the sliding window to refresh template and thresholds. */
+  /**
+   * Whether the recent timestamps suggest the watch has started or stopped running irregularly
+   * since the last analysis. A regular lock needs both beat types to scatter by more than the
+   * irregular limit; an irregular lock needs every timed beat type to scatter by less than
+   * `SETTLED_MS`.
+   * @returns {boolean}
+   */
+  regularityChanged() {
+    const lock = this.lock;
+    if (!lock) return false;
+    const ms = 1000 / this.fe;
+    const scatter = lock.types.map((ty, j) => {
+      const recent = this.recentLag[Math.abs((j + this.shift) % 2)];
+      if (!ty.tracked || recent.length < CHANGE_BEATS) return null;
+      const mid = median(recent);
+      return 1.4826 * median(recent.map((v) => Math.abs(v - mid))) * ms;
+    });
+    const known = /** @type {number[]} */ (scatter.filter((v) => v !== null));
+    return lock.irregular ? known.length > 0 && known.every((v) => v < SETTLED_MS) : known.length === 2 && known.every((v) => v > SCATTER_LIMIT_MS);
+  }
+
+  /**
+   * Analyse the most recent audio when the watch's regularity seems to have changed. A result
+   * that changes the verdict is taken over as if the lock began at the start of that audio, so
+   * that later analyses and the readings do not mix the two kinds of running. A result that
+   * does not is set aside, and the question waits a few seconds.
+   */
+  reanalyseChange() {
+    const lock = this.lock;
+    const tracker = this.tracker;
+    if (!lock || !tracker) return;
+    const fe = this.fe;
+    const start = Math.max(this.lockedFrom, this.base, this.count - Math.round(CHANGE_WINDOW_SECONDS * fe));
+    const length = this.count - start;
+    const rows = this.view(start, this.count);
+    const ppm = (tracker.period / (lock.nominalPeriod * fe) - 1) * 1e6;
+    const t0 = performance.now();
+    const analysis = analyzeRows(rows, fe, (p) => this.toSeconds(p + start), {
+      bph: lock.bph,
+      periodPpm: ppm,
+      refineSpan: (600 * fe) / length,
+      escapement: this.options.escapement,
+      timing: this.options.timing,
+    });
+    this.changeChecks++;
+    const previous = this.lockedFrom;
+    let kept = false;
+    if (analysis !== null && analysis.locked && analysis.irregular !== lock.irregular) {
+      this.lockedFrom = start;
+      kept = this.install(analysis, rows, start, length, true);
+      if (!kept) this.lockedFrom = previous;
+    }
+    this.analysisSeconds += (performance.now() - t0) / 1000;
+    if (kept) {
+      this.changesFound++;
+      this.stream();
+    } else {
+      this.changeHold = this.count + Math.round(CHANGE_RETRY_SECONDS * fe);
+    }
+  }
+
   refresh() {
     const lock = this.lock;
     const tracker = this.tracker;
@@ -587,6 +677,8 @@ export class Pipeline {
     });
     // Beats inside the analysed window are superseded by the ones just computed.
     this.dots = this.dots.filter((d) => d.p < start).concat(dots).sort((a, b) => a.p - b.p);
+    // What was heard under another verdict says nothing about a change from this one.
+    if (!this.lock || this.lock.irregular !== analysis.irregular) this.recentLag = [[], []];
     this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0, irregular: analysis.irregular };
     this.shift = shift;
     this.lastTrusted = start + length;
@@ -716,6 +808,14 @@ export class Pipeline {
         const ok = peak.value > ty.threshold;
         const z = (peak.value - ty.noiseMean) / ty.noiseSd;
         const dot = { n: centreN, p, j: /** @type {0|1} */ (j), type, ok, z, K: ty.K };
+        if (ok) {
+          // Where the beat was heard, without the preference for a peak near the prediction:
+          // that preference would hide the scatter being watched for.
+          const highest = preferNear ? pickPeak(ty.acc, this.lags) : peak;
+          const recent = this.recentLag[type];
+          recent.push(highest.lag * Math.sqrt(ty.K));
+          if (recent.length > CHANGE_BEATS) recent.shift();
+        }
         this.dots.push(dot);
         fresh.push(dot);
         ty.filled = 0;
