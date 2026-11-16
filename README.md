@@ -164,7 +164,9 @@ Known limits of the real-time pipeline:
 - When an irregular watch's beat is two sounds of similar loudness, like the co-axial tock, the
   timestamps jump between them: on a simulated watch with 1.5 ms of scatter, 87 of 224 tocks
   were on the wrong sound.
-- The screen does not yet say that a watch runs irregularly.
+- When a watch starts or stops running irregularly while it is measured, the warning follows
+  within about 30 s, as the repeat analyses catch up. On the simulator, beat variability of
+  0.8 ms or more brings the warning at the first lock; 0.6 ms took 28 s.
 - The escapement is not detected automatically. A co-axial watch measured in Swiss-lever mode
   can show a large, steady beat error that is wrong.
 - A blurred beat still scatters. The second Omega recording's ticks, a sound several
@@ -184,10 +186,11 @@ copy, and how to test on a computer.
 
 `index.html` is the timegrapher. Its header shows rate, beat error and (once it is measured)
 amplitude, with the beat rate, lift angle and averaging window under them, and dashes instead of
-stale numbers when there is no lock. Below are the trace, one dot per beat in milliseconds ahead
+stale numbers when there is no lock. When the watch runs irregularly, a warning below them says
+by how much its beats wander from one to the next. Below are the trace, one dot per beat in milliseconds ahead
 of an ideal clock with low-confidence beats dimmed; a signal meter with advice; and the averaged
-tick and tock. The source can be a simulated watch whose rate, beat error and loudness can be
-changed while it runs, one of the three test recordings, or a recording chosen from the phone,
+tick and tock. The source can be a simulated watch whose rate, beat error, beat variability and
+loudness can be changed while it runs, one of the three test recordings, or a recording chosen from the phone,
 replayed at real speed or faster. Settings (beat rate, escapement, lift angle, mains frequency,
 averaging window) are kept on the device.
 

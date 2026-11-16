@@ -292,6 +292,23 @@ export function averagingNote(readings) {
 }
 
 /**
+ * The warning shown when the watch runs irregularly: its beats fall early or late by an amount
+ * that changes from one beat to the next.
+ * @param {ReadingsEvent|null} readings
+ * @returns {string|null} the words under the warning's title, or null for no warning
+ */
+export function irregularWarning(readings) {
+  if (!readings || !readings.irregular) return null;
+  const scatter = readings.jitterMs;
+  const size = scatter !== null && Number.isFinite(scatter) ? `by ${scatter.toFixed(scatter >= 10 ? 0 : 1)} ms ` : '';
+  return (
+    `Beats wander ${size}from one to the next, where a steady watch keeps within about 0.1 ms. ` +
+    'Each dot is one beat, nothing is averaged, and the beat error cannot be measured. ' +
+    'This is often a sign that the watch needs service.'
+  );
+}
+
+/**
  * One line of advice under the signal meter.
  * @param {Measurement} m
  * @param {{running: boolean, finished: boolean}} source

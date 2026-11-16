@@ -83,6 +83,11 @@ main {
 .num .why { font-size: 12px; color: var(--muted); min-height: 1.3em; }
 .num[data-stale] .v { color: var(--faint); }
 .sub { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.alert {
+  display: grid; gap: 2px; font-size: 14px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+.alert strong { color: var(--warn); font-size: 15px; }
 
 /* Charts */
 .legend { display: flex; gap: 12px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }

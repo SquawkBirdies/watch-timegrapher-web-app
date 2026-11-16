@@ -2,7 +2,7 @@
 // the user's own file) is paced in real time and sent to the pipeline in a worker; the worker's
 // events update the measurement model, and the screen is redrawn from the model.
 
-import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText } from './ui/model.js';
+import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning } from './ui/model.js';
 import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
 import { WatchStream } from './audio/simulator.js';
@@ -38,6 +38,8 @@ const ui = {
   numRate: $('num-rate'),
   beatError: $('beat-error'),
   beatErrorWhy: $('beat-error-why'),
+  irregular: $('irregular'),
+  irregularText: $('irregular-text'),
   numBeatError: $('num-beat-error'),
   sub: $('sub'),
   trace: /** @type {HTMLCanvasElement} */ ($('trace')),
@@ -54,6 +56,7 @@ const ui = {
   simRate: /** @type {HTMLInputElement} */ ($('sim-rate')),
   simBe: /** @type {HTMLInputElement} */ ($('sim-be')),
   simGain: /** @type {HTMLInputElement} */ ($('sim-gain')),
+  simJitter: /** @type {HTMLInputElement} */ ($('sim-jitter')),
   demos: $('demos'),
   file: /** @type {HTMLInputElement} */ ($('file')),
   fileInfo: $('file-info'),
@@ -184,6 +187,7 @@ async function start() {
         rate: Number(ui.simRate.value),
         beatOffsetMs: Number(ui.simBe.value),
         gain: Number(ui.simGain.value),
+        jitterMs: Number(ui.simJitter.value),
         seed: Math.floor(Math.random() * 2 ** 31),
       });
       source = simulator;
@@ -325,11 +329,21 @@ function render() {
   ui.beatError.textContent = tracking && r ? formatMs(r.beatErrorMs) : '—';
   const escapement = run ? run.escapement : settings.escapement;
   ui.beatErrorWhy.textContent =
-    escapement === 'coaxial' ? 'not shown: co-axial' : tracking && r && r.rate !== null && r.beatErrorMs === null ? 'not measurable here' : '';
+    escapement === 'coaxial'
+      ? 'not shown: co-axial'
+      : tracking && r && r.rate !== null && r.beatErrorMs === null
+        ? r.irregular
+          ? 'irregular beat'
+          : 'not measurable here'
+        : '';
   const bph = m.bph || settings.bph;
   const parts = [bph ? `${formatBph(bph)} vph` : 'Beat rate automatic', `lift ${settings.liftAngle}°`, `${settings.averagingSeconds} s window`];
   if (tracking && span > settings.averagingSeconds + 2) parts[2] = `window lengthened to ${Math.round(span)} s`;
   ui.sub.textContent = parts.join(' · ');
+  // Irregular running: a warning in the readout, for as long as the latest readings say so.
+  const warning = tracking ? irregularWarning(r) : null;
+  ui.irregular.hidden = warning === null;
+  ui.irregularText.textContent = warning || '';
 
   // Trace.
   const now = m.audioSeconds;
@@ -428,15 +442,18 @@ function showSimulatorValues() {
   out('sim-be-out', `${Number(ui.simBe.value).toFixed(2)} ms`);
   const gain = Number(ui.simGain.value);
   out('sim-gain-out', gain === 0 ? 'silent' : `${gain.toFixed(2)}×`);
+  const jitter = Number(ui.simJitter.value);
+  out('sim-jitter-out', jitter === 0 ? 'none' : `${jitter.toFixed(1)} ms`);
 }
 showSimulatorValues();
-for (const input of [ui.simRate, ui.simBe, ui.simGain]) {
+for (const input of [ui.simRate, ui.simBe, ui.simGain, ui.simJitter]) {
   input.addEventListener('input', () => {
     showSimulatorValues();
     if (simulator && run && run.running && run.kind === 'simulator') {
       simulator.rate = Number(ui.simRate.value);
       simulator.beatOffsetMs = Number(ui.simBe.value);
       simulator.gain = Number(ui.simGain.value);
+      simulator.jitterMs = Number(ui.simJitter.value);
     }
   });
 }
