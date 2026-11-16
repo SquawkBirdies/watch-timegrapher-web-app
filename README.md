@@ -23,7 +23,7 @@ for who did what and what has been checked.
 events. It listens until it finds a beat rate, tracks each beat with a Kalman tracker, and
 blanks the readings when the ticking stops. `js/dsp/offline.js` analyses a whole recording with
 the same stages. The pipeline is checked against synthetic watches with known values, and both
-are checked against three real recordings of watches and against a recording with no watch.
+are checked against five real recordings of watches and against a recording with no watch.
 
 | Test | Expected | Whole recording | Real time, 128-sample chunks, 40 s window |
 | --- | --- | --- | --- |
@@ -35,13 +35,21 @@ are checked against three real recordings of watches and against a recording wit
 | ETA 2836-2 recording | 28,800 vph, about +6.5 s/day, about 0.43 ms | +6.43 s/day, 0.42 ms | +6.40 s/day, 0.41 ms |
 | Omega 3861 recording | 21,600 vph, about +0.2 s/day, no beat error | +0.54 s/day | +0.54 s/day, locked at 52 s |
 | Omega 3861, second recording | 21,600 vph, no reference value | -2.07 s/day | -2.13 s/day, locked at 12 s |
+| ETA 2836-2, Safari capture | 28,800 vph, about +1.7 s/day, about 0.3 ms | +1.69 s/day, 0.31 ms | +1.69 s/day, 0.31 ms, locked at 8 s |
+| Omega 3861, Safari capture | 21,600 vph, about +0.4 s/day, no beat error | +0.41 s/day | +0.21 s/day, locked at 8 s, every beat timed on its own |
 | No watch, Safari capture of a quiet room | no lock | no lock | no lock, with the beat rate detected or given as any of the six |
 
 The real-time column uses a 40 s averaging window (60 s for the ETA; the faint synthetic watch's
 lengthens by itself to 91 s). The whole-recording figures for the synthetic watches were measured
 in milestone 1. The tests now hold those watches to their expected values in real time only,
-because each analysis the real-time pipeline makes runs the same stages. The expected values for the first two recordings come from the Python
-prototype in `tools/prototype/`. No recording has been compared with a bench timegrapher. On an iPhone 17
+because each analysis the real-time pipeline makes runs the same stages. The expected values for
+the first two recordings come from the Python prototype in `tools/prototype/`. Those for the two
+Safari captures are the pipeline's own, cross-checked with a simple timing of each beat's loudest
+moment above 5 kHz that shares no code with it: +1.64 s/day for the ETA and +0.49 s/day for the
+Omega. The Safari captures are analysed from their first channel, as the app does, and the Omega
+in co-axial mode. Over its minute the Omega's 20 s readings move smoothly between -0.2 and
++1.6 s/day, far more than their stated ±0.09 s/day, which points to the watch's own rate changing
+over the minute. No recording has been compared with a bench timegrapher. On an iPhone 17
 Pro Max the real-time pipeline ran 22.6 times faster than real time on two channels. That was
 measured before the filter bank gained its two bands above 14.5 kHz, which cost about a quarter
 of the speed in tests on a computer; the app now uses one channel, which halves the work.
@@ -50,7 +58,9 @@ The filter bank covers 1.5 to 22.5 kHz in nine bands. The two top bands were add
 first captures from Safari, which carry tick sound up to 22.5 kHz: on those captures they made
 the ticks 1.2 to 2.2 times clearer against the noise and cut the Omega's timestamp scatter by
 about 30%. On the compressed Voice Memos recordings, which carry little above 19 kHz, they left
-the readings unchanged and raised the scatter slightly. At 44.1 kHz the top band is dropped.
+the readings unchanged and raised the scatter slightly. At 44.1 kHz the top band is dropped. A
+test holds the Omega's capture to this: over its first 30 s, the top bands make its beats 2.3 and
+2.2 times clearer and halve their scatter.
 
 The beat rate can be given instead of detected: pass `{ bph: 21600 }` to `Pipeline`, or a beat
 rate as the last argument of either command-line tool. Only that rate is then searched. In
@@ -341,7 +351,7 @@ tests and in the app's background worker.
   saved the same way later, by which time the diagnostic kept only the first channel.
 
 The Safari captures are 32-bit floating point at 48 kHz, exactly as saved. Every file holds only
-the audio format and the samples, with no other metadata.
+the audio format and the samples, with no other metadata. The automated tests use all six.
 
 ## Use of generative AI
 

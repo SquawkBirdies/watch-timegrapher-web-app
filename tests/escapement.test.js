@@ -1,7 +1,8 @@
 // The escapement setting. A co-axial escapement's tick and tock are different sounds, so the
 // gap between them is not the beat error. The simulated watch below copies the pattern found in
 // the Omega 3861: one beat opens with a loud click that the other lacks, and a sound both beats
-// share comes 3.7 ms after it. The watch is exactly in beat.
+// share comes 3.7 ms after it. The watch is exactly in beat. How Swiss-lever mode misreads the
+// real Omega is checked on its Safari capture in recordings.test.js.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,13 +27,6 @@ const coaxial = {
     { dt: 0, amp: 0.55, decayMs: 0.5 },
   ],
 };
-
-test('Swiss-lever mode misreads a co-axial watch, which is why the setting exists', () => {
-  // If a later version learns to measure this correctly, this test should change.
-  const w = synthesizeWatch(coaxial);
-  const r = analyze(w.channels, w.sampleRate);
-  assert.ok(r.beatErrorMs !== null && r.beatErrorMs > 3, `beat error ${r.beatErrorMs}`);
-});
 
 test('co-axial mode measures the rate from both beats and shows no beat error', () => {
   // In real time only: each of the pipeline's analyses is a whole-recording analysis of its
