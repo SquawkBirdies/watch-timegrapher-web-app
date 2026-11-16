@@ -85,3 +85,110 @@ export function findClusters(template, envelopeRate) {
   }
   return c1 < c2 ? [c1, c2] : [c2, c1];
 }
+
+/**
+ * The average shape of one beat, from cycles that are each moved by their own shift before the
+ * median is taken. `buildTemplate` moves a whole cycle, tick and tock together; a watch whose
+ * beats fall at irregular times needs the tick and the tock of each cycle lined up separately.
+ * Only the stretch around the beat is computed.
+ * @param {Float32Array[]} rows cleaned envelope rows
+ * @param {number} period two-beat period in envelope samples
+ * @param {number} centre the beat's position in the cycle, in samples
+ * @param {ArrayLike<number>} shifts time shift of each cycle, in samples
+ * @param {number} length number of leading samples of each row to use
+ * @param {number} before samples computed before `centre`
+ * @param {number} after samples computed after `centre`
+ * @param {0|1} [parity] use only even-numbered (0) or odd-numbered (1) cycles
+ * @returns {Float32Array[]} one cycle per row, zero outside the computed stretch
+ */
+export function buildBeatTemplate(rows, period, centre, shifts, length, before, after, parity) {
+  const nb = Math.round(period);
+  const ncyc = Math.floor(length / period) - 1;
+  const width = before + after + 1;
+  const matrix = new Float32Array(Math.max(1, ncyc) * width);
+  const column = new Float64Array(Math.max(1, ncyc));
+  /** @type {Float32Array[]} */
+  const template = [];
+  for (const row of rows) {
+    let used = 0;
+    for (let k = 0; k < ncyc; k++) {
+      if (parity !== undefined && k % 2 !== parity) continue;
+      const start = k * period + (shifts[k] || 0) + centre - before;
+      const i0 = Math.floor(start);
+      const frac = start - i0;
+      if (i0 < 0 || i0 + width + 1 >= row.length) continue;
+      const base = used * width;
+      for (let g = 0; g < width; g++) matrix[base + g] = row[i0 + g] * (1 - frac) + row[i0 + g + 1] * frac;
+      used++;
+    }
+    const t = new Float32Array(nb);
+    if (used > 0) {
+      for (let g = 0; g < width; g++) {
+        for (let k = 0; k < used; k++) column[k] = matrix[k * width + g];
+        t[(((centre - before + g) % nb) + nb) % nb] = medianInPlace(column, used);
+      }
+    }
+    template.push(t);
+  }
+  return template;
+}
+
+/**
+ * How much later the second template shows a beat than the first, judged by their shapes.
+ * @param {Float32Array[]} a
+ * @param {Float32Array[]} b
+ * @param {number} centre the beat's position in the cycle, in samples
+ * @param {number} before samples compared before `centre`
+ * @param {number} after samples compared after `centre`
+ * @param {number} maxShift largest shift tried, in samples
+ * @returns {number} shift in samples, interpolated
+ */
+export function templateShift(a, b, centre, before, after, maxShift) {
+  const nb = a[0].length;
+  /** @param {Float32Array} t @param {number} i */
+  const at = (t, i) => {
+    const v = t[((i % nb) + nb) % nb];
+    return v > 0 ? v : 0;
+  };
+  /** @type {number[]} */
+  const cc = [];
+  let k = 0;
+  for (let s = -maxShift; s <= maxShift; s++) {
+    let ab = 0;
+    let bb = 0;
+    for (let r = 0; r < a.length; r++) {
+      for (let tau = -before; tau <= after; tau++) {
+        const x = at(a[r], centre + tau);
+        const y = at(b[r], centre + tau + s);
+        ab += x * y;
+        bb += y * y;
+      }
+    }
+    cc.push(ab / (Math.sqrt(bb) + 1e-30));
+    if (cc[cc.length - 1] > cc[k]) k = cc.length - 1;
+  }
+  const curve = k > 0 && k < cc.length - 1 ? cc[k - 1] - 2 * cc[k] + cc[k + 1] : 0;
+  const off = curve < 0 ? (0.5 * (cc[k - 1] - cc[k + 1])) / curve : 0;
+  return k - maxShift + off;
+}
+
+/**
+ * A template moved earlier by `shift` samples, which need not be a whole number.
+ * @param {Float32Array[]} template
+ * @param {number} shift
+ * @returns {Float32Array[]}
+ */
+export function shiftTemplate(template, shift) {
+  const nb = template[0].length;
+  const i0 = Math.floor(shift);
+  const frac = shift - i0;
+  return template.map((t) => {
+    const out = new Float32Array(nb);
+    for (let g = 0; g < nb; g++) {
+      const x = t[(((g + i0) % nb) + nb) % nb];
+      const y = t[(((g + i0 + 1) % nb) + nb) % nb];
+      out[g] = x * (1 - frac) + y * frac;
+    }
+    return out;
+  });
+}

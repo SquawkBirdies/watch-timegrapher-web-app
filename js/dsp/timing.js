@@ -12,6 +12,8 @@ import { percentile, mean, std, median, parabolicOffset } from './mathutil.js';
 /** Numbers of cycles tried for averaging, smallest first. */
 export const AVERAGING_STEPS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
 
+/** How far either side of the expected position a beat is looked for, in milliseconds. */
+export const LAG_MS = 4;
 /** How close to the expected position a peak must be to be preferred, in milliseconds. */
 export const NEAR_MS = 1;
 /** A peak near the expected position is preferred if it is at least this share of the highest. */
@@ -140,7 +142,7 @@ export function runningMedian(values, width) {
  * @returns {{corr: Float64Array[], lags: Int32Array}} one correlation curve per cycle
  */
 export function matchedFilter(rows, envelopeRate, period, templates, centre, options = {}) {
-  const { dataOffset = 0, preMs = 8, postMs = 12, lagMs = 4 } = options;
+  const { dataOffset = 0, preMs = 8, postMs = 12, lagMs = LAG_MS } = options;
   const n = rows[0].length;
   const nb = templates[0][0].length;
   const pre = Math.floor(preMs * 1e-3 * envelopeRate);
@@ -230,6 +232,8 @@ export function pickPeaks(corr, lags) {
  * Switch for the peak preference, for tests and comparisons.
  * @typedef {Object} TimingOptions
  * @property {boolean} [preferNear] false always takes the highest peak of a correlation curve
+ * @property {boolean} [followScatter] false keeps averaging and the folded template even when
+ *   single beats are scattered (see irregular.js)
  */
 
 /**
@@ -240,13 +244,14 @@ export function pickPeaks(corr, lags) {
  * @param {number} period
  * @param {[Float32Array[], Float32Array[]]} templates even-cycle and odd-cycle templates
  * @param {number} centre
- * @param {{target?: number, steps?: number[]} & TimingOptions} [options]
+ * @param {{target?: number, steps?: number[], lagMs?: number} & TimingOptions} [options]
+ *   `lagMs` is how far either side of its expected position a beat is looked for
  * @returns {BeatTrack}
  */
 export function trackBeats(rows, envelopeRate, period, templates, centre, options = {}) {
-  const { target = 0.85, steps = AVERAGING_STEPS, preferNear = true } = options;
-  const signal = matchedFilter(rows, envelopeRate, period, templates, centre);
-  const noise = matchedFilter(rows, envelopeRate, period, templates, centre, { dataOffset: period / 4 });
+  const { target = 0.85, steps = AVERAGING_STEPS, preferNear = true, lagMs = LAG_MS } = options;
+  const signal = matchedFilter(rows, envelopeRate, period, templates, centre, { lagMs });
+  const noise = matchedFilter(rows, envelopeRate, period, templates, centre, { lagMs, dataOffset: period / 4 });
   const ms = 1000 / envelopeRate;
   const near = Math.round(NEAR_MS / ms);
 
@@ -301,4 +306,24 @@ export function trackBeats(rows, envelopeRate, period, templates, centre, option
  */
 export function medianZ(track) {
   return track.z.length ? median(track.z) : 0;
+}
+
+/**
+ * How far the beats that can be timed one at a time fall from their own trend. A watch that
+ * runs regularly keeps them within about 0.1 ms.
+ * @param {BeatTrack} track a track of single cycles (K = 1)
+ * @param {number} envelopeRate
+ * @returns {{count: number, fraction: number, ms: number}} the number of confident beats, their
+ *   share of all beats, and their robust scatter in milliseconds (NaN with fewer than eight)
+ */
+export function singleBeatScatter(track, envelopeRate) {
+  /** @type {number[]} */
+  const own = [];
+  for (let i = 0; i < track.lag.length; i++) if (track.value[i] > track.threshold) own.push(track.lag[i]);
+  const fraction = track.lag.length ? own.length / track.lag.length : 0;
+  if (own.length < 8) return { count: own.length, fraction, ms: NaN };
+  const lags = Float64Array.from(own);
+  const trend = runningMedian(lags, 21);
+  const away = Array.from(lags, (v, i) => Math.abs(v - trend[i]));
+  return { count: own.length, fraction, ms: (1.4826 * median(away) * 1000) / envelopeRate };
 }

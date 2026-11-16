@@ -134,10 +134,11 @@ export function traceScatter(beats, bph, type) {
  * @param {Float64Array} beatTimes true time of every beat, ticks and tocks alternating
  * @param {number} truePeriod true beat period in seconds
  * @param {0|1} type
- * @returns {{count: number, errorMs: number, wrong: number, follows: number}} the number of
- *   confident timestamps compared; their root-mean-square error; how many are off by more than
- *   0.5 ms; and the slope of their displacements against the true displacements, which is 1
- *   when the trace shows the watch's irregularity in full and 0 when it hides it
+ * @returns {{count: number, errorMs: number, wrong: number, follows: number, shownSd: number, realSd: number}}
+ *   the number of confident timestamps compared; their root-mean-square error; how many are off
+ *   by more than 0.5 ms; the slope of their displacements against the true displacements, which
+ *   is 1 when the trace shows the watch's irregularity in full and 0 when it hides it; and the
+ *   standard deviations of the displacements shown and of the true ones, in milliseconds
  */
 export function againstTruth(beats, beatTimes, truePeriod, type) {
   /** @type {{error: number, shown: number, real: number}[] | null} */
@@ -172,7 +173,7 @@ export function againstTruth(beats, beatTimes, truePeriod, type) {
       best = list;
     }
   }
-  if (!best) return { count: 0, errorMs: NaN, wrong: 0, follows: NaN };
+  if (!best) return { count: 0, errorMs: NaN, wrong: 0, follows: NaN, shownSd: NaN, realSd: NaN };
   const mx = best.reduce((sum, p) => sum + p.real, 0) / best.length;
   const my = best.reduce((sum, p) => sum + p.shown, 0) / best.length;
   let sxy = 0;
@@ -181,5 +182,14 @@ export function againstTruth(beats, beatTimes, truePeriod, type) {
     sxy += (p.real - mx) * (p.shown - my);
     sxx += (p.real - mx) ** 2;
   }
-  return { count: best.length, errorMs: bestRms, wrong: best.filter((p) => Math.abs(p.error) > 0.5).length, follows: sxx > 0 ? sxy / sxx : NaN };
+  let syy = 0;
+  for (const p of best) syy += (p.shown - my) ** 2;
+  return {
+    count: best.length,
+    errorMs: bestRms,
+    wrong: best.filter((p) => Math.abs(p.error) > 0.5).length,
+    follows: sxx > 0 ? sxy / sxx : NaN,
+    shownSd: Math.sqrt(syy / best.length),
+    realSd: Math.sqrt(sxx / best.length),
+  };
 }

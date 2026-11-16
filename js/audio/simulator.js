@@ -51,6 +51,14 @@ export function gaussianFrom(uniform) {
  *   and tock different sounds, as a co-axial escapement does
  * @property {number} [jitterMs] standard deviation of a random displacement given to every beat,
  *   for a watch that runs irregularly; 0 when absent
+ * @property {(beat: number, time: number) => number} [displacement] a further displacement of
+ *   each beat in seconds, from its number and nominal time: a slow wander of the rate, or an
+ *   error that repeats with the escape wheel
+ * @property {(beat: number, time: number) => number} [loudness] a factor on the loudness of each
+ *   beat, from its number and nominal time; 1 when absent
+ * @property {{perSecond: number, gain: number}} [rattle] extra sounds at random times, as from a
+ *   loose or dirty movement: on average `perSecond` of them a second, each a single burst at up
+ *   to `gain` times the background noise; none when absent
  */
 
 /**
@@ -62,7 +70,7 @@ export function gaussianFrom(uniform) {
  *   the time of its sound at `dt` 0
  */
 export function synthesizeWatch(options) {
-  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds, jitterMs = 0 } = options;
+  const { bph, seconds, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1, buzzHz = 59.994, buzzLevel = 1.5e-3, tickSounds, tockSounds, jitterMs = 0, displacement, loudness, rattle } = options;
   const fs = sampleRate;
   const n = Math.floor(seconds * fs);
   const randn = gaussianFrom(seededRandom(seed));
@@ -103,10 +111,11 @@ export function synthesizeWatch(options) {
       const t = 0.137 + k * truePeriod;
       if (t >= seconds - 0.05) break;
       const odd = k % 2 === 1;
-      const offset = (odd ? beatOffsetMs * 1e-3 : 0) + (jitterMs > 0 ? displace() * jitterMs * 1e-3 : 0);
+      const offset = (odd ? beatOffsetMs * 1e-3 : 0) + (jitterMs > 0 ? displace() * jitterMs * 1e-3 : 0) + (displacement ? displacement(k, t) : 0);
       beatTimes.push(t + offset);
+      const factor = loudness ? loudness(k, t) : 1;
       for (const s of odd && tockSounds ? tockSounds : sounds) {
-        const level = s.amp * gain * 1e-3 * (odd && !tockSounds ? 0.8 : 1);
+        const level = s.amp * gain * factor * 1e-3 * (odd && !tockSounds ? 0.8 : 1);
         for (let i = 0; i < burstLength; i++) raw[i] = randn() * Math.exp(-i / (s.decayMs * 1e-3 * fs));
         new Cascade(bandpassSections(fs, 3000, 14000)).process(raw, shaped);
         const pos = (t + offset + s.dt) * fs;
@@ -121,6 +130,26 @@ export function synthesizeWatch(options) {
             if (i0 + i + 1 >= 0 && i0 + i + 1 < n) ch[i0 + i + 1] += v * frac;
           }
         }
+      }
+    }
+  }
+
+  // Rattle: single bursts at random times, from generators of their own.
+  if (rattle && rattle.perSecond > 0 && rattle.gain > 0) {
+    const when = seededRandom(seed + 0x2a7713);
+    const noise = gaussianFrom(seededRandom(seed + 0x2a7714));
+    for (let t = 0; ; ) {
+      t += -Math.log(1 - when()) / rattle.perSecond;
+      if (t >= seconds - 0.01) break;
+      const level = rattle.gain * (0.3 + 0.7 * when()) * 1e-3;
+      const decay = (0.2 + 0.6 * when()) * 1e-3 * fs;
+      for (let i = 0; i < burstLength; i++) raw[i] = noise() * Math.exp(-i / decay);
+      new Cascade(bandpassSections(fs, 3000, 14000)).process(raw, shaped);
+      const i0 = Math.floor(t * fs);
+      for (let c = 0; c < 2; c++) {
+        const ch = channels[c];
+        const g = level * (c === 0 ? 1 : 0.8);
+        for (let i = 0; i < burstLength && i0 + i < n; i++) ch[i0 + i] += g * shaped[i];
       }
     }
   }
