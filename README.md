@@ -317,7 +317,7 @@ js/ui/canvas.js        drawing helpers and chart colours
 js/ui/wake.js          keeps the screen on while measuring
 js/ui/save.js          hands a saved file to the share sheet or a download
 js/store.js            settings kept on the device
-tests/                 automated tests and the four recordings
+tests/                 automated tests and the six recordings
 tools/                 command-line runners, and the Python prototype kept for reference
 ```
 
@@ -327,14 +327,21 @@ tests and in the app's background worker.
 
 ## Test recordings
 
-`tests/fixtures/` holds four iPhone recordings of about a minute each. The three watch
-recordings were made with Voice Memos and converted to 16-bit WAV with 24 dB of gain. In the
-first two, the watch lay dial-down with the crown against the phone's USB-C port. In
-`omega-3861-b.wav` the phone was held over the dial with the USB-C port facing it, in a
-different room. `no-watch-safari.wav` is the null case: 60 s of a quiet room with no watch near
-the phone, saved by the audio diagnostic in Safari. It is the capture exactly as saved, in
-32-bit floating point, mono. Like the others, it holds only the audio format and the samples,
-with no other metadata.
+`tests/fixtures/` holds six iPhone recordings.
+
+- `eta-2836-2.wav`, `omega-3861.wav` and `omega-3861-b.wav` were made with Voice Memos, about a
+  minute each, and converted to 16-bit WAV with 24 dB of gain. In the first two, the watch lay
+  dial-down with the crown against the phone's USB-C port. In `omega-3861-b.wav` the phone was
+  held over the dial with the USB-C port facing it, in a different room.
+- `eta-2836-2-safari.wav` (30 s) and `omega-3861-safari.wav` (60 s) were saved by the audio
+  diagnostic in Safari on an iPhone 17 Pro Max with iOS 27.2, on 14 November 2026, with the
+  browser's voice processing off. They are stereo with a silent second channel, as Safari
+  delivered the phone's mono microphone.
+- `no-watch-safari.wav` is the null case: 60 s of a quiet room with no watch near the phone,
+  saved the same way later, by which time the diagnostic kept only the first channel.
+
+The Safari captures are 32-bit floating point at 48 kHz, exactly as saved. Every file holds only
+the audio format and the samples, with no other metadata.
 
 ## Use of generative AI
 
@@ -355,11 +362,11 @@ Done by Lawrence Fan:
 - the design decisions recorded in the plan, including the magnetism warning, the minimum iOS
   version and the choice of plain JavaScript
 - suggestions taken into the design, including the Kalman beat tracker and the beat-rate override
-- the four recordings in `tests/fixtures/` (three of watches, one with no watch), which are the
+- the six recordings in `tests/fixtures/` (five of watches, one with no watch), which are the
   only test data not produced by AI-written code
 
 What this means for the readings: every result above comes from AI-written code, tested
-against AI-written synthetic signals and against the four real recordings. The expected values
+against AI-written synthetic signals and against the real recordings. The expected values
 for the first two recordings also come from AI-written code. No reading has yet been compared
 with a bench timegrapher, so treat rates and beat errors from this project as unverified.
 

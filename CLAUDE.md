@@ -44,20 +44,21 @@ Both `npm` commands must pass before a pull request.
 - `node:test` files in `tests/`, helpers in `tests/helpers/`, recordings in `tests/fixtures/`.
   Each test's name is a sentence saying what must hold.
 - Expected values come from the truth: simulated watches with known rate, beat error and beat
-  times (`js/audio/simulator.js`), and the four real recordings. Don't loosen a tolerance to let a
-  change pass without saying so in the pull request.
+  times (`js/audio/simulator.js`), and the real recordings in `tests/fixtures/`. Don't loosen a
+  tolerance to let a change pass without saying so in the pull request.
 - The suite is slow because it runs the pipeline on minutes of audio. Never run the same pipeline
   computation twice: within a file, share a computed run between tests, as `clear()` in
   `tests/stream.test.js` does, and add assertions to an existing run of the same audio rather
   than streaming it again.
 - Some tests also run the earlier behaviour through switches (`timing: { preferNear: false }` or
   `{ followScatter: false }`) to show why a change was made.
-- `tests/fixtures/` holds only the four recordings Lawrence made. Don't add others. His Safari
-  captures of the ETA and the Omega in particular stay out of the repository.
+- `tests/fixtures/` holds only recordings Lawrence made; the README describes each. Add one only
+  when he asks, byte for byte as saved apart from any metadata, and check first that it holds
+  nothing but the audio format and the samples.
 
 ## Changing the pipeline
 
-- Measure the readings of the three watch recordings and the no-watch capture before and after.
+- Measure the readings of the five watch recordings and the no-watch capture before and after.
   They must not move unless the change is meant to move them, and the pull request gives the
   numbers either way.
 - Never smooth a watch's genuine irregularity, and never state a reading more precisely than its
