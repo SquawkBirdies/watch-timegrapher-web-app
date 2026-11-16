@@ -10,7 +10,7 @@ import { synthesizeWatch, WatchStream } from '../js/audio/simulator.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning } from '../js/ui/model.js';
 import { clean, DEFAULTS } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 
@@ -126,13 +126,40 @@ test('a lock sends the averaged tick and tock, each peaking at its timestamp', (
 // ---- The simulator ---------------------------------------------------------------------------
 
 test('the endless simulator gives the same audio whatever the chunk sizes', () => {
-  const a = new WatchStream({ bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7 });
-  const b = new WatchStream({ bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7 });
-  const whole = a.next(60000)[0];
-  const parts = [];
-  for (const n of [1, 999, 12000, 30000, 17000]) parts.push(...b.next(n)[0]);
-  assert.equal(parts.length, whole.length);
-  for (let i = 0; i < whole.length; i++) assert.equal(parts[i], whole[i], `sample ${i}`);
+  for (const jitterMs of [0, 3]) {
+    const a = new WatchStream({ bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7, jitterMs });
+    const b = new WatchStream({ bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7, jitterMs });
+    const whole = a.next(60000)[0];
+    const parts = [];
+    for (const n of [1, 999, 12000, 30000, 17000]) parts.push(...b.next(n)[0]);
+    assert.equal(parts.length, whole.length);
+    for (let i = 0; i < whole.length; i++) assert.equal(parts[i], whole[i], `${jitterMs} ms: sample ${i}`);
+  }
+});
+
+test('beat variability set while the simulator runs brings the irregular-beat warning, and taking it away clears it', () => {
+  const sim = new WatchStream({ bph: 28800, rate: 8, beatOffsetMs: 0.4, gain: 2, seed: 3 });
+  const pipeline = new Pipeline(sim.sampleRate, 1);
+  const readingsOf = (/** @type {PipelineEvent[]} */ events) => /** @type {ReadingsEvent[]} */ (events.filter((e) => e.type === 'readings' && e.rate !== null));
+  const steady = readingsOf(run(pipeline, (n) => sim.next(n), 30));
+  assert.ok(steady.length > 10 && steady.every((x) => !x.irregular), 'a steady watch: no warning');
+  assert.equal(irregularWarning(steady[steady.length - 1]), null);
+  // Each beat now falls early or late at random, by 2 ms (one standard deviation). Repeat
+  // analyses decide; the history holds 40 s, so the warning comes within about half a minute.
+  sim.jitterMs = 2;
+  const events = run(pipeline, (n) => sim.next(n), 45);
+  assert.ok(!events.some((e) => e.type === 'status' && e.state === 'listening'), 'stayed locked');
+  const wild = readingsOf(events);
+  const first = wild.find((x) => x.irregular);
+  assert.ok(first, 'the readings say the watch runs irregularly');
+  const last = wild[wild.length - 1];
+  assert.ok(last.irregular && last.beatErrorMs === null, 'still irregular, with no beat error');
+  assert.ok(last.jitterMs !== null && last.jitterMs > 1.5 && last.jitterMs < 2.6, `scatter reading ${last.jitterMs}`);
+  assert.match(/** @type {string} */ (irregularWarning(last)), new RegExp(`^Beats wander by ${last.jitterMs.toFixed(1)} ms `));
+  sim.jitterMs = 0;
+  const calm = readingsOf(run(pipeline, (n) => sim.next(n), 45));
+  const end = calm[calm.length - 1];
+  assert.ok(!end.irregular && end.beatErrorMs !== null && Math.abs(end.beatErrorMs - 0.4) < 0.05, `steady again: beat error ${end.beatErrorMs}`);
 });
 
 test('the endless simulator is measured right, and a turn of the regulator shows', () => {
@@ -314,6 +341,11 @@ test('the signal meter judges the better-timed beat type and names the fainter o
   assert.equal(averagingNote(readings([10, 14], [1, 2])), 'Tock dots average 2 cycles.');
   assert.equal(averagingNote(readings([5, 5], [4, 4])), 'Each dot averages 4 cycles.');
   assert.equal(averagingNote(readings([40, 30], [1, 1])), '');
+  assert.equal(irregularWarning(null), null);
+  assert.equal(irregularWarning({ ...readings([40, 30], [1, 1]), irregular: false }), null);
+  const warning = irregularWarning({ ...readings([40, 30], [1, 1]), irregular: true, jitterMs: 2.04 });
+  assert.match(/** @type {string} */ (warning), /^Beats wander by 2\.0 ms from one to the next/);
+  assert.match(/** @type {string} */ (warning), /beat error cannot be measured/);
 
   const m = new Measurement();
   assert.equal(guidance(m, { running: false, finished: false }), 'Choose a source below and press Start.');

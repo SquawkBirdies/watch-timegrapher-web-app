@@ -182,13 +182,17 @@ const BEAT_SOUNDS = [
  * @property {number} [rate] seconds per day, positive when gaining
  * @property {number} [beatOffsetMs] displacement of the tocks from the midpoint between ticks
  * @property {number} [gain] tick loudness relative to the background noise
+ * @property {number} [jitterMs] standard deviation of a random displacement given to every beat,
+ *   for a watch that runs irregularly; 0 when absent. Displacements beyond four standard
+ *   deviations are cut back to four
  * @property {number} [sampleRate]
  * @property {number} [seed]
  */
 
 /**
  * A simulated watch that runs for as long as audio is asked of it, in one channel. The rate,
- * beat offset and loudness are plain properties: a change applies from the next beat, as when
+ * beat offset, loudness and beat variability (`jitterMs`) are plain properties: a change
+ * applies from the next beat, as when
  * a watchmaker turns the regulator while the watch is on the timegrapher. The background and
  * the ticks are the same kind as `synthesizeWatch` makes, without the mains buzz. The output
  * does not depend on the chunk sizes asked for.
@@ -196,16 +200,19 @@ const BEAT_SOUNDS = [
 export class WatchStream {
   /** @param {StreamOptions} options */
   constructor(options) {
-    const { bph, rate = 0, beatOffsetMs = 0, gain = 1, sampleRate = 48000, seed = 1 } = options;
+    const { bph, rate = 0, beatOffsetMs = 0, gain = 1, jitterMs = 0, sampleRate = 48000, seed = 1 } = options;
     this.bph = bph;
     this.rate = rate;
     this.beatOffsetMs = beatOffsetMs;
     this.gain = gain;
+    this.jitterMs = jitterMs;
     this.sampleRate = sampleRate;
     // Separate generators for the background and the ticks keep the output independent of
     // the chunk sizes: each is used in the same order whatever the chunks.
     this.noise = gaussianFrom(seededRandom(seed));
     this.burstNoise = gaussianFrom(seededRandom(seed + 0x9e3779b9));
+    // One draw per beat whatever the variability, so that changing it does not change the rest.
+    this.displace = gaussianFrom(seededRandom(seed + 0x51ed270b));
     const K = Math.tan((Math.PI * 300) / sampleRate);
     this.lb = K / (1 + K);
     this.la = (K - 1) / (K + 1);
@@ -241,8 +248,9 @@ export class WatchStream {
     const fs = this.sampleRate;
     const m = out.length;
     // Every beat whose sounds start before the end of this piece is made now. The 20 ms margin
-    // keeps a beat's earliest sound (7 ms early) from falling before the current position.
-    const horizon = (this.position + m) / fs + 0.02;
+    // keeps a beat's earliest sound (7 ms early) from falling before the current position, and
+    // the margin grows by as far as a beat can be displaced early.
+    const horizon = (this.position + m) / fs + 0.02 + 4e-3 * this.jitterMs;
     while (this.nextBeat < horizon) this.beat();
     for (let i = 0; i < m; i++) {
       const w = this.noise();
@@ -260,7 +268,8 @@ export class WatchStream {
   beat() {
     const fs = this.sampleRate;
     const odd = this.beatIndex % 2 === 1;
-    const t = this.nextBeat + (odd ? this.beatOffsetMs * 1e-3 : 0);
+    const scatter = Math.max(-4, Math.min(4, this.displace())) * this.jitterMs * 1e-3;
+    const t = this.nextBeat + (odd ? this.beatOffsetMs * 1e-3 : 0) + scatter;
     if (this.gain > 0) {
       for (const s of BEAT_SOUNDS) {
         const level = s.amp * this.gain * 1e-3 * (odd ? 0.8 : 1);
