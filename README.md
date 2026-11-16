@@ -76,6 +76,12 @@ is still measured from both beats, and no beat error is reported. The Omega 3861
 through Safari showed why: in Swiss-lever mode it read a steady 3.4 ms beat error that does not
 describe the watch, and the beat-error checks passed it.
 
+A prototype in `tools/prototype/coaxial/` measures a co-axial watch's beat error and amplitude
+from the sounds inside each beat: the first, the unlock, and the last, the lock, which both
+beats share. It is not part of the app. On the Omega's Safari capture it read 0.31 ms and, at a
+36° lift angle, 284°; on the ETA's, 0.15 ms and 263° at 50°. Neither has been compared with a
+timing machine. Its README gives the method, its checks on simulated watches, and its limits.
+
 Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
 reads less steadily. The last readings at 20 s were +6.91 s/day for the ETA, +0.45 s/day for the
 first Omega recording and -1.58 s/day for the second, and after their first 20 s of lock the ETA's
@@ -328,7 +334,8 @@ js/ui/wake.js          keeps the screen on while measuring
 js/ui/save.js          hands a saved file to the share sheet or a download
 js/store.js            settings kept on the device
 tests/                 automated tests and the six recordings
-tools/                 command-line runners, and the Python prototype kept for reference
+tools/                 command-line runners, the Python prototype kept for reference, and the
+                       co-axial prototype (tools/prototype/coaxial/)
 ```
 
 The code is plain JavaScript modules with no build step and no runtime dependencies. The files
