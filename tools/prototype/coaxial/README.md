@@ -136,7 +136,10 @@ amplitude    lift angle / (2 sin(pi f t))
 ```
 
 q is set as how far the amplitude may wander in a second, in degrees. A block more than 3
-standard deviations from the filter's value is left out.
+standard deviations from the filter's value is left out. When two measured blocks in a row are
+both left out but agree with each other within 3 standard deviations, the filter starts again
+from them: a sudden change is believed once it has been seen twice. Both commands also print
+the filter without that restart, gate only, as it was before.
 
 Each sound is looked for within 1.5 ms of its place in the reference. The match at each shift
 is the product of the reference's stretch around the sound with the block's, a matched filter,
@@ -159,15 +162,15 @@ the method (see "What it measured").
 | Co-axial | Blocks measured | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
 | --- | --- | --- | --- | --- | --- |
 | steady at 285° | 21 of 24 | 3.8, 8.7 | 3.3, 4.9 | 3.4, 5.3 | 3.7, 7.0 |
-| 290° to 250° over 120 s | 24 of 24 | 4.2, 9.3 | 7.0, 19.8 | 2.5, 6.1 | 3.5, 8.1 |
-| 285° to 255° at once | 19 of 24 | 3.9, 11.5 | 18.5, 26.5 | 17.1, 26.3 | 8.4, 26.1 |
-| ±10° every 60 s | 22 of 24 | 3.9, 7.1 | 7.8, 19.9 | 6.2, 17.9 | 4.0, 8.3 |
+| 290° to 250° over 120 s | 24 of 24 | 4.2, 9.3 | 3.0, 8.0 | 2.5, 6.1 | 3.5, 8.1 |
+| 285° to 255° at once | 19 of 24 | 3.9, 11.5 | 8.0, 26.5 | 7.9, 26.3 | 6.5, 26.1 |
+| ±10° every 60 s | 22 of 24 | 3.9, 7.1 | 7.2, 15.1 | 6.2, 17.9 | 4.0, 8.3 |
 
 | Swiss lever | Blocks measured | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
 | --- | --- | --- | --- | --- | --- |
 | steady at 285° | 24 of 24 | 0.5, 1.2 | 0.5, 1.1 | 0.5, 1.1 | 0.5, 1.1 |
 | 290° to 250° over 120 s | 24 of 24 | 0.7, 1.4 | 0.6, 1.1 | 0.5, 1.1 | 0.6, 1.3 |
-| 285° to 255° at once | 24 of 24 | 0.5, 1.2 | 20.5, 29.2 | 20.5, 29.1 | 11.8, 29.0 |
+| 285° to 255° at once | 24 of 24 | 0.5, 1.2 | 8.4, 29.2 | 8.4, 29.1 | 8.4, 29.0 |
 | ±10° every 60 s | 24 of 24 | 2.2, 3.6 | 7.5, 13.8 | 5.3, 17.9 | 2.2, 3.7 |
 
 Against the earlier search, the co-axial's worst block errors fell from 10.8° to 8.7° when
@@ -179,9 +182,17 @@ single runs 0.3 kept every co-axial block and its old errors, and 0.7 halved the
 lost half the blocks.
 
 The filter helps the co-axial when the amplitude holds or moves slowly, and adds nothing to the
-lever's blocks, which scatter by under 1°. It fails after a sudden drop: the gate rejects every
-right block as too far from the filter's value, which then stays where it was, 284° against
-255° on the lever. Only at 2° a second does it recover at all, and slowly.
+lever's blocks, which scatter by under 1°. Without the restart it failed after a sudden drop:
+the gate rejected every right block as too far from the filter's value, which stayed where it
+was, 284° against 255° on the lever. At 1° a second its error over the blocks after the
+reference was then 20.5° rms on the lever and 17.1° on the co-axial. With the restart the
+filter came within 0.6° of the lever's new level and within 1.3° of the co-axial's, 20 s after
+the drop, in every run. The worst error stays, because the first block after a drop is still
+left out. The restart never fired on the steady runs or on the Omega capture, too few to put a
+number on false restarts. It does not help the ±10° swing: blocks left out there differ from
+each other as much as from the filter, so they never agree, and only the looser 2° a second
+keeps up. At 0.5° a second it fired once on the co-axial's fall, taking that filter's error from
+7.0° rms to 3.0°.
 
 On the Omega's Safari capture, with the whole capture as the reference, so not an independent
 test, the six 10 s blocks read 280°, 282°, 289°, 287°, 286° and 282°, each with a scatter of
