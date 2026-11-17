@@ -269,14 +269,22 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     gap = (np.median(T[1][0] - slope * T[1][1]) - np.median(T[0][0] - slope * T[0][1])) * 1e3
     S = []
     times = []
+    # Each stacked beat's distance from the common line, in milliseconds, so that resampling
+    # the beats resamples the gap between the timestamp lines too. On a regular watch that gap
+    # is known to a hundredth of a millisecond; on an irregular one it is the largest part of
+    # the uncertainty, and leaving it out made the readings look far more precise than they are.
+    resid = []
     tms = None
     for j in (0, 1):
         Sj, tms, tj = stacks(rows, fs, T[j][0])
         S.append(Sj)
         times.append(tj)
+        kept = np.isin(T[j][0], tj)
+        resid.append((T[j][0][kept] - slope * T[j][1][kept]) * 1e3)
     n0, n1 = len(S[0][0]), len(S[1][0])
 
     def readings(idx0=None, idx1=None, w=None):
+        g = gap if idx0 is None else float(np.median(resid[1][idx1]) - np.median(resid[0][idx0]))
         m0 = band_means(S[0], tms, idx0, base_until)
         m1 = band_means(S[1], tms, idx1, base_until)
         if w is None:
@@ -293,8 +301,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         if pair is None:
             return None, why, ports, w
         res = {
-            "first_gap": gap + pair["f1"]["onset_ms"] - pair["f0"]["onset_ms"],
-            "last_gap": gap + pair["l1"]["onset_ms"] - pair["l0"]["onset_ms"],
+            "first_gap": g + pair["f1"]["onset_ms"] - pair["f0"]["onset_ms"],
+            "last_gap": g + pair["l1"]["onset_ms"] - pair["l0"]["onset_ms"],
             "lift0": pair["lift0"],
             "lift1": pair["lift1"],
             "f0": pair["f0"]["onset_ms"],

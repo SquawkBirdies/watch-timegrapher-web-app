@@ -38,7 +38,10 @@ import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
  * @property {[number, number]} lockDeg angle after the line of centres at which the lock
  *   happens, for the even and for the odd beats
  * @property {[BeatSound[], BeatSound[]]} sounds the sounds of the even and of the odd beats
- * @property {number} [lockJitterMs] standard deviation of a random delay of each lock
+ * @property {number} [lockJitterMs] scale of a random delay of each lock: the delay is the size
+ *   of a normal draw with this standard deviation, so it is never negative and averages about
+ *   0.8 times this. The true amplitude does not count it, so a method that times the lock reads
+ *   the amplitude slightly low
  * @property {number} [levelJitterDb] standard deviation of each sound's loudness from beat to
  *   beat, in decibels; 1.5 when absent
  * @property {number} [sampleRate]
