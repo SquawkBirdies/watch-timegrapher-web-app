@@ -37,6 +37,7 @@ python3 -I tools/prototype/coaxial/checks.py kalman tests/fixtures/omega-3861-sa
 python3 -I tools/prototype/coaxial/checks.py kalman-sims /tmp/kalman   # about ten minutes
 python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-safari.wav /tmp/omega 36
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
+python3 -I tools/prototype/coaxial/track.py sims /tmp/track-lever lever  # about half an hour
 python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about fifteen minutes
 ```
 
@@ -123,9 +124,9 @@ The beat tracker cannot carry the amplitude: the unlock is too faint to time in 
 there is nothing to correct with at each beat. `track.py` works one level up. A reference
 stretch, 60 s here, gives the places of the unlock and the lock in the averaged beat. The
 recording is cut into 10 s blocks from its start, the reference stretch included, and each
-block's beats are averaged. Its unlock and lock are matched against the
-reference's to see how far each has moved. That gives the block's time from unlock to lock, with
-a scatter from resampling the block's beats 40 times. A one-state Kalman filter follows it:
+block's beats are averaged. Its unlock and lock are matched against the reference's to see how
+far each has moved. That gives the block's time from unlock to lock, with a scatter from
+resampling the block's beats 40 times. A one-state Kalman filter follows it:
 
 ```
 state        t, the mean time from unlock to lock over the two beats
@@ -137,32 +138,59 @@ amplitude    lift angle / (2 sin(pi f t))
 q is set as how far the amplitude may wander in a second, in degrees. A block more than 3
 standard deviations from the filter's value is left out.
 
-Eight simulated co-axial watches, 180 s each, two for each way the amplitude changes. Errors
-against the true amplitude, in degrees, over the 12 blocks after the reference in each of the two
-runs: root mean square, then the worst. All include the 3° or so by which this simulated watch
-reads low, which comes from the simulation, not from the method (see "What it measured").
+Each sound is looked for within 1.5 ms of its place in the reference. The match at each shift
+is the product of the reference's stretch around the sound with the block's, a matched filter,
+which suits a faint sound in noise. Of the peaks in that match at least half as strong as the
+reference matched with itself, the one nearest the sound's place is taken. An earlier version
+took the strongest peak (`strongest` on the command line gives it back). On a simulated Swiss
+lever, whose unlock is followed 2.4 ms later by a louder sound, that lost every block once the
+amplitude fell about 20° below the reference: the louder sound reached into the search and won
+at its edge. Two other ways were tried and dropped, both on the co-axial's faint unlock. A
+normalised correlation matched noise up to 1.4 ms away. Searching where the last accepted block
+found each sound let one wrong block lead the following ones astray for two minutes.
 
-| Simulated amplitude | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
-| --- | --- | --- | --- | --- |
-| steady at 285° | 4.8, 10.8 | 2.9, 4.4 | 3.2, 5.7 | 3.7, 7.6 |
-| 290° to 250° over 120 s | 4.1, 9.3 | 8.8, 15.7 | 3.4, 7.2 | 3.1, 6.4 |
-| 285° to 255° at once | 5.3, 17.7 | 17.7, 27.0 | 10.3, 26.7 | 4.1, 11.2 |
-| ±10° every 60 s | 3.9, 7.1 | 8.4, 19.2 | 5.3, 10.6 | 4.3, 8.5 |
+Simulated watches, 180 s each, two runs for each way the amplitude changes, the co-axial at
+21,600 vph and a 36° lift angle, the lever at 28,800 vph and 50°. Errors against the true
+amplitude, in degrees, over the 12 blocks after the reference in each of the two runs, counting
+only blocks that gave a measurement: root mean square, then the worst. The co-axial's include
+the 3° or so by which that simulated watch reads low, which comes from the simulation, not from
+the method (see "What it measured").
 
-The filter helps when the amplitude holds or moves slowly, and lags when it moves faster than
-q allows. At 2° a second it cut the worst error by about a third when the amplitude held, fell
-slowly or dropped at once, and was a little worse than the blocks alone for the 60 s wander. At
-1° a second its gate left out the first one or two blocks after the sudden drop, and it took
-25 to 35 s to come within 5° of the new level. Neither setting is tuned.
+| Co-axial | Blocks measured | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
+| --- | --- | --- | --- | --- | --- |
+| steady at 285° | 21 of 24 | 3.8, 8.7 | 3.3, 4.9 | 3.4, 5.3 | 3.7, 7.0 |
+| 290° to 250° over 120 s | 24 of 24 | 4.2, 9.3 | 7.0, 19.8 | 2.5, 6.1 | 3.5, 8.1 |
+| 285° to 255° at once | 19 of 24 | 3.9, 11.5 | 18.5, 26.5 | 17.1, 26.3 | 8.4, 26.1 |
+| ±10° every 60 s | 22 of 24 | 3.9, 7.1 | 7.8, 19.9 | 6.2, 17.9 | 4.0, 8.3 |
+
+| Swiss lever | Blocks measured | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
+| --- | --- | --- | --- | --- | --- |
+| steady at 285° | 24 of 24 | 0.5, 1.2 | 0.5, 1.1 | 0.5, 1.1 | 0.5, 1.1 |
+| 290° to 250° over 120 s | 24 of 24 | 0.7, 1.4 | 0.6, 1.1 | 0.5, 1.1 | 0.6, 1.3 |
+| 285° to 255° at once | 24 of 24 | 0.5, 1.2 | 20.5, 29.2 | 20.5, 29.1 | 11.8, 29.0 |
+| ±10° every 60 s | 24 of 24 | 2.2, 3.6 | 7.5, 13.8 | 5.3, 17.9 | 2.2, 3.7 |
+
+Against the earlier search, the co-axial's worst block errors fell from 10.8° to 8.7° when
+steady and from 17.7° to 11.5° around the drop, and the lever's falling amplitude was followed
+to within 1.4° all the way down, where before half its blocks were lost. The cost is co-axial
+blocks with no reading: a block whose unlock is too faint for a strong match is dropped
+rather than guessed, up to 5 of 24 against 1 before. The threshold of a half is not tuned; on
+single runs 0.3 kept every co-axial block and its old errors, and 0.7 halved the worst error and
+lost half the blocks.
+
+The filter helps the co-axial when the amplitude holds or moves slowly, and adds nothing to the
+lever's blocks, which scatter by under 1°. It fails after a sudden drop: the gate rejects every
+right block as too far from the filter's value, which then stays where it was, 284° against
+255° on the lever. Only at 2° a second does it recover at all, and slowly.
 
 On the Omega's Safari capture, with the whole capture as the reference, so not an independent
 test, the six 10 s blocks read 280°, 282°, 289°, 287°, 286° and 282°, each with a scatter of
-1.4° to 3.7°. The filter at 1° a second followed them: 280°, 281°, 288°, 288°, 286°, 282°.
+1.3° to 2.0°. The filter at 1° a second followed them: 280°, 282°, 288°, 287°, 286°, 282°.
 
 Limits of this part: it needs the reference first, a minute here. The reference is fixed, and a
-sound is looked for within 1.5 ms of its place in it, which at 21,600 vph covers amplitudes down
-to about 50° below the reference's. In each of the four cases, one of the 24 scored blocks gave
-no measurement.
+sound is looked for within 1.5 ms of its place in it, which on both simulated watches covers
+amplitudes down to about 50° below the reference's. A block that gives no measurement leaves the
+filter at its last value, which an app would have to show as a dash.
 
 ## Through the app's unit tests
 
