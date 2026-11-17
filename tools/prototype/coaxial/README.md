@@ -33,6 +33,8 @@ python3 -I tools/prototype/coaxial/checks.py sims /tmp/sims        # about twent
 node tools/prototype/coaxial/beats.mjs stream tests/fixtures/omega-3861-safari.wav /tmp/omega
 python3 -I tools/prototype/coaxial/checks.py kalman tests/fixtures/omega-3861-safari.wav /tmp/omega 36
 python3 -I tools/prototype/coaxial/checks.py kalman-sims /tmp/kalman   # about ten minutes
+python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-safari.wav /tmp/omega 36
+python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
 ```
 
 `beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
@@ -45,7 +47,8 @@ works on envelopes made the way the app's filter bank makes them.
 | `events.py` | the method: averaged beats, their sounds, the pairing, the gates |
 | `analyze.py` | one recording, printed, with an optional plot |
 | `checks.py` | how the readings move with the analysis choices; simulated watches |
-| `figure.py` | the figure in the write-up |
+| `track.py` | the amplitude followed over time with a slow Kalman filter |
+| `figure.py` | the first figure in the write-up |
 
 The simulated watch is `tests/helpers/balance.js`: a balance swinging as a sine, with the unlock
 and the lock at set angles, so the beat error and the amplitude are known. `tests/balance.test.js`
@@ -96,6 +99,51 @@ On sixteen simulated co-axial watches, lining the beats up on the tracker moved 
 level by between -0.1 and +0.4 dB, and the readings were shown about as often: 6 of 16 on the
 real-time timestamps, 6 and 7 on the tracker's expected and settled times. No reading, shown or
 held, was more than 0.08 ms from the truth.
+
+## Following the amplitude over time
+
+The beat tracker cannot carry the amplitude: the unlock is too faint to time in one beat, so
+there is nothing to correct with at each beat. `track.py` works one level up. A reference
+stretch, 60 s here, gives the places of the unlock and the lock in the averaged beat. Each 10 s
+block of beats after that is averaged, and its unlock and lock are matched against the
+reference's to see how far each has moved. That gives the block's time from unlock to lock, with
+a scatter from resampling the block's beats 40 times. A one-state Kalman filter follows it:
+
+```
+state        t, the mean time from unlock to lock over the two beats
+model        t(k+1) = t(k) + w,   w ~ N(0, q x seconds between blocks)
+measurement  z(k)   = t(k) + v,   v ~ N(0, R(k)),  R(k) from resampling block k
+amplitude    lift angle / (2 sin(pi f t))
+```
+
+q is set as how far the amplitude may wander in a second, in degrees. A block more than 3
+standard deviations from the filter's value is left out.
+
+Eight simulated co-axial watches, 180 s each, with the amplitude changing in a known way after
+the reference. Errors against the true amplitude, in degrees, over the 24 blocks after the
+reference: root mean square, then the worst. All include the 3° or so by which the method reads
+low.
+
+| Simulated amplitude | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
+| --- | --- | --- | --- | --- |
+| steady at 285° | 4.8, 10.8 | 2.9, 4.4 | 3.2, 5.7 | 3.7, 7.6 |
+| 290° to 250° over 120 s | 4.1, 9.3 | 8.8, 15.7 | 3.4, 7.2 | 3.1, 6.4 |
+| 285° to 255° at once | 5.3, 17.7 | 17.7, 27.0 | 10.3, 26.7 | 4.1, 11.2 |
+| ±10° every 60 s | 3.9, 7.1 | 8.4, 19.2 | 5.3, 10.6 | 4.3, 8.5 |
+
+The filter helps when the amplitude holds or moves slowly, and lags when it moves faster than
+q allows. At 2° a second it cut the worst error by about a third when the amplitude held, fell
+slowly or dropped at once, and was a little worse than the blocks alone for the 60 s wander. At
+1° a second its gate left out the first one or two blocks after the sudden drop, and it took
+25 to 35 s to come within 5° of the new level. Neither setting is tuned.
+
+On the Omega's Safari capture, with the whole capture as the reference, so not an independent
+test, the six 10 s blocks read 280°, 282°, 289°, 287°, 286° and 282°, each with a scatter of
+1.4° to 3.7°. The filter at 1° a second followed them: 280°, 281°, 288°, 288°, 286°, 282°.
+
+Limits of this part: it needs the reference first, a minute here. The reference is fixed, and a
+sound is looked for within 1.5 ms of its place in it, which at 21,600 vph covers amplitudes down
+to about 50° below the reference's. One block in 24 gave no measurement.
 
 ## Limits
 

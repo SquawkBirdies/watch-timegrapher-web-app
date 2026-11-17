@@ -14,7 +14,8 @@
 //     makes a simulated watch with known truth (tests/helpers/balance.js) and writes
 //     <prefix>.wav, <prefix>.truth.json, <prefix>.beats.json and <prefix>.stream.json. In the
 //     overrides, "amplitudeSwing": {"base": 285, "swing": 10, "period": 23} makes the amplitude
-//     wander.
+//     wander, and "amplitudeRamp": {"from": 290, "to": 250, "t0": 60, "t1": 180} moves it from
+//     one value to another between two times.
 
 import { writeFileSync } from 'node:fs';
 import { readWav } from '../../../tests/helpers/wav.js';
@@ -149,16 +150,26 @@ if (mode === 'wav' && args.length >= 2) {
 } else if (mode === 'sim' && args.length >= 2) {
   const [kind, prefix, json] = args;
   const over = json ? JSON.parse(json) : {};
+  /** How the amplitude changes with time, kept with the truth so that it can be worked out again. */
+  let amplitudeSpec = null;
   if (over.amplitudeSwing) {
     const { base, swing, period } = over.amplitudeSwing;
+    amplitudeSpec = { swing: over.amplitudeSwing };
     over.amplitude = (/** @type {number} */ t) => base + swing * Math.sin((2 * Math.PI * t) / period);
     delete over.amplitudeSwing;
+  }
+  if (over.amplitudeRamp) {
+    // From one amplitude to another, in a straight line between two times.
+    const { from, to, t0, t1 } = over.amplitudeRamp;
+    amplitudeSpec = { ramp: over.amplitudeRamp };
+    over.amplitude = (/** @type {number} */ t) => (t <= t0 ? from : t >= t1 ? to : from + ((to - from) * (t - t0)) / (t1 - t0));
+    delete over.amplitudeRamp;
   }
   const options = kind === 'lever' ? leverWatch(over) : coaxialWatch(over);
   const watch = synthesizeBalanceWatch(options);
   writeFileSync(`${prefix}.wav`, Buffer.from(encodeWav(watch.channels, watch.sampleRate)));
   const { unlockGapMs, lockGapMs, liftMs, meanAmplitude } = watch.truth;
-  writeFileSync(`${prefix}.truth.json`, JSON.stringify({ unlockGapMs, lockGapMs, liftMs, meanAmplitude, bph: options.bph, rate: options.rate }));
+  writeFileSync(`${prefix}.truth.json`, JSON.stringify({ unlockGapMs, lockGapMs, liftMs, meanAmplitude, bph: options.bph, rate: options.rate, amplitudeSpec }));
   const result = beatsOf(watch.channels[0], watch.sampleRate, {});
   writeFileSync(`${prefix}.beats.json`, JSON.stringify(result));
   writeFileSync(`${prefix}.stream.json`, JSON.stringify(streamOf(watch.channels[0], watch.sampleRate, {})));

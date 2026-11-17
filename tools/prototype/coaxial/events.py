@@ -96,27 +96,32 @@ def beat_times(beats, j):
 
 
 def stack(e, fs, times, before, after):
-    """Rows of e around each time, linearly interpolated to the exact timestamp."""
+    """Rows of e around each time, linearly interpolated to the exact timestamp. Also returns
+    which of the times had the whole stretch inside the recording."""
     win = np.arange(-int(before * fs), int(after * fs) + 1)
     rows = []
-    for tt in times:
+    kept = []
+    for i, tt in enumerate(times):
         pos = tt * fs + win
         if pos[0] < 0 or pos[-1] >= len(e) - 1:
             continue
         i0 = np.floor(pos).astype(np.int64)
         fr = pos - i0
         rows.append(e[i0] * (1 - fr) + e[i0 + 1] * fr)
-    return np.array(rows), win / fs * 1e3
+        kept.append(i)
+    return np.array(rows), win / fs * 1e3, np.array(kept, dtype=int)
 
 
 def stacks(rows, fs, times, before=0.040, after=0.012):
-    """One matrix per band: every beat's envelope around its timestamp."""
+    """One matrix per band: every beat's envelope around its timestamp. Also returns the
+    times of the beats that are in the matrices."""
     out = []
     tms = None
+    kept = np.arange(len(times))
     for e in rows:
-        M, tms = stack(e, fs, times, before, after)
+        M, tms, kept = stack(e, fs, times, before, after)
         out.append(M)
-    return out, tms
+    return out, tms, np.asarray(times)[kept]
 
 
 def robust_sd(v):
@@ -263,10 +268,12 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     slope = np.polyfit(np.concatenate([T[0][1], T[1][1]]), np.concatenate([T[0][0], T[1][0]]), 1)[0]
     gap = (np.median(T[1][0] - slope * T[1][1]) - np.median(T[0][0] - slope * T[0][1])) * 1e3
     S = []
+    times = []
     tms = None
     for j in (0, 1):
-        Sj, tms = stacks(rows, fs, T[j][0])
+        Sj, tms, tj = stacks(rows, fs, T[j][0])
         S.append(Sj)
+        times.append(tj)
     n0, n1 = len(S[0][0]), len(S[1][0])
 
     def readings(idx0=None, idx1=None, w=None):
@@ -299,7 +306,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         return res, "", ports, w
 
     r, why, ports, W = readings(w=weights)
-    out = {"bph": bph, "lift": lift, "gap": gap, "n0": n0, "n1": n1, "reading": r, "why": why, "ports": ports, "tms": tms, "weights": W, "limits": (lo, hi)}
+    out = {"bph": bph, "lift": lift, "gap": gap, "n0": n0, "n1": n1, "reading": r, "why": why, "ports": ports, "tms": tms, "weights": W, "limits": (lo, hi),
+           "stacks": S, "times": times, "base_until": base_until}
     if r is None:
         return out
     out["amp"] = amplitude(lift, bph, 0.5 * (r["lift0"] + r["lift1"]))
