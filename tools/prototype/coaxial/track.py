@@ -4,8 +4,10 @@ The unlock is too faint to time in a single beat, so the beat tracker cannot car
 amplitude. This works one level up. A reference stretch of beats, long enough to find the
 unlock and the lock (events.py), gives their places in the averaged beat. The recording is cut
 into short blocks from its first beat, the reference stretch included, and each block's beats
-are averaged too. Each sound is matched against the reference's to see how far it has moved.
-That gives the block's time from unlock to lock, with an uncertainty from resampling the
+are averaged too. Each sound is matched against the reference's to see how far it has moved:
+of the matches within 1.5 ms of its place in the reference that are strong enough, the one
+nearest that place is taken, not the strongest, so that a louder neighbour reaching into the
+search cannot be taken for the sound. That gives the block's time from unlock to lock, with an uncertainty from resampling the
 block's beats. A one-state Kalman filter then follows that time from block to block:
 
     state        t_k, the mean time from unlock to lock over the two beats, in milliseconds
@@ -14,12 +16,14 @@ block's beats. A one-state Kalman filter then follows that time from block to bl
 
 and the amplitude is the usual formula applied to t_k.
 
-usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle>
-       python3 -I tools/prototype/coaxial/track.py sims <directory>
+usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest]
+       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest]
        python3 -I tools/prototype/coaxial/track.py figure <sims output> <recording output> out.png
 
 `recording` reads <prefix>.stream.json from `beats.mjs stream`. `sims` makes simulated watches
-whose amplitude changes in a known way, and takes about half an hour. `figure` draws the
+whose amplitude changes in a known way, co-axial (36° lift angle, 21,600 vph) unless `lever`
+(50°, 28,800 vph) is given, and takes about half an hour. `strongest` gives the earlier search,
+which took the strongest match. `figure` draws the
 tracks from what the other two printed, saved to files.
 """
 import json
@@ -34,6 +38,7 @@ import events as ev
 
 SMOOTH_MS = 0.15      # as find_sounds smooths a portrait
 MAX_SHIFT_MS = 1.5    # furthest a sound is looked for from its place in the reference
+STRONG = 0.5          # a match counts if it is at least this share of the reference against itself
 MIN_BEATS = 10        # fewest beats of each type in a block
 GATE = 3.0            # a block further than this many standard deviations from the filter is left out
 
@@ -50,10 +55,14 @@ def portraits(S, tms, idx, base_until, weights=None):
     return [ev.portrait(m, weights) for m in means], weights
 
 
-def shift_of(ref, blk, tms, lo, hi):
-    """How much later, in milliseconds, a sound comes in `blk` than in `ref`: the shift at which
-    the reference's stretch from lo to hi, with its mean taken off, best matches the block's
-    portrait. None when the best match is at the edge of the search."""
+def shift_of(ref, blk, tms, lo, hi, nearest=True):
+    """How much later, in milliseconds, a sound comes in `blk` than in `ref`, looked for within
+    MAX_SHIFT_MS. The match at each shift is the product of the reference's stretch from lo to
+    hi and the block's portrait, each with its mean taken off: a matched filter, which suits a
+    faint sound in noise. With `nearest`, of the peaks in the match at least STRONG times the
+    reference's product with itself, the one nearest no shift is taken, so that a louder sound
+    reaching into the search cannot win; without, the largest. None when no peak qualifies, or
+    when the largest is at the edge of the search."""
     dt = tms[1] - tms[0]
     i0, i1 = np.searchsorted(tms, lo), np.searchsorted(tms, hi)
     g = ref[i0:i1] - ref[i0:i1].mean()
@@ -61,9 +70,16 @@ def shift_of(ref, blk, tms, lo, hi):
     if i0 - n < 0 or i1 + n > len(blk):
         return None
     score = np.array([np.dot(g, blk[i0 + k:i1 + k] - blk[i0 + k:i1 + k].mean()) for k in range(-n, n + 1)])
-    k = int(np.argmax(score))
-    if k == 0 or k == len(score) - 1:
-        return None
+    if nearest:
+        floor = STRONG * np.dot(g, g)
+        peaks = [k for k in range(1, len(score) - 1) if score[k] >= max(score[k - 1], score[k + 1], floor)]
+        if not peaks:
+            return None
+        k = min(peaks, key=lambda k: abs(k - n))
+    else:
+        k = int(np.argmax(score))
+        if k == 0 or k == len(score) - 1:
+            return None
     a, b, c = score[k - 1], score[k], score[k + 1]
     frac = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) != 0 else 0.0
     return (k - n + frac) * dt
@@ -72,8 +88,11 @@ def shift_of(ref, blk, tms, lo, hi):
 class Reference:
     """Where the unlock and the lock are in the averaged beat of a reference stretch."""
 
-    def __init__(self, S, times, tms, base_until, bph, lift, until):
+    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True):
         self.S, self.times, self.tms, self.base_until = S, times, tms, base_until
+        # Take the strong match nearest each sound's place (True) or the strongest (False, the
+        # earlier search).
+        self.nearest = nearest
         idx = [np.flatnonzero(t < until) for t in times]
         raw, self.weights = portraits(S, tms, idx, base_until)
         sounds = [ev.find_sounds(c, tms, base_until)[0] for c in raw]
@@ -93,8 +112,8 @@ class Reference:
         lifts = []
         for j in (0, 1):
             c = smoothed(raw[j], self.tms)
-            su = shift_of(self.curves[j], c, self.tms, *self.windows[j][0])
-            sl = shift_of(self.curves[j], c, self.tms, *self.windows[j][1])
+            su = shift_of(self.curves[j], c, self.tms, *self.windows[j][0], self.nearest)
+            sl = shift_of(self.curves[j], c, self.tms, *self.windows[j][1], self.nearest)
             if su is None or sl is None:
                 return None
             lifts.append(self.lift[j] + sl - su)
@@ -155,11 +174,11 @@ def true_amplitude(spec, constant, t):
     return np.full(t.shape, constant)
 
 
-def prepare(wav, stream_json, lift, reference_seconds):
+def prepare(wav, stream_json, lift, reference_seconds, nearest=True):
     fs, x = ev.load_wav(wav)
     B = ev.load_beats(stream_json)
     o = ev.measure(x, fs, B, lift, 0)
-    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds), o
+    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest), o
 
 
 def show(rows, bph, lift, truth=None):
@@ -178,10 +197,10 @@ def show(rows, bph, lift, truth=None):
         print(line)
 
 
-def recording(wav, prefix, lift):
+def recording(wav, prefix, lift, nearest=True):
     fs, x = ev.load_wav(wav)
     seconds = len(x) / fs
-    ref, o = prepare(wav, prefix + ".stream.json", lift, seconds + 1)
+    ref, o = prepare(wav, prefix + ".stream.json", lift, seconds + 1, nearest)
     if ref.pair is None:
         print("no reference: " + ref.why)
         return
@@ -191,9 +210,12 @@ def recording(wav, prefix, lift):
         show(follow(ref, block_seconds, 1.0, o["bph"], lift), o["bph"], lift)
 
 
-def sims(outdir):
+def sims(outdir, kind="coaxial", nearest=True):
     os.makedirs(outdir, exist_ok=True)
-    lift, reference_seconds, block_seconds = 36, 60, 10
+    lift = 36 if kind == "coaxial" else 50
+    reference_seconds, block_seconds = 60, 10
+    # Both kinds start from the same 285 degrees, so that their results compare directly.
+    base = {"amplitude": 285}
     cases = [
         ("steady 285", {}),
         ("ramp 290 to 250 from 60 s to 180 s", {"amplitudeRamp": {"from": 290, "to": 250, "t0": 60, "t1": 180}}),
@@ -205,10 +227,10 @@ def sims(outdir):
     for name, over in cases:
         for seed in (91, 92):
             prefix = os.path.join(outdir, ("%s seed %d" % (name, seed)).replace(" ", "_").replace(",", ""))
-            subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "sim", "coaxial", prefix, json.dumps(dict(over, seed=seed, seconds=180))], capture_output=True, text=True, check=True)
+            subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "sim", kind, prefix, json.dumps(dict(base, **over, seed=seed, seconds=180))], capture_output=True, text=True, check=True)
             truth_file = json.load(open(prefix + ".truth.json"))
             truth = lambda t, spec=truth_file["amplitudeSpec"]: float(np.mean(true_amplitude(spec, 285.0, np.atleast_1d(t))))
-            ref, o = prepare(prefix + ".wav", prefix + ".stream.json", lift, reference_seconds)
+            ref, o = prepare(prefix + ".wav", prefix + ".stream.json", lift, reference_seconds, nearest)
             os.remove(prefix + ".wav")
             bph = o["bph"]
             if ref.pair is None:
@@ -312,10 +334,11 @@ def figure(sims_path, recording_path, out):
 if __name__ == "__main__":
     if len(sys.argv) == 5 and sys.argv[1] == "figure":
         figure(sys.argv[2], sys.argv[3], sys.argv[4])
-    elif len(sys.argv) == 5 and sys.argv[1] == "recording":
-        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]))
-    elif len(sys.argv) == 3 and sys.argv[1] == "sims":
-        sims(sys.argv[2])
+    elif len(sys.argv) in (5, 6) and sys.argv[1] == "recording":
+        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:])
+    elif 3 <= len(sys.argv) <= 5 and sys.argv[1] == "sims":
+        kind = "lever" if "lever" in sys.argv[3:] else "coaxial"
+        sims(sys.argv[2], kind, "strongest" not in sys.argv[3:])
     else:
         print(__doc__)
         sys.exit(1)
