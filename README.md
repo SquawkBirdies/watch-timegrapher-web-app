@@ -8,9 +8,9 @@ real-time trace.
 driven by a simulated watch, by three demo recordings or by a recording of your own.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
-and the timegrapher replaying the three demo recordings in milestone 5), and in Chrome on a
-computer at phone size, where the microphone was tested with a recording played in as a
-simulated microphone. The live microphone has not yet been tested on the iPhone.
+the timegrapher replaying the three demo recordings in milestone 5, and a live measurement of
+the Omega in milestone 6), and in Chrome on a computer at phone size, where the microphone was
+also tested with a recording played in as a simulated microphone.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -242,6 +242,12 @@ came back and locked again 9 s later. The automated tests drive the same code wi
 for the microphone: a simulated watch cut off for 2 s gives no readings during the gap, no
 confident dots in it and a fresh lock after it, and its saved minute matches the analysed audio
 sample for sample and replays to the same reading within 0.1 s/day.
+
+On the iPhone 17 Pro Max with iOS 27.2, on 17 November 2026, the Omega was measured live in
+co-axial mode and the run stopped before a minute. The live reading was +0.8 ± 0.09 s/day over
+20 s, and the 58.5 s saved from that run, replayed under Your file, read the same +0.8 ± 0.09 with
+the same trace. On a computer the saved file reads +0.81 ± 0.09 s/day, with every tick and tock
+timed on its own, standing 40 and 18 times the noise spread above the noise.
 
 Not yet tested on the iPhone: the interruptions as iOS reports them (calls, Siri, other apps,
 locking the screen, switching apps, a Home Screen app sent to the background), the screen
