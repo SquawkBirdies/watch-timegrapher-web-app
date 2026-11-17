@@ -19,6 +19,8 @@ the lock. The prototype finds the sounds inside each averaged beat and pairs tho
   formula.
 
 A reading is held back unless resampling the beats supports it (`events.py` has the limits).
+Each resample draws beats with their sounds and their timestamps, so a watch whose beats
+scatter is given the uncertainty that scatter brings.
 
 ## Running it
 
@@ -35,6 +37,7 @@ python3 -I tools/prototype/coaxial/checks.py kalman tests/fixtures/omega-3861-sa
 python3 -I tools/prototype/coaxial/checks.py kalman-sims /tmp/kalman   # about ten minutes
 python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-safari.wav /tmp/omega 36
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
+python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about fifteen minutes
 ```
 
 `beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
@@ -46,8 +49,9 @@ works on envelopes made the way the app's filter bank makes them.
 | `beats.mjs` | timestamps of a recording, or a simulated watch with known truth |
 | `events.py` | the method: averaged beats, their sounds, the pairing, the gates |
 | `analyze.py` | one recording, printed, with an optional plot |
-| `checks.py` | how the readings move with the analysis choices; simulated watches |
+| `checks.py` | readings across analysis choices; simulated watches; the unit tests' watches |
 | `track.py` | the amplitude followed over time with a slow Kalman filter |
+| `suite.mjs` | the unit tests' simulated watches as recordings, with their truth |
 | `figure.py` | the first figure in the write-up |
 
 The simulated watch is `tests/helpers/balance.js`: a balance swinging as a sine, with the unlock
@@ -66,12 +70,25 @@ All on a computer. Nothing has been compared with a timing machine.
 
 The ± is the scatter under resampling only. Across the analysis choices the Omega's beat error
 runs from 0.26 to 0.38 ms. The ETA's last sounds are 0.31 ms apart, which is the app's own
-Swiss-lever reading: the app times the drop, a timing machine the unlock.
+Swiss-lever reading: the app's timestamps sit at the loudest part of each beat, which in a lever
+watch is the drop, while a timing machine times the unlock.
 
-On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the noise) with a true beat
-error of 0, 0.5, 1 and 2 ms, sixteen runs all read within 0.10 ms, and amplitudes of 200° to
-310° read 1° to 5° low. With the unlock 2 dB over the noise or less, or with only 20 s of
-audio, nothing was shown.
+On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background) with a true
+beat error of 0, 0.5, 1 and 2 ms, sixteen runs all read within 0.10 ms, and amplitudes of 200° to
+310° read 1° to 5° low. With the unlock 2 dB over the background or less, or with only 20 s of
+audio, nothing was shown. Of all 46 simulated runs, 33 were shown and none of those was more than
+0.10 ms or 5° out.
+
+The low amplitudes come from the simulated watch, not from the method. About 2° is a delay
+`balance.js` adds to every lock, 0.05 ms on average, which its true amplitude does not count.
+About 1° is that its two beats have a mean lift angle of 36.1° while the prototype is told 36°.
+How a real watch reads depends on how its published lift angle was arrived at.
+
+Two decibel scales appear here. "Over the background" is how far a sound stands over the
+steady noise, and does not grow with averaging. "Over the noise of the average" is how far it
+stands over the scatter left in the averaged beat, which shrinks as beats are added, so it
+grows with them: the Omega's unlock went from 8.7 dB with 20 s of audio to 12.5 dB with 60 s.
+The second decides whether a sound is found. The Omega's unlock is 3.5 to 5.5 dB on the first.
 
 ## With the real-time pipeline and a Kalman beat tracker
 
@@ -85,7 +102,7 @@ out while the tracker settles.
 | Omega 3861, Safari capture, beats lined up on | Beat error | Amplitude | Unlock over the noise of the average |
 | --- | --- | --- | --- |
 | whole-recording timestamps | 0.31 ± 0.03 ms | 284° | 12.6 dB |
-| real-time timestamps | 0.30 ± 0.04 ms | 284° | 12.5 dB |
+| real-time timestamps | 0.30 ± 0.03 ms | 284° | 12.5 dB |
 | the Kalman tracker's expected times | 0.33 ± 0.03 ms | 284° | 12.4 dB |
 | the Kalman tracker's settled times | 0.32 ± 0.03 ms | 284° | 12.4 dB |
 
@@ -104,8 +121,9 @@ held, was more than 0.08 ms from the truth.
 
 The beat tracker cannot carry the amplitude: the unlock is too faint to time in one beat, so
 there is nothing to correct with at each beat. `track.py` works one level up. A reference
-stretch, 60 s here, gives the places of the unlock and the lock in the averaged beat. Each 10 s
-block of beats after that is averaged, and its unlock and lock are matched against the
+stretch, 60 s here, gives the places of the unlock and the lock in the averaged beat. The
+recording is cut into 10 s blocks from its start, the reference stretch included, and each
+block's beats are averaged. Its unlock and lock are matched against the
 reference's to see how far each has moved. That gives the block's time from unlock to lock, with
 a scatter from resampling the block's beats 40 times. A one-state Kalman filter follows it:
 
@@ -119,10 +137,10 @@ amplitude    lift angle / (2 sin(pi f t))
 q is set as how far the amplitude may wander in a second, in degrees. A block more than 3
 standard deviations from the filter's value is left out.
 
-Eight simulated co-axial watches, 180 s each, with the amplitude changing in a known way after
-the reference. Errors against the true amplitude, in degrees, over the 24 blocks after the
-reference: root mean square, then the worst. All include the 3° or so by which the method reads
-low.
+Eight simulated co-axial watches, 180 s each, two for each way the amplitude changes. Errors
+against the true amplitude, in degrees, over the 12 blocks after the reference in each of the two
+runs: root mean square, then the worst. All include the 3° or so by which this simulated watch
+reads low, which comes from the simulation, not from the method (see "What it measured").
 
 | Simulated amplitude | Blocks alone | Filter, 0.5° a second | Filter, 1° | Filter, 2° |
 | --- | --- | --- | --- | --- |
@@ -143,7 +161,56 @@ test, the six 10 s blocks read 280°, 282°, 289°, 287°, 286° and 282°, each
 
 Limits of this part: it needs the reference first, a minute here. The reference is fixed, and a
 sound is looked for within 1.5 ms of its place in it, which at 21,600 vph covers amplitudes down
-to about 50° below the reference's. One block in 24 gave no measurement.
+to about 50° below the reference's. In each of the four cases, one of the 24 scored blocks gave
+no measurement.
+
+## Through the app's unit tests
+
+`npm test` runs only the JavaScript pipeline, so it cannot test the prototype. `suite.mjs`
+builds the 36 simulated watches that the test files make as whole recordings, with the same
+settings and seeds, and writes each one out with its truth and the app's timestamps in co-axial
+mode. `checks.py suite` runs it, then the prototype on them and on the six recordings in
+`tests/fixtures`. Left out are the five watches that `tests/interface.test.js` makes as live
+streams, and the Voice Memos ETA recording that `tests/irregular.test.js` re-times.
+
+These watches come from the app's own simulator, `js/audio/simulator.js`, which places each
+beat's sounds at fixed times. Every tock sound moves by the set offset, so that offset is the
+true beat error. No balance is behind them, so the time from the first sound to the last loud
+one, 7 ms for the default sounds, is checked instead of an amplitude. The lift angle is chosen
+per beat rate to make that time read 280°, so that the gate on believable amplitudes passes.
+
+| Outcome on the 36 watches | Watches |
+| --- | --- |
+| shown and wrong by more than 0.1 ms | 0 |
+| shown and right | 1: the two-sound watch whose tock changes its loudest sound, 0.01 ms against 0 |
+| refused, rightly | 1: the two-sound co-axial, whose beats share no first sound |
+| held back, would have been right | 7, off by 0.01 to 0.07 ms |
+| held back, would have been wrong | 6: 3 basket cases, 1 and 5 ms jitter, a run with a 2 s gap |
+| nothing to measure | 21 |
+
+The simulator's unlock is a quarter as loud as the drop. After 30 to 75 s of beats it stands
+7 to 11 dB over the noise of the average, mostly 8 to 9, which is at the edge of what the
+prototype can find: it often found the unlock in one beat only, and refused rather than pair
+unlike sounds. Where it found both, 6 to 87% of the resamples did not, against a limit of 5%.
+The Omega capture's unlock stands 12.6 dB over the noise of the average. The two Safari captures
+read as above. The three Voice Memos recordings and the capture with no watch give nothing.
+
+The run also found a flaw, fixed here. Resampling redrew the averaged beats but kept the gap
+between the tick and tock timestamp lines fixed. On a regular watch that gap is known to about
+0.01 ms, so nothing was lost; on an irregular one it is the largest part of the uncertainty, and
+the stated figure was 3 to 18 times too small. Each resample now draws every beat's timestamp
+with its sound:
+
+| Watch | True beat error | Read | Uncertainty before | After |
+| --- | --- | --- | --- | --- |
+| 1 ms jitter | 0.20 ms | 0.07 ms | ±0.09 ms | ±0.25 ms |
+| 2 ms jitter | 0.20 ms | 0.25 ms | ±0.05 ms | ±0.32 ms |
+| 5 ms jitter | 0.20 ms | 0.58 ms | ±0.05 ms | ±0.89 ms |
+| basket cases 1, 2, 3 | 2.00 ms | 1.66, 1.60, 1.13 ms | ±0.06 to 0.07 ms | ±0.35 to 0.43 ms |
+
+The 0.1 ms gate now holds each of these back by its own uncertainty. Before, they were held back
+only because the sounds were not found consistently. The regular watches and the two Safari
+captures read as before, with uncertainties within 0.01 ms of what they were.
 
 ## Limits
 
@@ -151,11 +218,14 @@ to about 50° below the reference's. One block in 24 gave no measurement.
   events, not something the audio proves. Only a timing machine with a co-axial mode can check
   it.
 - The 3861's 36° lift angle comes from a forum post. Each degree moves the amplitude by 7.9°.
-- The two beats take 8% different times from unlock to lock. The prototype uses their mean;
-  what a timing machine's co-axial mode does is not published.
-- The 3861's unlock stands only 3.5 to 5.5 dB over the noise, mostly above 18 kHz. It took
-  30 to 60 s of beats to find reliably, and compressed recordings do not show it.
+- The two beats take 8% different times from unlock to lock. The prototype uses their mean. No
+  description was found of what a timing machine's co-axial mode does.
+- The 3861's unlock stands only 3.5 to 5.5 dB over the background, mostly above 18 kHz. It took
+  30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it.
 - The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
   a good reading back.
+- It is not yet a general measure. On the simulated watches of the unit tests it showed a
+  reading for 1 of the 35 that tick, and nothing for any irregular watch, whose uncertainty
+  came to 0.25 to 0.89 ms.
 - One watch and one capture. The averaging itself runs on a whole recording, in Python, even
   when the beat times come from the real-time pipeline.

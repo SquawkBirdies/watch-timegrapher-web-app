@@ -5,6 +5,7 @@ usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.bea
        python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches>
        python3 -I tools/prototype/coaxial/checks.py kalman <file.wav> <prefix> <lift angle>
        python3 -I tools/prototype/coaxial/checks.py kalman-sims <directory>
+       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name]
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -13,6 +14,10 @@ watches.
 
 `sims` runs node on beats.mjs for each watch, so it needs Node 22 or later, and takes about
 twenty minutes.
+
+`suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
+then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
+reading against the truth. It takes about fifteen minutes.
 """
 import json
 import os
@@ -212,6 +217,97 @@ def kalman_sims(outdir):
         print("%-28s %-26s shown in %d of %d, worst error %.2f ms, unlock %.1f dB on average" % (group, label, t["shown"], t["runs"], t["worst"], np.mean(t["db"]) if t["db"] else float("nan")))
 
 
+TOL_MS = 0.10  # a shown beat error or unlock-to-lock time this far from the truth is wrong
+
+RECORDINGS = [
+    # file, beats.mjs arguments as the recording tests analyse it, lift angle, what is known
+    ("omega-3861-safari.wav", [], 36, "co-axial; no reference reading"),
+    ("eta-2836-2-safari.wav", [], 50, "Swiss lever; no reference reading"),
+    ("omega-3861.wav", ["21600", "2", "60"], 36, "co-axial, Voice Memos"),
+    ("omega-3861-b.wav", ["21600", "2", "73"], 36, "co-axial, Voice Memos"),
+    ("eta-2836-2.wav", ["0", "2", "54"], 50, "Swiss lever, Voice Memos"),
+    ("no-watch-safari.wav", [], 50, "no watch"),
+]
+
+
+def suite(outdir, match=None):
+    os.makedirs(outdir, exist_ok=True)
+    made = subprocess.run(["node", os.path.join(HERE, "suite.mjs"), outdir] + ([match] if match else []), capture_output=True, text=True)
+    print(made.stdout + made.stderr)
+    print("Simulated watches of the unit tests. The lift angle is chosen per beat rate so that the")
+    print("watch's unlock-to-lock time reads 280 degrees: there is no balance behind these watches.\n")
+    tally = {}
+    for name in sorted(f[:-11] for f in os.listdir(outdir) if f.endswith(".truth.json")):
+        prefix = os.path.join(outdir, name)
+        truth = json.load(open(prefix + ".truth.json"))
+        label = truth["name"]
+        if not os.path.exists(prefix + ".beats.json"):
+            verdict = "right" if truth["expect"] == "none" else "nothing"
+            print("%-32s no beats from the app: %s" % (label, "right, there is no watch" if truth["expect"] == "none" else "nothing to measure"))
+            tally.setdefault(verdict, []).append(label)
+            continue
+        B = ev.load_beats(prefix + ".beats.json")
+        if any(sum(b["ok"]) < 10 for b in B["beats"]):
+            print("%-32s the app timed too few beats" % label)
+            tally.setdefault("nothing", []).append(label)
+            continue
+        fs, x = ev.load_wav(prefix + ".wav")
+        # The lift angle at which this watch's time from first to last sound reads 280 degrees,
+        # so that the gate on believable times passes it and the check falls on the times.
+        lift_ms = truth["liftMs"] or 7.0
+        lift = float(2 * 280 * np.sin(np.pi * B["bph"] / 7200 * lift_ms * 1e-3))
+        o = ev.measure(x, fs, B, lift, 100)
+        r = o["reading"]
+        head = "%-32s %s vph, lift %.1f deg | " % (label, B["bph"], lift)
+        if r is None or "sd" not in o:
+            why = o["why"] if r is None else "the resamples found no sounds"
+            verdict = "right" if truth["expect"] in ("refuse", "none") else "nothing"
+            print(head + "no reading: %s%s" % (why, " (right: the beats share no first sound)" if truth["expect"] == "refuse" else ""))
+            tally.setdefault(verdict, []).append(label)
+            continue
+        be, lt = abs(r["first_gap"]), 0.5 * (r["lift0"] + r["lift1"])
+        shown = o["show_beat_error"]
+        if truth["expect"] == "reading" and truth["beatErrorMs"] is not None:
+            e_be, e_lt = be - truth["beatErrorMs"], lt - truth["liftMs"]
+            ok = abs(e_be) <= TOL_MS and abs(e_lt) <= TOL_MS
+            verdict = ("right" if ok else "WRONG") if shown else ("held, would be right" if ok else "held, would be wrong")
+            print(head + "beat error %.2f +- %.2f (true %.2f, %+.2f), unlock to lock %.2f and %.2f (true %.2f) | %s, unlock %.1f dB, resamples failing %.0f%%" % (
+                be, o["sd"]["first_gap"], truth["beatErrorMs"], e_be, r["lift0"], r["lift1"], truth["liftMs"], verdict, r["first_db"], 100 * o["fail"]))
+        else:
+            verdict = "WRONG" if shown else "held"
+            print(head + "beat error %.2f +- %.2f, unlock to lock %.2f and %.2f | %s: %s" % (
+                be, o["sd"]["first_gap"], r["lift0"], r["lift1"], verdict, "a reading where the beats share no first sound" if shown else "held back, as it should be"))
+        tally.setdefault(verdict, []).append(label)
+    print()
+    for verdict, names in sorted(tally.items()):
+        print("%-22s %2d: %s" % (verdict, len(names), ", ".join(names)))
+
+    if match:
+        return
+    print("\nRecordings in tests/fixtures, first channel:")
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    for file, args, lift, known in RECORDINGS:
+        path = os.path.join(repo, "tests", "fixtures", file)
+        prefix = os.path.join(outdir, "rec_" + file[:-4])
+        done = subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "wav", path, prefix] + args, capture_output=True, text=True)
+        said = (done.stdout + done.stderr).strip().splitlines()
+        if not os.path.exists(prefix + ".beats.json"):
+            print("%-24s no beats from the app (%s): %s" % (file, known, said[-1][:90] if said else "no output"))
+            continue
+        B = ev.load_beats(prefix + ".beats.json")
+        if not B["beats"] or any(sum(b["ok"]) < 10 for b in B["beats"]):
+            print("%-24s the app timed too few beats (%s)" % (file, known))
+            continue
+        fs, x = ev.load_wav(path)
+        o = ev.measure(x, fs, B, lift, 100)
+        r = o["reading"]
+        if r is None or "sd" not in o:
+            print("%-24s no reading (%s): %s" % (file, known, o["why"] if r is None else "the resamples found no sounds"))
+            continue
+        print("%-24s beat error %.2f +- %.2f ms, amplitude %.0f at %d deg, %s (%s)" % (
+            file, abs(r["first_gap"]), o["sd"]["first_gap"], o["amp"], lift, "shown" if o["show_beat_error"] else "held back", known))
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 5 and sys.argv[1] == "vary":
         vary(sys.argv[2], sys.argv[3], float(sys.argv[4]))
@@ -221,6 +317,8 @@ if __name__ == "__main__":
         kalman(sys.argv[2], sys.argv[3], float(sys.argv[4]))
     elif len(sys.argv) == 3 and sys.argv[1] == "kalman-sims":
         kalman_sims(sys.argv[2])
+    elif len(sys.argv) in (3, 4) and sys.argv[1] == "suite":
+        suite(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)
     else:
         print(__doc__)
         sys.exit(1)

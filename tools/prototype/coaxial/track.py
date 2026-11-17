@@ -2,11 +2,11 @@
 
 The unlock is too faint to time in a single beat, so the beat tracker cannot carry the
 amplitude. This works one level up. A reference stretch of beats, long enough to find the
-unlock and the lock (events.py), gives their places in the averaged beat. Every short block of
-beats after that is averaged too, and each sound is matched against the reference's to see how
-far it has moved. That gives the block's time from unlock to lock, with an uncertainty from
-resampling the block's beats. A one-state Kalman filter then follows that time from block to
-block:
+unlock and the lock (events.py), gives their places in the averaged beat. The recording is cut
+into short blocks from its first beat, the reference stretch included, and each block's beats
+are averaged too. Each sound is matched against the reference's to see how far it has moved.
+That gives the block's time from unlock to lock, with an uncertainty from resampling the
+block's beats. A one-state Kalman filter then follows that time from block to block:
 
     state        t_k, the mean time from unlock to lock over the two beats, in milliseconds
     model        t_k+1 = t_k + w,   w ~ N(0, q * seconds between blocks)
