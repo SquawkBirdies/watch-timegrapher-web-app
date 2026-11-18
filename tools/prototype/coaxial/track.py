@@ -22,6 +22,8 @@ it was before, for comparison.
 
 usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest]
        python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest]
+       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever]
+       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [runs] [seconds]
        python3 -I tools/prototype/coaxial/track.py figure <sims output> <recording output> out.png
 
 `recording` reads <prefix>.stream.json from `beats.mjs stream`. `sims` makes simulated watches
@@ -243,6 +245,146 @@ def recording(wav, prefix, lift, nearest=True):
     show(follow(ref, 10, 1.0, o["bph"], lift, restart=False), o["bph"], lift)
 
 
+def simulate(outdir, kind, name, over, seed, seconds, reference_seconds, nearest=True):
+    """Make one simulated watch with beats.mjs and find its reference. Returns the reference, the
+    beat rate, the lift angle and how the true amplitude changes with time. Both kinds start from
+    the same 285 degrees, so that their results compare directly."""
+    lift = 36 if kind == "coaxial" else 50
+    prefix = os.path.join(outdir, ("%s seed %d" % (name, seed)).replace(" ", "_").replace(",", ""))
+    subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "sim", kind, prefix, json.dumps(dict({"amplitude": 285}, **over, seed=seed, seconds=seconds))], capture_output=True, text=True, check=True)
+    spec = json.load(open(prefix + ".truth.json"))["amplitudeSpec"]
+    ref, o = prepare(prefix + ".wav", prefix + ".stream.json", lift, reference_seconds, nearest)
+    os.remove(prefix + ".wav")
+    return ref, o["bph"], lift, spec
+
+
+def block_truth(spec, t, block_seconds):
+    """The true amplitude averaged over the block centred on t, which is what a block can see."""
+    return float(true_amplitude(spec, 285.0, np.linspace(t - 0.5 * block_seconds, t + 0.5 * block_seconds, 201)).mean())
+
+
+def swing_fit(t, v, period):
+    """Fit v = c + a sin(2 pi (t - lag) / period) by least squares. Returns a and lag in seconds."""
+    w = 2 * np.pi / period
+    X = np.column_stack([np.ones_like(t), np.sin(w * t), np.cos(w * t)])
+    c = np.linalg.lstsq(X, v, rcond=None)[0]
+    phase = np.arctan2(c[2], c[1])
+    return float(np.hypot(c[1], c[2])), float(-phase / w)
+
+
+def swings(outdir, kind="coaxial"):
+    """Larger and faster swings than `sims` tries. Witschi's training document says the meshing of
+    the gears can move a watch's amplitude by up to 30 degrees, and that this is normal. In most
+    movements the wheel that carries the seconds hand turns once a minute, hence the 60 s swings;
+    the 5 s swing is faster than a block. Errors are against the true amplitude averaged over each
+    block, and the share of the swing kept is from fitting a sine of the known period."""
+    os.makedirs(outdir, exist_ok=True)
+    reference_seconds, block_seconds = 60, 10
+    drifts = (0.5, 1.0, 2.0, 4.0)
+    cases = [
+        ("swinging 285 +- 15, every 60 s", 15, 60),
+        ("swinging 285 +- 30, every 60 s", 30, 60),
+        ("swinging 285 +- 15, every 5 s", 15, 5),
+    ]
+    summary = {}
+    for name, swing, period in cases:
+        for seed in (91, 92):
+            ref, bph, lift, spec = simulate(outdir, kind, name, {"amplitudeSwing": {"base": 285, "swing": swing, "period": period}}, seed, 180, reference_seconds)
+            if ref.pair is None:
+                print("%s, seed %d: no reference: %s" % (name, seed, ref.why))
+                continue
+            amp = lambda t: ev.amplitude(lift, bph, t)
+            truth = lambda t: block_truth(spec, t, block_seconds)
+            print("%s, seed %d: reference from the first %d s (%d+%d beats): %.0f degrees" % (name, seed, reference_seconds, ref.beats[0], ref.beats[1], amp(0.5 * sum(ref.lift))))
+            blocks = measure_blocks(ref, block_seconds)
+            for drift in drifts:
+                rows = run_filter(ref, blocks, block_seconds, drift, bph, lift)
+                if drift in (1.0, 2.0):
+                    print("%s, seed %d, %.0f degrees a second (true = averaged over the block):" % (name, seed, drift))
+                    show(rows, bph, lift, truth)
+                later = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
+                measured = [r for r in later if r["z"] is not None]
+                s = summary.setdefault((name, drift), {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0, "kept": [], "lag": []})
+                s["block"] += [amp(r["z"]) - truth(r["t"]) for r in measured]
+                s["filter"] += [amp(r["state"]) - truth(r["t"]) for r in later]
+                # As the app would show it: a dash while the filter's own uncertainty is over 5
+                # degrees, the limit the whole-recording reading uses.
+                s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if amp(r["state"]) * r["state_sd"] / r["state"] <= 5.0]
+                s["missing"] += len(later) - len(measured)
+                s["gated"] += sum(1 for r in measured if not r["used"])
+                s["restarts"] += sum(1 for r in rows if r["restarted"])
+                s["blocks"] += len(later)
+                if period >= 2 * block_seconds:
+                    t = np.array([r["t"] for r in later])
+                    seen, _ = swing_fit(t, np.array([truth(x) for x in t]), period)
+                    a_blocks, lag_blocks = swing_fit(np.array([r["t"] for r in measured]), np.array([amp(r["z"]) for r in measured]), period)
+                    a_filter, lag_filter = swing_fit(t, np.array([amp(r["state"]) for r in later]), period)
+                    s["kept"].append((seen / swing, a_blocks / swing, a_filter / swing))
+                    s["lag"].append((lag_blocks, lag_filter))
+    print()
+    rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
+    for (name, drift), s in summary.items():
+        line = "%-32s %.1f deg/s: blocks rms %.1f, worst %.1f; filter rms %.1f, worst %.1f; shown within 5 degrees of uncertainty %d of %d, rms %.1f, worst %.1f; %d without a measurement, %d gated out, %d restarts" % (
+            name, drift, rms(s["block"]), max(np.abs(s["block"])), rms(s["filter"]), max(np.abs(s["filter"])), len(s["shown"]), s["blocks"], rms(s["shown"]),
+            max(np.abs(s["shown"])) if s["shown"] else float("nan"), s["missing"], s["gated"], s["restarts"])
+        if s["kept"]:
+            k = np.mean(s["kept"], axis=0)
+            lag = np.mean(s["lag"], axis=0)
+            line += "; share of the swing kept: by averaging over a block %.2f, blocks %.2f, filter %.2f; filter %.1f s behind the blocks" % (k[0], k[1], k[2], lag[1] - lag[0])
+        print(line)
+
+
+def steady(outdir, kind="coaxial", runs=16, seconds=180):
+    """How often the restart fires when nothing changes: many runs at a steady 285 degrees, where
+    every restart is a false one. Counts restarts and gated blocks at each setting, and how far the
+    filter strays. Many short runs rather than a few long ones, because making a simulated watch
+    takes far longer than its length grows: a 180 s one takes about 2 minutes, a 600 s one over
+    15."""
+    os.makedirs(outdir, exist_ok=True)
+    reference_seconds, block_seconds = 60, 10
+    drifts = (0.5, 1.0, 2.0, 4.0)
+    summary = {d: {"blocks": 0, "measured": 0, "gated": 0, "restarts": 0, "filter": [], "after": []} for d in drifts}
+    block_err, block_z = [], []
+    for seed in range(101, 101 + runs):
+        ref, bph, lift, spec = simulate(outdir, kind, "steady 285 for %d s" % seconds, {}, seed, seconds, reference_seconds)
+        if ref.pair is None:
+            print("seed %d: no reference: %s" % (seed, ref.why))
+            continue
+        amp = lambda t: ev.amplitude(lift, bph, t)
+        blocks = measure_blocks(ref, block_seconds)
+        later = [b for b in blocks if b["t"] > reference_seconds and b["z"] is not None]
+        # Each block's error, and that error in units of its own scatter under resampling.
+        block_err += [amp(b["z"]) - 285.0 for b in later]
+        t_ref = 0.5 * sum(ref.lift)
+        block_z += [(b["z"] - t_ref) / b["sd"] for b in later]
+        line = "seed %d: reference %.1f degrees, %d blocks after it, %d measured" % (seed, amp(t_ref), sum(1 for b in blocks if b["t"] > reference_seconds), len(later))
+        for drift in drifts:
+            rows = run_filter(ref, blocks, block_seconds, drift, bph, lift)
+            scored = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
+            s = summary[drift]
+            s["blocks"] += len(scored)
+            s["measured"] += sum(1 for r in scored if r["z"] is not None)
+            s["gated"] += sum(1 for r in scored if r["z"] is not None and not r["used"])
+            s["filter"] += [amp(r["state"]) - 285.0 for r in scored]
+            for i, r in enumerate(rows):
+                if r["restarted"]:
+                    s["restarts"] += 1
+                    s["after"] += [amp(x["state"]) - 285.0 for x in rows[i:i + 3]]
+            line += "; %.1f deg/s: %d gated, %d restarts" % (drift, sum(1 for r in scored if r["z"] is not None and not r["used"]), sum(1 for r in rows if r["restarted"]))
+        print(line)
+    print()
+    rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
+    block_z = np.abs(np.array(block_z))
+    print("blocks: %d measured, error rms %.1f, worst %.1f degrees; beyond 2, 3 and 4 times their own scatter: %d, %d, %d" % (
+        len(block_err), rms(block_err), max(np.abs(block_err)), (block_z > 2).sum(), (block_z > 3).sum(), (block_z > 4).sum()))
+    for drift, s in summary.items():
+        # With none seen in n blocks, the rate is below 3/n with 95% confidence.
+        bound = " (so fewer than 1 in %d blocks, with 95%% confidence)" % (s["measured"] // 3) if s["restarts"] == 0 else ""
+        print("%.1f deg/s: %d blocks scored, %d measured, %d gated out, %d restarts%s; filter rms %.1f, worst %.1f degrees%s" % (
+            drift, s["blocks"], s["measured"], s["gated"], s["restarts"], bound, rms(s["filter"]), max(np.abs(s["filter"])),
+            "; worst within two blocks after a restart %.1f" % max(np.abs(s["after"])) if s["after"] else ""))
+
+
 def sims(outdir, kind="coaxial", nearest=True):
     os.makedirs(outdir, exist_ok=True)
     lift = 36 if kind == "coaxial" else 50
@@ -376,6 +518,10 @@ if __name__ == "__main__":
     elif 3 <= len(sys.argv) <= 5 and sys.argv[1] == "sims":
         kind = "lever" if "lever" in sys.argv[3:] else "coaxial"
         sims(sys.argv[2], kind, "strongest" not in sys.argv[3:])
+    elif len(sys.argv) in (3, 4) and sys.argv[1] == "swings":
+        swings(sys.argv[2], "lever" if "lever" in sys.argv[3:] else "coaxial")
+    elif 3 <= len(sys.argv) <= 6 and sys.argv[1] == "steady":
+        steady(sys.argv[2], "lever" if "lever" in sys.argv[3:4] else "coaxial", *[int(v) for v in sys.argv[4:]])
     else:
         print(__doc__)
         sys.exit(1)

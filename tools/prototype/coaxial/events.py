@@ -195,7 +195,8 @@ def find_sounds(c, tms, base_until=-14.0, min_z=5.0, min_prom_db=2.5, smooth_ms=
 
 def lift_limits(bph, lift_deg=None, amp_lo=150.0, amp_hi=330.0):
     """Shortest and longest believable time from unlock to lock, in milliseconds: an amplitude
-    of 150 to 330 degrees. Without a lift angle, any from 30 to 55 degrees is allowed for."""
+    of 150 to 330 degrees. Above 330, Witschi's fault table expects the balance to knock against
+    its banking (overbanking). Without a lift angle, any from 30 to 55 degrees is allowed for."""
     f = bph / 7200.0
     lo_l, hi_l = (lift_deg, lift_deg) if lift_deg else (30.0, 55.0)
     return 1e3 * np.arcsin(lo_l / (2 * amp_hi)) / (np.pi * f), 1e3 * np.arcsin(hi_l / (2 * amp_lo)) / (np.pi * f)
