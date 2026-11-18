@@ -17,11 +17,12 @@ import { robustLine } from '../../js/dsp/mathutil.js';
  * midpoint between ticks, so the true beat error is 2 ms, not the 0.0 ms a confused
  * timegrapher can show.
  * @param {number} seed
- * @param {{seconds?: number}} [options]
+ * @param {{seconds?: number, gain?: number}} [options] `gain` is how loud the beats are, 1.6 as the
+ *   tests use it; the co-axial prototype's check makes it louder
  * @returns {IrregularWatch}
  */
 export function basketCase(seed, options = {}) {
-  const { seconds = 60 } = options;
+  const { seconds = 60, gain = 1.6 } = options;
   const bph = 18000;
   const rate = 60;
   const walkStep = gaussianFrom(seededRandom(seed * 7919 + 1));
@@ -35,7 +36,7 @@ export function basketCase(seed, options = {}) {
     rate,
     seconds,
     seed,
-    gain: 1.6,
+    gain,
     // Beat-to-beat scatter, 2 ms standard deviation.
     jitterMs: 2,
     beatOffsetMs: 2,

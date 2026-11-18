@@ -66,8 +66,11 @@ The beat rate can be given instead of detected: pass `{ bph: 21600 }` to `Pipeli
 rate as the last argument of either command-line tool. Only that rate is then searched. In
 tests this did not make the lock arrive sooner, but it cut the computing spent while listening
 to noise to between 30% and 40%. A wrong rate unrelated to the true one gives no lock. A mix-up
-between 18,000 and 36,000 vph can still lock; the rate in seconds per day is then still right
-and no beat error is shown.
+between 18,000 and 36,000 vph can still lock, and the rate in seconds per day is then still
+right. But a 36,000 vph watch given as 18,000 vph shows a wrong beat error: the app takes every
+other beat, so its ticks and its tocks are both the watch's ticks. On simulated watches with a
+true beat error of 0.50 ms, run for 60 s, it showed about 0.01 ms or less in 20 to 32 readings.
+The test for this runs 40 s, in which the watch gave no beat error at all, so it did not catch it.
 
 The escapement can be set to Swiss lever (the default) or co-axial: pass
 `{ escapement: 'coaxial' }` to `Pipeline` or `analyze`. A co-axial escapement's tick and tock
@@ -81,8 +84,11 @@ from the sounds inside each beat: the first, the unlock, and the last, the lock,
 beats share. It is not part of the app. On the Omega's Safari capture it read 0.30 ms and, at a
 36° lift angle, 285°; on the ETA's, 0.15 ms and 263° at 50°. Neither has been compared with a
 timing machine. On the simulated watches of the unit tests it showed no wrong reading, but it
-showed a reading for only 1 of the 35 that tick, because their first sound is too faint for it
-to find reliably. Its README gives the method, its checks, and its limits.
+showed a reading for only 1 of the 35 that tick: the first sound of their weaker beat stands 0.3
+to 1.9 dB over the background, against 3.8 dB in the Omega's capture and 11.8 dB in the ETA's.
+Made as loud as the Omega and 60 s long, 23 of them read within 0.05 ms, and the two 36,000 vph
+watches given as 18,000 vph read about 0 ms against 0.50, as the app's own Swiss-lever reading
+does. Its README gives the method, its checks, and its limits.
 
 Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
 reads less steadily. The last readings at 20 s were +6.91 s/day for the ETA, +0.45 s/day for the

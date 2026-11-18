@@ -44,7 +44,7 @@ python3 -I tools/prototype/coaxial/checks.py kalman-sims /tmp/kalman   # about t
 python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-safari.wav /tmp/omega 36
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track-lever lever  # about half an hour
-python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about fifteen minutes
+python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about 40 minutes
 python3 -I tools/prototype/coaxial/track.py swings /tmp/swings both     # about an hour
 python3 -I tools/prototype/coaxial/track.py steady /tmp/steady both     # about half an hour
 ```
@@ -95,7 +95,7 @@ On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background
 beat error of 0, 0.5, 1 and 2 ms, sixteen runs all read within 0.10 ms, and amplitudes of 200° to
 310° read 1° to 5° low. With the unlock 2 dB over the background or less, or with only 20 s of
 audio, nothing was shown. Of all 46 simulated runs, 33 were shown and none of those was more than
-0.10 ms or 5° out. Lined up, the default now, the same 46 showed beat error in 20 and amplitude
+0.10 ms or 5° out. Lined up, the default now, the same 46 showed beat error in 19 and amplitude
 in 30, none more than 0.09 ms or 6° out: the co-axial's faint unlock gives noisy shifts to line
 the beats up on, which widens the stated uncertainty (see "Lining the beats up again").
 
@@ -337,7 +337,7 @@ Where nothing changes:
 
 - `checks.py sims`, the 46 simulated watches: no wrong reading either way, and the readings
   moved little. But lined up, the co-axial's stated beat-error uncertainty rose from mostly
-  0.03 to 0.05 ms to 0.06 to 0.13 ms, so beat error was shown in 20 of 46 instead of 33, and
+  0.03 to 0.05 ms to 0.06 to 0.13 ms, so beat error was shown in 19 of 46 instead of 33, and
   amplitude in 30 instead of 33. The faint unlock gives each block a noisy shift, and lining
   the beats up on noise spreads them again. The lever's were unchanged.
 - `checks.py suite`: the same verdicts on the unit tests' 36 watches, none shown wrongly; one
@@ -365,11 +365,37 @@ mode. `checks.py suite` runs it, then the prototype on them and on the six recor
 `tests/fixtures`. Left out are the five watches that `tests/interface.test.js` makes as live
 streams, and the Voice Memos ETA recording that `tests/irregular.test.js` re-times.
 
+Since 18 November `suite.mjs` makes them louder and 60 s long, as decided that day, because as
+the tests make them they are too quiet for the prototype in their 20 to 75 s (see "Why the unit
+tests' watches give no reading" below). Each gain is raised, never lowered, until the first
+sound of the quieter beat is as loud as in the default watch at gain 3.6. The quieter beat's
+unlock then stands 3.4 to 4.9 dB over the background, 3.9 in the middle, against 3.8 dB in the
+Omega's Safari capture. The app's own tests keep their quiet watches, which test the timing of
+faint watches. `--as-tested` builds them as the tests do.
+
 These watches come from the app's own simulator, `js/audio/simulator.js`, which places each
 beat's sounds at fixed times. Every tock sound moves by the set offset, so that offset is the
 true beat error. No balance is behind them, so the time from the first sound to the last loud
 one, 7 ms for the default sounds, is checked instead of an amplitude. The lift angle is chosen
 per beat rate to make that time read 280°, so that the gate on believable amplitudes passes.
+
+Louder and 60 s long, lined up as by default; the plain average gave the same verdicts:
+
+| Outcome on the 36 watches | Watches |
+| --- | --- |
+| shown and wrong | 2: the 36,000 vph watches told 18,000 vph read 0.01 and 0.03 ms against 0.50 |
+| shown and right | 23, none more than 0.05 ms off, stated to ±0.01 to ±0.07 ms |
+| refused, rightly | 1: the two-sound co-axial, whose beats share no first sound |
+| held back, would have been wrong | 6: 3 basket cases and 1, 2 and 5 ms jitter, by their scatter |
+| nothing | 4: the two 18,000 vph watches told 36,000, which the app could not time; the blurred three sounds, whose first sound is 2.0 ms before its lock; and no watch |
+
+The two wrong readings come from the beat rate the test gives. Told 18,000 vph, the app takes
+every other beat of a 36,000 vph watch, so its ticks and its tocks are both the watch's ticks:
+the gap between them is not the beat error, and the true tocks are never timed. The app's own
+Swiss-lever reading has the same fault (see Limits). A beat halfway between the app's beats
+would give it away.
+
+As the tests make them (`--as-tested`), with the plain average:
 
 | Outcome on the 36 watches | Watches |
 | --- | --- |
@@ -380,12 +406,8 @@ per beat rate to make that time read 280°, so that the gate on believable ampli
 | held back, would have been wrong | 6: 3 basket cases, 1 and 5 ms jitter, a run with a 2 s gap |
 | nothing to measure | 21 |
 
-The simulator's unlock is a quarter as loud as the drop. After 30 to 75 s of beats it stands
-7 to 11 dB over the noise of the average, mostly 8 to 9, which is at the edge of what the
-prototype can find: it often found the unlock in one beat only, and refused rather than pair
-unlike sounds. Where it found both, 6 to 87% of the resamples did not, against a limit of 5%.
-The Omega capture's unlock stands 12.6 dB over the noise of the average. The two Safari captures
-read as above. The three Voice Memos recordings and the capture with no watch give nothing.
+The two Safari captures read as above. The three Voice Memos recordings and the capture with no
+watch give nothing.
 
 The run also found a flaw, fixed here. Resampling redrew the averaged beats but kept the gap
 between the tick and tock timestamp lines fixed. On a regular watch that gap is known to about
@@ -403,6 +425,55 @@ with its sound:
 The 0.1 ms gate now holds each of these back by its own uncertainty. Before, they were held back
 only because the sounds were not found consistently. The regular watches and the two Safari
 captures read as before, with uncertainties within 0.01 ms of what they were.
+
+### Why the unit tests' watches give no reading
+
+They are too quiet for their length, not beyond the method. The simulator's unlock is a quarter
+as loud as the drop. Measured at the unlock's own place in the average, in the band where it
+stands highest, so that noise cannot lift the figure as a maximum would, the weaker beat's
+unlock of the 28 watches with the simulator's usual sounds stands 0.3 to 1.9 dB over the
+background, 1.2 dB in the middle:
+
+| Unlock of the weaker beat | Over the background | Over the noise of the average |
+| --- | --- | --- |
+| The unit tests' watches, 20 to 75 s | 0.3 to 1.9 dB | at most 10.2 dB, 6.3 in the middle |
+| `balance.js` co-axial set to 2 dB, 60 s: nothing shown | 1.7 dB | 9.3 dB |
+| `balance.js` co-axial at its default 5 dB, 60 s | 3.1 dB | 11.5 dB |
+| Omega 3861 Safari capture, 60 s | 3.8 dB | 12.5 dB |
+| ETA 2836-2 Safari capture, 30 s | 11.8 dB | 23.2 dB |
+
+`balance.js` sets a sound's level within its own band; the app's bands and smoothing read it
+lower. Readings came when the weaker unlock stood about 10 to 12 dB over the noise of the
+average, which grows by 5 dB for every tenfold more beats. So showing nothing for these watches
+is right: in 20 to 75 s their beats cannot place the unlock to 0.1 ms. With more beats they
+read. Watches with the simulator's usual sounds at the loudness most tests use (gain 1.6, true
+beat error 0.40 ms), two of each length:
+
+| Length | Lined up | Plain average |
+| --- | --- | --- |
+| 60 s | held (0.53 ± 0.17 ms); nothing | held (0.39 ± 0.04 ms); nothing |
+| 120 s | 0.28 ± 0.08 ms shown; held | 0.34 ± 0.04 ms shown; held |
+| 240 s | 0.33 ± 0.08 and 0.34 ± 0.07 ms shown | 0.39 ± 0.03 and 0.33 ± 0.03 ms shown |
+
+At gain 1.0, 240 s gave one reading of two, 0.40 ± 0.09 ms lined up. Eight more watches of
+120 s at gain 1.6, read without resampling, show no bias: the beat error came out 0.01 ms low
+on average lined up, scattering by 0.07 ms, and 0.00 plain, scattering by 0.05, close to the
+±0.08 and ±0.04 the resampling states. But with the gate at 0.1 ms of scatter, a reading shown
+at that edge can be more than 0.1 ms off, as the 0.28 ms one is. Lining up widened the scatter
+by half again where nothing changes. The time from unlock to drop read 0.05 to 0.08 ms long on
+the app's timestamps and 0.02 to 0.04 ms long on the true beat times, so the amplitudes read 2°
+to 5° low: the quieter beat's timestamps jitter more, and the jitter smears its unlock early. A
+240 s reading took 4 to 6 minutes lined up, in Python on a computer, and about 1 minute plain.
+
+Tried and not kept: a resample carries the recording's noise twice over, about 1.5 dB more than
+the whole set, so a sound the whole set finds 7 to 8 dB over the noise of the average is lost in
+about half the resamples. Holding each resample to the whole set's threshold, and timing the
+sounds where the whole set found them, cut the failing resamples (`lever 28800` from 79% to
+5%) and showed more of the 46 simulated watches: beat error in 23 instead of 19 lined up and 39
+instead of 33 plain, amplitude in 37 instead of 30 and 40 instead of 33. But it showed a 20 s
+co-axial 0.11 ms off at ±0.04 and, plain, the run with a 2 s gap 0.11 ms off at ±0.06. Once the
+sound is pinned, a noise bump on its edge in the whole average moves every resample alike, so
+the stated scatter can be too small; the fresh search in each resample is what held these back.
 
 ## Limits
 
@@ -432,8 +503,17 @@ captures read as before, with uncertainties within 0.01 ms of what they were.
   beats up again".
 - The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
   a good reading back.
-- It is not yet a general measure. On the simulated watches of the unit tests it showed a
-  reading for 1 of the 35 that tick, and nothing for any irregular watch, whose uncertainty
-  came to 0.25 to 0.89 ms.
+- A watch with a faint unlock needs minutes, not seconds. The unit tests' watches, whose weaker
+  unlock stands 0.3 to 1.9 dB over the background, gave a reading for 1 of the 35 that tick in
+  20 to 75 s; watches like them read after 2 to 4 minutes (see "Why the unit tests' watches give
+  no reading"). At that edge a shown beat error can be more than 0.1 ms off. Milestone 8 keeps
+  60 s of beats, as decided on 18 November, so such a watch shows a dash. Nothing is shown for an
+  irregular watch, whose uncertainty came to 0.25 to 0.89 ms.
+- A beat rate given at half the watch's own pairs the watch's ticks with its ticks. On the
+  36,000 vph watches told 18,000 vph the prototype showed 0.01 and 0.03 ms against a true
+  0.50 ms. The app's live pipeline does the same in Swiss-lever mode: on those watches run for
+  60 s it showed a beat error of about 0.01 ms or less in 20 to 32 of its readings, at the tests'
+  gain of 1.4 and louder. Its test runs 40 s, too short for the watch to give a reading. A port
+  needs to look for a beat halfway between the app's beats.
 - One watch and one capture. The averaging itself runs on a whole recording, in Python, even
   when the beat times come from the real-time pipeline.
