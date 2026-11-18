@@ -68,6 +68,28 @@ truth matches, since the app's analysis is the slow part.
 | `track.py` | the amplitude followed over time with a slow Kalman filter |
 | `suite.mjs` | the unit tests' simulated watches as recordings, with their truth |
 | `figure.py` | the first figure in the write-up |
+| `bias/` | where the swing bias comes from, against the true time of every beat's sounds |
+
+The scripts in `bias/` check one simulated watch against the true time of each beat's unlock and
+lock, which `beats.mjs` keeps only as averages. `truth.mjs` writes those times for the watch that
+`beats.mjs sim` makes with the same overrides. `where.py` sets the sounds found in the plain
+average against the true times of the beats that went into it, at the half-rise the method uses,
+at later points on the rising edge and at the peak. `realign.py` reads the watch with the plain
+average and lined up again, and scores the reference and the 10 s blocks after it against the
+truth; given a recording and no truth, it prints each block's amplitude both ways. For the lever
+swinging ±30° once a minute, the first watch of `track.py swings`:
+
+```
+O='{"amplitude":285,"amplitudeSwing":{"base":285,"swing":30,"period":60},"seed":91,"seconds":180}'
+node tools/prototype/coaxial/beats.mjs sim lever /tmp/swing30 "$O"     # about two minutes
+node tools/prototype/coaxial/bias/truth.mjs lever /tmp/swing30 "$O"
+python3 -I tools/prototype/coaxial/bias/where.py lever /tmp/swing30.wav /tmp/swing30.stream.json /tmp/swing30.events.json
+python3 -I tools/prototype/coaxial/bias/realign.py lever /tmp/swing30.wav /tmp/swing30.stream.json /tmp/swing30.events.json
+```
+
+`where.py` then finds the unlock 0.53 ms before its true mean and the amplitude 20.5° low.
+`realign.py` reads the reference at 261.9° plain and 283.4° lined up again, against a true
+282.4°, and the 11 blocks after it 30.5° and 2.1° rms off.
 
 The simulated watch is `tests/helpers/balance.js`: a balance swinging as a sine, with the unlock
 and the lock at set angles, so the beat error and the amplitude are known. `tests/balance.test.js`
@@ -257,7 +279,7 @@ references read 280.7° to 282.9° on the co-axial and 284.0° to 284.7° on the
   it inherits the error. The co-axial reads 1° to 2° high at ±15° and 11° to 14° high at ±30°.
   The 5 s swing does the same as the 60 s one, so what matters is the spread of amplitudes among
   the beats averaged, not how fast it changes; the ±10° swing above cost the lever about 2°. The
-  cause, checked against the simulator's true unlock and lock times: the app's timestamp
+  cause, checked against the simulator's true unlock and lock times (`bias/`): the app's timestamp
   follows a beat's loudest sound, so a sound whose place moves with the lift time is smeared in
   the average, and the point where a smeared sound is half risen lands early. In the lever that
   is the unlock: at ±15° it lands 0.07 ms before its true mean where a steady watch's lands
