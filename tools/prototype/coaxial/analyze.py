@@ -1,10 +1,11 @@
 """Beat error and amplitude of one recording from the sounds inside each beat.
 
 usage: python3 -I tools/prototype/coaxial/analyze.py <file.wav> <prefix>.beats.json <lift angle>
-           [--app] [--from seconds --to seconds] [--resamples n] [--plot out.png]
+           [--app] [--from seconds --to seconds] [--resamples n] [--reline] [--plot out.png]
 
 <prefix>.beats.json comes from beats.mjs. --app works on envelopes made the way the app's
-filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate.
+filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. --reline
+lines the beats up again before averaging (see events.measure).
 """
 import argparse
 import os
@@ -22,6 +23,7 @@ p.add_argument("--app", action="store_true")
 p.add_argument("--from", dest="t_from", type=float)
 p.add_argument("--to", dest="t_to", type=float)
 p.add_argument("--resamples", type=int, default=200)
+p.add_argument("--reline", action="store_true")
 p.add_argument("--plot")
 a = p.parse_args()
 
@@ -29,9 +31,9 @@ fs, x = ev.load_wav(a.wav)
 B = ev.load_beats(a.beats)
 if a.app:
     rows, fe = ev.app_rows(x, fs)
-    o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25})
+    o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25}, reline=a.reline)
 else:
-    o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to)
+    o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=a.reline)
 print("\n".join(ev.describe(o)))
 
 if a.plot:

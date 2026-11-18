@@ -15,22 +15,28 @@ block's beats. A one-state Kalman filter then follows that time from block to bl
     measurement  z_k = t_k + v,     v ~ N(0, R_k), R_k from resampling block k
 
 and the amplitude is the usual formula applied to t_k, shown only while its own uncertainty is
-5 degrees or less. A block further than 3 standard deviations from the filter is left out, but when two measured blocks in a row are both left out
-and agree with each other, the filter starts again from them: a sudden change is believed once
-it has been seen twice. `recording` and `sims` also print the filter without that restart, as
-it was before, for comparison.
+5 degrees or less. A block further than 3 standard deviations from the filter is left out, but
+when two measured blocks in a row are both left out and agree with each other, the filter
+starts again from them: a sudden change is believed once it has been seen twice. `recording`
+and `sims` also print the filter without that restart, as it was before, for comparison.
 
-usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest]
-       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest]
-       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever]
-       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [runs] [seconds]
+With `relined` the reference's beats are lined up again before averaging (Reference.reline),
+so that a swing in amplitude during the reference does not smear the sound whose place moves
+with it. `sims`, `swings` and `steady` then run both ways on every watch; `sims` and `swings`
+also read each watch whole both ways, as analyze.py would with --reline.
+
+usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest] [relined]
+       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest] [relined]
+       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever] [relined] [seeds...]
+       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [relined] [runs] [seconds]
        python3 -I tools/prototype/coaxial/track.py figure <sims output> <recording output> out.png
 
 `recording` reads <prefix>.stream.json from `beats.mjs stream`. `sims` makes simulated watches
 whose amplitude changes in a known way, co-axial (36° lift angle, 21,600 vph) unless `lever`
 (50°, 28,800 vph) is given, and takes about half an hour. `strongest` gives the earlier search,
-which took the strongest match. `figure` draws the
-tracks from what the other two printed, saved to files.
+which took the strongest match. `figure` draws the tracks from what the other two printed, saved
+to files. A watch an earlier run left in the directory is not timed again: only its audio is
+made again (`beats.mjs synth`), and the truth it gives is checked against the earlier run's.
 """
 import json
 import os
@@ -42,9 +48,6 @@ sys.path.insert(0, HERE)
 import numpy as np
 import events as ev
 
-SMOOTH_MS = 0.15      # as find_sounds smooths a portrait
-MAX_SHIFT_MS = 1.5    # furthest a sound is looked for from its place in the reference
-STRONG = 0.5          # a match counts if it is at least this share of the reference against itself
 MIN_BEATS = 10        # fewest beats of each type in a block
 GATE = 3.0            # a block further than this many standard deviations from the filter is left out
 DRIFT_DEG = 2.0       # how far the amplitude may wander in a second, the filter's default: at 1, it
@@ -54,8 +57,10 @@ DASH_DEG = 5.0        # a dash rather than the filter's value while its own unce
                       # measurement is not shown
 
 
-def smoothed(c, tms):
-    return ev.smooth(c, max(1, int(round(SMOOTH_MS / (tms[1] - tms[0])))))
+# Matching a sound against a template, shared with events.py's lining up again.
+smoothed = ev.matched
+shift_of = ev.shift_of
+MAX_SHIFT_MS, STRONG = ev.MAX_SHIFT_MS, ev.STRONG
 
 
 def portraits(S, tms, idx, base_until, weights=None):
@@ -66,40 +71,10 @@ def portraits(S, tms, idx, base_until, weights=None):
     return [ev.portrait(m, weights) for m in means], weights
 
 
-def shift_of(ref, blk, tms, lo, hi, nearest=True):
-    """How much later, in milliseconds, a sound comes in `blk` than in `ref`, looked for within
-    MAX_SHIFT_MS. The match at each shift is the product of the reference's stretch from lo to
-    hi and the block's portrait, each with its mean taken off: a matched filter, which suits a
-    faint sound in noise. With `nearest`, of the peaks in the match at least STRONG times the
-    reference's product with itself, the one nearest no shift is taken, so that a louder sound
-    reaching into the search cannot win; without, the largest. None when no peak qualifies, or
-    when the largest is at the edge of the search."""
-    dt = tms[1] - tms[0]
-    i0, i1 = np.searchsorted(tms, lo), np.searchsorted(tms, hi)
-    g = ref[i0:i1] - ref[i0:i1].mean()
-    n = int(round(MAX_SHIFT_MS / dt))
-    if i0 - n < 0 or i1 + n > len(blk):
-        return None
-    score = np.array([np.dot(g, blk[i0 + k:i1 + k] - blk[i0 + k:i1 + k].mean()) for k in range(-n, n + 1)])
-    if nearest:
-        floor = STRONG * np.dot(g, g)
-        peaks = [k for k in range(1, len(score) - 1) if score[k] >= max(score[k - 1], score[k + 1], floor)]
-        if not peaks:
-            return None
-        k = min(peaks, key=lambda k: abs(k - n))
-    else:
-        k = int(np.argmax(score))
-        if k == 0 or k == len(score) - 1:
-            return None
-    a, b, c = score[k - 1], score[k], score[k + 1]
-    frac = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) != 0 else 0.0
-    return (k - n + frac) * dt
-
-
 class Reference:
     """Where the unlock and the lock are in the averaged beat of a reference stretch."""
 
-    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True):
+    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline=False):
         self.S, self.times, self.tms, self.base_until = S, times, tms, base_until
         # Take the strong match nearest each sound's place (True) or the strongest (False, the
         # earlier search).
@@ -108,13 +83,50 @@ class Reference:
         raw, self.weights = portraits(S, tms, idx, base_until)
         sounds = [ev.find_sounds(c, tms, base_until)[0] for c in raw]
         self.pair, self.why = ev.pair_beats(sounds[0], sounds[1], bph, lift)
-        self.curves = [smoothed(c, tms) for c in raw]
         self.beats = [len(i) for i in idx]
+        self.relined = None
         if self.pair is not None:
             self.lift = [self.pair["lift0"], self.pair["lift1"]]
-            # The stretch of the reference that is matched: from before a sound starts to after
-            # it is loudest.
-            self.windows = [[(self.pair[k + str(j)]["onset_ms"] - 0.5, self.pair[k + str(j)]["peak_ms"] + 0.5) for k in ("f", "l")] for j in (0, 1)]
+            # The reference stretch's own reading of each beat type's lift
+            self.stretch_lift = list(self.lift)
+            # Each sound is matched against a template of it: the stretch of the reference from
+            # before the sound starts to after it is loudest.
+            self.templates = [[smoothed(c, tms)] * 2 for c in raw]
+            self.windows = [ev.windows_of(self.pair, j) for j in (0, 1)]
+            if reline:
+                self.reline(idx, until)
+
+    def reline(self, idx, until):
+        """Line the reference's beats up again before averaging, as events.measure does with
+        reline: blocks within the reference say how far each sound has moved, each beat is
+        shifted by that once for the unlock and once for the lock, and the two lined-up averages
+        become the templates. Blocks are then measured against those, and the lift where the
+        shifts are zero comes from them too, so a block's lift is that plus its own shifts."""
+        S = [[M[idx[j]] for M in self.S[j]] for j in (0, 1)]
+        times = [self.times[j][idx[j]] for j in (0, 1)]
+        blocks = ev.block_shifts(S, times, self.tms, self.base_until, self.weights, self.templates, self.windows, until=until)
+        shifts = ev.beat_shifts(blocks, times)
+        if shifts is None:
+            self.relined = "not lined up again: a sound was placed in fewer than two blocks"
+            return
+        templates, windows, lift = [], [], []
+        for j in (0, 1):
+            found = []
+            for k, name in ((0, "f"), (1, "l")):
+                c = ev.portrait(ev.band_means(ev.shift_rows(S[j], self.tms, shifts[j][k]), self.tms, None, self.base_until), self.weights)
+                sounds, _ = ev.find_sounds(c, self.tms, self.base_until)
+                near = self.pair[name + str(j)]["onset_ms"]
+                e = min(sounds, key=lambda e: abs(e["onset_ms"] - near)) if sounds else None
+                if e is None or abs(e["onset_ms"] - near) > ev.RELINE_NEAR_MS:
+                    self.relined = "not lined up again: a sound was lost in the lined-up average"
+                    return
+                found.append((c, e))
+            templates.append([smoothed(c, self.tms) for c, _ in found])
+            windows.append([(e["onset_ms"] - 0.5, e["peak_ms"] + 0.5) for _, e in found])
+            lift.append(found[1][1]["onset_ms"] - found[0][1]["onset_ms"])
+        self.templates, self.windows, self.lift = templates, windows, lift
+        self.stretch_lift = [lift[j] + float(np.mean(shifts[j][1] - shifts[j][0])) for j in (0, 1)]
+        self.relined = "lined up again on %d blocks" % len(blocks[0][0])
 
     def block(self, idx):
         """Mean time from unlock to lock of the beats in idx (one index array per beat type), or
@@ -123,8 +135,8 @@ class Reference:
         lifts = []
         for j in (0, 1):
             c = smoothed(raw[j], self.tms)
-            su = shift_of(self.curves[j], c, self.tms, *self.windows[j][0], self.nearest)
-            sl = shift_of(self.curves[j], c, self.tms, *self.windows[j][1], self.nearest)
+            su = shift_of(self.templates[j][0], c, self.tms, *self.windows[j][0], self.nearest)
+            sl = shift_of(self.templates[j][1], c, self.tms, *self.windows[j][1], self.nearest)
             if su is None or sl is None:
                 return None
             lifts.append(self.lift[j] + sl - su)
@@ -212,11 +224,11 @@ def true_amplitude(spec, constant, t):
     return np.full(t.shape, constant)
 
 
-def prepare(wav, stream_json, lift, reference_seconds, nearest=True):
+def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline=False):
     fs, x = ev.load_wav(wav)
     B = ev.load_beats(stream_json)
     o = ev.measure(x, fs, B, lift, 0)
-    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest), o
+    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest, reline), o
 
 
 def filter_sd_deg(row, amp):
@@ -246,14 +258,15 @@ def show(rows, bph, lift, truth=None):
         print(line)
 
 
-def recording(wav, prefix, lift, nearest=True):
+def recording(wav, prefix, lift, nearest=True, reline=False):
     fs, x = ev.load_wav(wav)
     seconds = len(x) / fs
-    ref, o = prepare(wav, prefix + ".stream.json", lift, seconds + 1, nearest)
+    ref, o = prepare(wav, prefix + ".stream.json", lift, seconds + 1, nearest, reline)
     if ref.pair is None:
         print("no reference: " + ref.why)
         return
-    print("reference: all %d+%d beats, unlock to lock %.2f and %.2f ms, amplitude %.0f degrees" % (ref.beats[0], ref.beats[1], ref.lift[0], ref.lift[1], ev.amplitude(lift, o["bph"], 0.5 * sum(ref.lift))))
+    print("reference: all %d+%d beats, unlock to lock %.2f and %.2f ms, amplitude %.0f degrees%s" % (
+        ref.beats[0], ref.beats[1], ref.stretch_lift[0], ref.stretch_lift[1], ev.amplitude(lift, o["bph"], 0.5 * sum(ref.stretch_lift)), "; " + ref.relined if ref.relined else ""))
     for block_seconds in (10, 15):
         print("blocks of %d s, amplitude allowed to wander by %g degrees in a second; * = left out by the filter's gate, r = the filter started again:" % (block_seconds, DRIFT_DEG))
         show(follow(ref, block_seconds, DRIFT_DEG, o["bph"], lift), o["bph"], lift)
@@ -261,17 +274,62 @@ def recording(wav, prefix, lift, nearest=True):
     show(follow(ref, 10, DRIFT_DEG, o["bph"], lift, restart=False), o["bph"], lift)
 
 
-def simulate(outdir, kind, name, over, seed, seconds, reference_seconds, nearest=True):
-    """Make one simulated watch with beats.mjs and find its reference. Returns the reference, the
-    beat rate, the lift angle and how the true amplitude changes with time. Both kinds start from
-    the same 285 degrees, so that their results compare directly."""
+def simulate(outdir, kind, name, over, seed, seconds):
+    """Make one simulated watch with beats.mjs. When an earlier run of the same watch left its
+    timestamps in outdir, only the audio is made again (`beats.mjs synth`, under a second): the
+    same overrides and seed make the same watch, and the app's analysis is the slow part. Both
+    kinds start from the same 285 degrees, so that their results compare directly. Returns what
+    the analyses below need: the plain whole-recording measure, the band envelopes, the beats,
+    the beat rate, the lift angle and the truth."""
     lift = 36 if kind == "coaxial" else 50
     prefix = os.path.join(outdir, ("%s seed %d" % (name, seed)).replace(" ", "_").replace(",", ""))
-    subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "sim", kind, prefix, json.dumps(dict({"amplitude": 285}, **over, seed=seed, seconds=seconds))], capture_output=True, text=True, check=True)
-    spec = json.load(open(prefix + ".truth.json"))["amplitudeSpec"]
-    ref, o = prepare(prefix + ".wav", prefix + ".stream.json", lift, reference_seconds, nearest)
+    args = json.dumps(dict({"amplitude": 285}, **over, seed=seed, seconds=seconds))
+    script = os.path.join(HERE, "beats.mjs")
+    if os.path.exists(prefix + ".stream.json") and os.path.exists(prefix + ".truth.json"):
+        before = json.load(open(prefix + ".truth.json"))
+        subprocess.run(["node", script, "synth", kind, prefix, args], capture_output=True, text=True, check=True)
+        if json.load(open(prefix + ".truth.json")) != before:
+            raise RuntimeError(prefix + ": the watch made again is not the one the earlier run timed")
+    else:
+        subprocess.run(["node", script, "sim", kind, prefix, args], capture_output=True, text=True, check=True)
+    fs, x = ev.load_wav(prefix + ".wav")
     os.remove(prefix + ".wav")
-    return ref, o["bph"], lift, spec
+    rows = ev.band_rows(x, fs)
+    B = ev.load_beats(prefix + ".stream.json")
+    o = ev.measure(None, fs, B, lift, 0, rows=rows)
+    truth = json.load(open(prefix + ".truth.json"))
+    return {"o": o, "rows": rows, "fs": fs, "B": B, "whole": ev.load_beats(prefix + ".beats.json"), "bph": o["bph"], "lift": lift, "truth": truth, "spec": truth["amplitudeSpec"]}
+
+
+def reference(sim, reference_seconds, nearest=True, reline=False):
+    o = sim["o"]
+    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], sim["lift"], reference_seconds, nearest, reline)
+
+
+# The two ways of averaging that `sims`, `swings` and `steady` compare when given `relined`.
+WAYS = {False: "as now", True: "lined up again"}
+
+
+def whole(sim, reline, resamples=100):
+    """The whole-recording reading, as analyze.py gives it from the app's whole-recording
+    timestamps, against the truth: amplitude error, beat error error, and whether each would be
+    shown. None when there is no reading."""
+    o = ev.measure(None, sim["fs"], sim["whole"], sim["lift"], resamples, rows=sim["rows"], reline=reline)
+    r = o["reading"]
+    if r is None or "sd" not in o:
+        return None
+    t = sim["truth"]
+    true_amp = ev.amplitude(sim["lift"], sim["bph"], 0.5 * (t["liftMs"][0] + t["liftMs"][1]))
+    return {"amp": o["amp"] - true_amp, "be": abs(r["first_gap"]) - abs(t["unlockGapMs"]), "show_amp": o["show_amplitude"], "show_be": o["show_beat_error"]}
+
+
+def whole_summary(label, got, runs):
+    """One line on the whole-recording readings of several watches."""
+    got = [g for g in got if g]
+    amp = [g["amp"] for g in got if g["show_amp"]]
+    be = [g["be"] for g in got if g["show_be"]]
+    return "%s whole recording: amplitude shown in %d of %d, error %s; beat error shown in %d, error %s" % (
+        label, len(amp), runs, ("%+.1f to %+.1f" % (min(amp), max(amp))) if amp else "-", len(be), ("%+.2f to %+.2f ms" % (min(be), max(be))) if be else "-")
 
 
 def block_truth(spec, t, block_seconds):
@@ -288,126 +346,140 @@ def swing_fit(t, v, period):
     return float(np.hypot(c[1], c[2])), float(-phase / w)
 
 
-def swings(outdir, kind="coaxial"):
+def swings(outdir, kind="coaxial", ways=(False,), seeds=(91, 92, 93, 94)):
     """Larger and faster swings than `sims` tries. Witschi's training document says the meshing of
     the gears can move a watch's amplitude by up to 30 degrees, and that this is normal. In most
     movements the wheel that carries the seconds hand turns once a minute, hence the 60 s swings;
     the 5 s swing is faster than a block. Errors are against the true amplitude averaged over each
-    block, and the share of the swing kept is from fitting a sine of the known period."""
+    block, and the share of the swing kept is from fitting a sine of the known period. With both
+    ways, each watch is also read whole, as analyze.py reads a recording, against its truth."""
     os.makedirs(outdir, exist_ok=True)
     reference_seconds, block_seconds = 60, 10
-    drifts = (0.5, 1.0, 2.0, 4.0)
+    drifts = (1.0, 2.0, 4.0)
     cases = [
         ("swinging 285 +- 15, every 60 s", 15, 60),
         ("swinging 285 +- 30, every 60 s", 30, 60),
         ("swinging 285 +- 15, every 5 s", 15, 5),
     ]
-    summary = {}
+    summary, wholes = {}, {}
     for name, swing, period in cases:
-        for seed in (91, 92):
-            ref, bph, lift, spec = simulate(outdir, kind, name, {"amplitudeSwing": {"base": 285, "swing": swing, "period": period}}, seed, 180, reference_seconds)
-            if ref.pair is None:
-                print("%s, seed %d: no reference: %s" % (name, seed, ref.why))
-                continue
+        for seed in seeds:
+            sim = simulate(outdir, kind, name, {"amplitudeSwing": {"base": 285, "swing": swing, "period": period}}, seed, 180)
+            bph, lift, spec = sim["bph"], sim["lift"], sim["spec"]
             amp = lambda t: ev.amplitude(lift, bph, t)
             truth = lambda t: block_truth(spec, t, block_seconds)
-            print("%s, seed %d: reference from the first %d s (%d+%d beats): %.0f degrees" % (name, seed, reference_seconds, ref.beats[0], ref.beats[1], amp(0.5 * sum(ref.lift))))
-            blocks = measure_blocks(ref, block_seconds)
-            for drift in drifts:
-                rows = run_filter(ref, blocks, block_seconds, drift, bph, lift)
-                if drift in (1.0, 2.0):
-                    print("%s, seed %d, %.0f degrees a second (true = averaged over the block):" % (name, seed, drift))
-                    show(rows, bph, lift, truth)
-                later = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
-                measured = [r for r in later if r["z"] is not None]
-                s = summary.setdefault((name, drift), {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0, "kept": [], "lag": []})
-                s["block"] += [amp(r["z"]) - truth(r["t"]) for r in measured]
-                s["filter"] += [amp(r["state"]) - truth(r["t"]) for r in later]
-                # As an app would show it, with a dash while the filter is unsure.
-                s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if shown(r, amp)]
-                s["missing"] += len(later) - len(measured)
-                s["gated"] += sum(1 for r in measured if not r["used"])
-                s["restarts"] += sum(1 for r in rows if r["restarted"])
-                s["blocks"] += len(later)
-                if period >= 2 * block_seconds:
-                    t = np.array([r["t"] for r in later])
-                    seen, _ = swing_fit(t, np.array([truth(x) for x in t]), period)
-                    a_blocks, lag_blocks = swing_fit(np.array([r["t"] for r in measured]), np.array([amp(r["z"]) for r in measured]), period)
-                    a_filter, lag_filter = swing_fit(t, np.array([amp(r["state"]) for r in later]), period)
-                    s["kept"].append((seen / swing, a_blocks / swing, a_filter / swing))
-                    s["lag"].append((lag_blocks, lag_filter))
+            for way in ways:
+                label = "%s, seed %d, %s" % (name, seed, WAYS[way])
+                # 50 resamples rather than analyze.py's 200: enough to say shown or held back.
+                wholes.setdefault((name, way), []).append(whole(sim, way, 50) if len(ways) > 1 else None)
+                ref = reference(sim, reference_seconds, reline=way)
+                if ref.pair is None:
+                    print("%s: no reference: %s" % (label, ref.why))
+                    continue
+                print("%s: reference from the first %d s (%d+%d beats): %.1f degrees%s" % (label, reference_seconds, ref.beats[0], ref.beats[1], amp(0.5 * sum(ref.stretch_lift)), "; " + ref.relined if ref.relined else ""))
+                blocks = measure_blocks(ref, block_seconds)
+                for drift in drifts:
+                    rows = run_filter(ref, blocks, block_seconds, drift, bph, lift)
+                    if drift == DRIFT_DEG:
+                        print("%s, %.0f degrees a second (true = averaged over the block):" % (label, drift))
+                        show(rows, bph, lift, truth)
+                    later = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
+                    measured = [r for r in later if r["z"] is not None]
+                    s = summary.setdefault((name, way, drift), {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0, "kept": [], "lag": []})
+                    s["block"] += [amp(r["z"]) - truth(r["t"]) for r in measured]
+                    s["filter"] += [amp(r["state"]) - truth(r["t"]) for r in later]
+                    # As an app would show it, with a dash while the filter is unsure.
+                    s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if shown(r, amp)]
+                    s["missing"] += len(later) - len(measured)
+                    s["gated"] += sum(1 for r in measured if not r["used"])
+                    s["restarts"] += sum(1 for r in rows if r["restarted"])
+                    s["blocks"] += len(later)
+                    if period >= 2 * block_seconds and len(measured) >= 3:
+                        t = np.array([r["t"] for r in later])
+                        seen, _ = swing_fit(t, np.array([truth(x) for x in t]), period)
+                        a_blocks, lag_blocks = swing_fit(np.array([r["t"] for r in measured]), np.array([amp(r["z"]) for r in measured]), period)
+                        a_filter, lag_filter = swing_fit(t, np.array([amp(r["state"]) for r in later]), period)
+                        s["kept"].append((seen / swing, a_blocks / swing, a_filter / swing))
+                        s["lag"].append((lag_blocks, lag_filter))
     print()
     rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
-    for (name, drift), s in summary.items():
-        line = "%-32s %.1f deg/s: blocks rms %.1f, worst %.1f; filter rms %.1f, worst %.1f; shown within 5 degrees of uncertainty %d of %d, rms %.1f, worst %.1f; %d without a measurement, %d gated out, %d restarts" % (
-            name, drift, rms(s["block"]), max(np.abs(s["block"])), rms(s["filter"]), max(np.abs(s["filter"])), len(s["shown"]), s["blocks"], rms(s["shown"]),
-            max(np.abs(s["shown"])) if s["shown"] else float("nan"), s["missing"], s["gated"], s["restarts"])
+    worst = lambda v: float(np.max(np.abs(v))) if len(v) else float("nan")
+    for (name, way, drift), s in summary.items():
+        line = "%-32s %-14s %.1f deg/s: blocks rms %.1f, worst %.1f, mean %+.1f; filter rms %.1f, worst %.1f; shown within %g degrees of uncertainty %d of %d, rms %.1f, worst %.1f; %d without a measurement, %d gated out, %d restarts" % (
+            name, WAYS[way], drift, rms(s["block"]), worst(s["block"]), np.mean(s["block"]) if s["block"] else float("nan"), rms(s["filter"]), worst(s["filter"]),
+            DASH_DEG, len(s["shown"]), s["blocks"], rms(s["shown"]), worst(s["shown"]), s["missing"], s["gated"], s["restarts"])
         if s["kept"]:
             k = np.mean(s["kept"], axis=0)
             lag = np.mean(s["lag"], axis=0)
             line += "; share of the swing kept: by averaging over a block %.2f, blocks %.2f, filter %.2f; filter %.1f s behind the blocks" % (k[0], k[1], k[2], lag[1] - lag[0])
         print(line)
+    if len(ways) > 1:
+        print()
+        for (name, way), got in wholes.items():
+            print(whole_summary("%-32s %-14s" % (name, WAYS[way]), got, len(got)))
 
 
-def steady(outdir, kind="coaxial", runs=16, seconds=180):
+def steady(outdir, kind="coaxial", runs=16, seconds=180, ways=(False,)):
     """How often the restart fires when nothing changes: many runs at a steady 285 degrees, where
-    every restart is a false one. Counts restarts and gated blocks at each setting, and how far the
-    filter strays. Many short runs rather than a few long ones, because making a simulated watch
-    takes far longer than its length grows: a 180 s one takes about 2 minutes, a 600 s one over
-    15."""
+    every restart is a false one. Counts restarts and gated blocks at each setting, how far the
+    filter strays, and how often an app would show a dash. Many short runs rather than a few long
+    ones, because making a simulated watch takes far longer than its length grows: a 180 s one
+    takes about 2 minutes, a 600 s one over 15."""
     os.makedirs(outdir, exist_ok=True)
     reference_seconds, block_seconds = 60, 10
     drifts = (0.5, 1.0, 2.0, 4.0)
-    summary = {d: {"blocks": 0, "measured": 0, "gated": 0, "restarts": 0, "filter": [], "shown": [], "after": []} for d in drifts}
-    block_err, block_z = [], []
+    summary = {(w, d): {"blocks": 0, "measured": 0, "gated": 0, "restarts": 0, "filter": [], "shown": [], "after": []} for w in ways for d in drifts}
+    block_err = {w: [] for w in ways}
+    block_z = {w: [] for w in ways}
     for seed in range(101, 101 + runs):
-        ref, bph, lift, spec = simulate(outdir, kind, "steady 285 for %d s" % seconds, {}, seed, seconds, reference_seconds)
-        if ref.pair is None:
-            print("seed %d: no reference: %s" % (seed, ref.why))
-            continue
+        sim = simulate(outdir, kind, "steady 285 for %d s" % seconds, {}, seed, seconds)
+        bph, lift = sim["bph"], sim["lift"]
         amp = lambda t: ev.amplitude(lift, bph, t)
-        blocks = measure_blocks(ref, block_seconds)
-        later = [b for b in blocks if b["t"] > reference_seconds and b["z"] is not None]
-        # Each block's error, and that error in units of its own scatter under resampling.
-        block_err += [amp(b["z"]) - 285.0 for b in later]
-        t_ref = 0.5 * sum(ref.lift)
-        block_z += [(b["z"] - t_ref) / b["sd"] for b in later]
-        line = "seed %d: reference %.1f degrees, %d blocks after it, %d measured" % (seed, amp(t_ref), sum(1 for b in blocks if b["t"] > reference_seconds), len(later))
-        for drift in drifts:
-            rows = run_filter(ref, blocks, block_seconds, drift, bph, lift)
-            scored = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
-            s = summary[drift]
-            s["blocks"] += len(scored)
-            s["measured"] += sum(1 for r in scored if r["z"] is not None)
-            s["gated"] += sum(1 for r in scored if r["z"] is not None and not r["used"])
-            s["filter"] += [amp(r["state"]) - 285.0 for r in scored]
-            s["shown"] += [amp(r["state"]) - 285.0 for r in scored if shown(r, amp)]
-            for i, r in enumerate(rows):
-                if r["restarted"]:
-                    s["restarts"] += 1
-                    s["after"] += [amp(x["state"]) - 285.0 for x in rows[i:i + 3]]
-            line += "; %.1f deg/s: %d gated, %d restarts" % (drift, sum(1 for r in scored if r["z"] is not None and not r["used"]), sum(1 for r in rows if r["restarted"]))
-        print(line)
+        for way in ways:
+            ref = reference(sim, reference_seconds, reline=way)
+            if ref.pair is None:
+                print("seed %d, %s: no reference: %s" % (seed, WAYS[way], ref.why))
+                continue
+            blocks = measure_blocks(ref, block_seconds)
+            later = [b for b in blocks if b["t"] > reference_seconds and b["z"] is not None]
+            # Each block's error, and that error in units of its own scatter under resampling.
+            block_err[way] += [amp(b["z"]) - 285.0 for b in later]
+            t_ref = 0.5 * sum(ref.stretch_lift)
+            block_z[way] += [(b["z"] - t_ref) / b["sd"] for b in later]
+            line = "seed %d, %s: reference %.1f degrees, %d blocks after it, %d measured" % (seed, WAYS[way], amp(0.5 * sum(ref.stretch_lift)), sum(1 for b in blocks if b["t"] > reference_seconds), len(later))
+            for drift in drifts:
+                rows = run_filter(ref, blocks, block_seconds, drift, bph, lift)
+                scored = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
+                s = summary[(way, drift)]
+                s["blocks"] += len(scored)
+                s["measured"] += sum(1 for r in scored if r["z"] is not None)
+                s["gated"] += sum(1 for r in scored if r["z"] is not None and not r["used"])
+                s["filter"] += [amp(r["state"]) - 285.0 for r in scored]
+                s["shown"] += [amp(r["state"]) - 285.0 for r in scored if shown(r, amp)]
+                for i, r in enumerate(rows):
+                    if r["restarted"]:
+                        s["restarts"] += 1
+                        s["after"] += [amp(x["state"]) - 285.0 for x in rows[i:i + 3]]
+                line += "; %.1f deg/s: %d gated, %d restarts" % (drift, sum(1 for r in scored if r["z"] is not None and not r["used"]), sum(1 for r in rows if r["restarted"]))
+            print(line)
     print()
     rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
-    block_z = np.abs(np.array(block_z))
-    print("blocks: %d measured, error rms %.1f, worst %.1f degrees; beyond 2, 3 and 4 times their own scatter: %d, %d, %d" % (
-        len(block_err), rms(block_err), max(np.abs(block_err)), (block_z > 2).sum(), (block_z > 3).sum(), (block_z > 4).sum()))
-    for drift, s in summary.items():
+    for way in ways:
+        z = np.abs(np.array(block_z[way]))
+        print("%s blocks: %d measured, error rms %.1f, worst %.1f degrees; beyond 2, 3 and 4 times their own scatter: %d, %d, %d" % (
+            WAYS[way], len(block_err[way]), rms(block_err[way]), max(np.abs(block_err[way])), (z > 2).sum(), (z > 3).sum(), (z > 4).sum()))
+    for (way, drift), s in summary.items():
         # With none seen in n blocks, the rate is below 3/n with 95% confidence.
         bound = " (so fewer than 1 in %d blocks, with 95%% confidence)" % (s["measured"] // 3) if s["restarts"] == 0 else ""
-        print("%.1f deg/s: %d blocks scored, %d measured, %d gated out, %d restarts%s; filter rms %.1f, worst %.1f degrees; shown within %g degrees of uncertainty %d, rms %.1f, worst %.1f%s" % (
-            drift, s["blocks"], s["measured"], s["gated"], s["restarts"], bound, rms(s["filter"]), max(np.abs(s["filter"])),
+        print("%s, %.1f deg/s: %d blocks scored, %d measured, %d gated out, %d restarts%s; filter rms %.1f, worst %.1f degrees; shown within %g degrees of uncertainty %d, rms %.1f, worst %.1f%s" % (
+            WAYS[way], drift, s["blocks"], s["measured"], s["gated"], s["restarts"], bound, rms(s["filter"]), max(np.abs(s["filter"])),
             DASH_DEG, len(s["shown"]), rms(s["shown"]), max(np.abs(s["shown"])) if s["shown"] else float("nan"),
             "; worst within two blocks after a restart %.1f" % max(np.abs(s["after"])) if s["after"] else ""))
 
 
-def sims(outdir, kind="coaxial", nearest=True):
+def sims(outdir, kind="coaxial", nearest=True, ways=(False,)):
     os.makedirs(outdir, exist_ok=True)
-    lift = 36 if kind == "coaxial" else 50
     reference_seconds, block_seconds = 60, 10
-    # Both kinds start from the same 285 degrees, so that their results compare directly.
-    base = {"amplitude": 285}
     cases = [
         ("steady 285", {}),
         ("ramp 290 to 250 from 60 s to 180 s", {"amplitudeRamp": {"from": 290, "to": 250, "t0": 60, "t1": 180}}),
@@ -415,47 +487,50 @@ def sims(outdir, kind="coaxial", nearest=True):
         ("wandering 285 +- 10, every 60 s", {"amplitudeSwing": {"base": 285, "swing": 10, "period": 60}}),
     ]
     drifts = (0.5, 1.0, 2.0, 4.0)
-    summary = {}
+    summary, wholes = {}, {}
     for name, over in cases:
         for seed in (91, 92):
-            prefix = os.path.join(outdir, ("%s seed %d" % (name, seed)).replace(" ", "_").replace(",", ""))
-            subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "sim", kind, prefix, json.dumps(dict(base, **over, seed=seed, seconds=180))], capture_output=True, text=True, check=True)
-            truth_file = json.load(open(prefix + ".truth.json"))
-            truth = lambda t, spec=truth_file["amplitudeSpec"]: float(np.mean(true_amplitude(spec, 285.0, np.atleast_1d(t))))
-            ref, o = prepare(prefix + ".wav", prefix + ".stream.json", lift, reference_seconds, nearest)
-            os.remove(prefix + ".wav")
-            bph = o["bph"]
-            if ref.pair is None:
-                print("%s, seed %d: no reference: %s" % (name, seed, ref.why))
-                continue
+            sim = simulate(outdir, kind, name, over, seed, 180)
+            bph, lift = sim["bph"], sim["lift"]
+            truth = lambda t, spec=sim["spec"]: float(np.mean(true_amplitude(spec, 285.0, np.atleast_1d(t))))
             amp = lambda t: ev.amplitude(lift, bph, t)
-            print("%s, seed %d: reference from the first %d s (%d+%d beats): %.0f degrees" % (name, seed, reference_seconds, ref.beats[0], ref.beats[1], amp(0.5 * sum(ref.lift))))
-            blocks = measure_blocks(ref, block_seconds)
-            for drift, restart in [(d, r) for r in (True, False) for d in drifts]:
-                rows = run_filter(ref, blocks, block_seconds, drift, bph, lift, restart)
-                if drift == DRIFT_DEG:
-                    if not restart:
-                        print("%s, seed %d, gate only (the filter without the restart):" % (name, seed))
-                    show(rows, bph, lift, truth)
-                # Blocks after the reference stretch are the test: the filter has not seen them.
-                later = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
-                block_err = [amp(r["z"]) - truth(r["t"]) for r in later if r["z"] is not None]
-                filter_err = [amp(r["state"]) - truth(r["t"]) for r in later]
-                key = (name, drift, restart)
-                s = summary.setdefault(key, {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0})
-                s["block"] += block_err
-                s["filter"] += filter_err
-                s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if shown(r, amp)]
-                s["missing"] += sum(1 for r in later if r["z"] is None)
-                s["gated"] += sum(1 for r in later if r["z"] is not None and not r["used"])
-                s["restarts"] += sum(1 for r in rows if r["restarted"])
-                s["blocks"] += len(later)
+            for way in ways:
+                tag = "" if len(ways) == 1 else ", " + WAYS[way]
+                if len(ways) > 1:
+                    wholes.setdefault((name, way), []).append(whole(sim, way, 50))
+                ref = reference(sim, reference_seconds, nearest, way)
+                if ref.pair is None:
+                    print("%s, seed %d%s: no reference: %s" % (name, seed, tag, ref.why))
+                    continue
+                print("%s, seed %d%s: reference from the first %d s (%d+%d beats): %.0f degrees" % (name, seed, tag, reference_seconds, ref.beats[0], ref.beats[1], amp(0.5 * sum(ref.stretch_lift))))
+                blocks = measure_blocks(ref, block_seconds)
+                for drift, restart in [(d, r) for r in (True, False) for d in drifts]:
+                    rows = run_filter(ref, blocks, block_seconds, drift, bph, lift, restart)
+                    if drift == DRIFT_DEG:
+                        if not restart:
+                            print("%s, seed %d%s, gate only (the filter without the restart):" % (name, seed, tag))
+                        show(rows, bph, lift, truth)
+                    # Blocks after the reference stretch are the test: the filter has not seen them.
+                    later = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
+                    s = summary.setdefault((name, way, drift, restart), {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0})
+                    s["block"] += [amp(r["z"]) - truth(r["t"]) for r in later if r["z"] is not None]
+                    s["filter"] += [amp(r["state"]) - truth(r["t"]) for r in later]
+                    s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if shown(r, amp)]
+                    s["missing"] += sum(1 for r in later if r["z"] is None)
+                    s["gated"] += sum(1 for r in later if r["z"] is not None and not r["used"])
+                    s["restarts"] += sum(1 for r in rows if r["restarted"])
+                    s["blocks"] += len(later)
     print()
     rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
-    for (name, drift, restart), s in summary.items():
-        print("%-36s drift %.1f deg/s%s: blocks alone rms error %.1f, worst %.1f; filter rms error %.1f, worst %.1f; shown within %g degrees of uncertainty %d, rms %.1f, worst %.1f; %d blocks, %d without a measurement, %d gated out, %d restarts" % (
-            name, drift, "" if restart else ", gate only", rms(s["block"]), max(np.abs(s["block"])) if s["block"] else float("nan"), rms(s["filter"]), max(np.abs(s["filter"])) if s["filter"] else float("nan"),
-            DASH_DEG, len(s["shown"]), rms(s["shown"]), max(np.abs(s["shown"])) if s["shown"] else float("nan"), s["blocks"], s["missing"], s["gated"], s["restarts"]))
+    worst = lambda v: float(np.max(np.abs(v))) if len(v) else float("nan")
+    for (name, way, drift, restart), s in summary.items():
+        print("%-36s %sdrift %.1f deg/s%s: blocks alone rms error %.1f, worst %.1f; filter rms error %.1f, worst %.1f; shown within %g degrees of uncertainty %d, rms %.1f, worst %.1f; %d blocks, %d without a measurement, %d gated out, %d restarts" % (
+            name, "" if len(ways) == 1 else WAYS[way] + ", ", drift, "" if restart else ", gate only", rms(s["block"]), worst(s["block"]), rms(s["filter"]), worst(s["filter"]),
+            DASH_DEG, len(s["shown"]), rms(s["shown"]), worst(s["shown"]), s["blocks"], s["missing"], s["gated"], s["restarts"]))
+    if len(ways) > 1:
+        print()
+        for (name, way), got in wholes.items():
+            print(whole_summary("%-36s %-14s" % (name, WAYS[way]), got, len(got)))
 
 
 def read_tracks(path):
@@ -530,17 +605,20 @@ def figure(sims_path, recording_path, out):
 
 
 if __name__ == "__main__":
+    words = sys.argv[3:]
+    ways = (False, True) if "relined" in words else (False,)
+    kind = "lever" if "lever" in words else "coaxial"
+    numbers = [int(w) for w in words if w.isdigit()]
     if len(sys.argv) == 5 and sys.argv[1] == "figure":
         figure(sys.argv[2], sys.argv[3], sys.argv[4])
-    elif len(sys.argv) in (5, 6) and sys.argv[1] == "recording":
-        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:])
-    elif 3 <= len(sys.argv) <= 5 and sys.argv[1] == "sims":
-        kind = "lever" if "lever" in sys.argv[3:] else "coaxial"
-        sims(sys.argv[2], kind, "strongest" not in sys.argv[3:])
-    elif len(sys.argv) in (3, 4) and sys.argv[1] == "swings":
-        swings(sys.argv[2], "lever" if "lever" in sys.argv[3:] else "coaxial")
-    elif 3 <= len(sys.argv) <= 6 and sys.argv[1] == "steady":
-        steady(sys.argv[2], "lever" if "lever" in sys.argv[3:4] else "coaxial", *[int(v) for v in sys.argv[4:]])
+    elif len(sys.argv) >= 5 and sys.argv[1] == "recording":
+        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:], "relined" in sys.argv[5:])
+    elif len(sys.argv) >= 3 and sys.argv[1] == "sims":
+        sims(sys.argv[2], kind, "strongest" not in words, ways)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "swings":
+        swings(sys.argv[2], kind, ways, tuple(numbers) or (91, 92, 93, 94))
+    elif len(sys.argv) >= 3 and sys.argv[1] == "steady":
+        steady(sys.argv[2], kind, *numbers[:2], ways=ways)
     else:
         print(__doc__)
         sys.exit(1)

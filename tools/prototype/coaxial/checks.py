@@ -2,10 +2,10 @@
 does on simulated watches whose beat error and amplitude are known.
 
 usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.beats.json <lift angle>
-       python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches>
+       python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches> [relined]
        python3 -I tools/prototype/coaxial/checks.py kalman <file.wav> <prefix> <lift angle>
        python3 -I tools/prototype/coaxial/checks.py kalman-sims <directory>
-       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name]
+       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [relined]
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -13,11 +13,17 @@ give (<prefix>.stream.json, from `beats.mjs stream`). `kalman-sims` does the sam
 watches.
 
 `sims` runs node on beats.mjs for each watch, so it needs Node 22 or later, and takes about
-twenty minutes.
+twenty minutes. A watch already timed in the directory by an earlier run is not timed again:
+only its audio is made again (`beats.mjs synth`), and the truth it gives is checked against the
+earlier run's.
+
+With `relined`, `sims` and `suite` read every watch both ways, as now and with the beats lined
+up again before averaging (events.measure's reline), and score each way.
 
 `suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
-reading against the truth. It takes about fifteen minutes.
+reading against the truth. It takes about fifteen minutes. When the directory already holds
+the watches from an earlier run, they are used again.
 """
 import json
 import os
@@ -48,6 +54,7 @@ def vary(wav, beats, lift):
     rows = ev.band_rows(x, fs)
     seconds = len(x) / fs
     line("whole recording", ev.measure(x, fs, B, lift, 200, rows=rows))
+    line("whole recording, beats lined up again", ev.measure(x, fs, B, lift, 200, rows=rows, reline=True))
     for win in (30, 20, 15, 10):
         a = 1.0
         while a + win <= seconds + 0.01:
@@ -68,34 +75,54 @@ def vary(wav, beats, lift):
     line("envelopes as the app makes them", ev.measure(None, fe, B, lift, 200, rows=app, find={"smooth_ms": 0.25}))
 
 
-def simulate(outdir, name, kind, over, lift):
+WAYS = {False: "as now", True: "lined up again"}
+
+
+def simulate(outdir, name, kind, over, lift, ways=(False,)):
+    """Make one simulated watch, or only its audio when an earlier run in outdir timed it, and
+    read it each way. Returns one result per way, None where there was no reading."""
     prefix = os.path.join(outdir, name.replace(" ", "_").replace(",", ""))
-    subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "sim", kind, prefix, json.dumps(over)], capture_output=True, text=True, check=True)
+    script = os.path.join(HERE, "beats.mjs")
+    if os.path.exists(prefix + ".beats.json") and os.path.exists(prefix + ".truth.json"):
+        before = json.load(open(prefix + ".truth.json"))
+        subprocess.run(["node", script, "synth", kind, prefix, json.dumps(over)], capture_output=True, text=True, check=True)
+        if json.load(open(prefix + ".truth.json")) != before:
+            raise RuntimeError(prefix + ": the watch made again is not the one the earlier run timed")
+    else:
+        subprocess.run(["node", script, "sim", kind, prefix, json.dumps(over)], capture_output=True, text=True, check=True)
     truth = json.load(open(prefix + ".truth.json"))
     fs, x = ev.load_wav(prefix + ".wav")
     B = ev.load_beats(prefix + ".beats.json")
     os.remove(prefix + ".wav")
-    head = "%-36s true %.2f ms and %.0f degrees | " % (name, abs(truth["unlockGapMs"]), truth["meanAmplitude"])
-    if any(sum(b["ok"]) < 10 for b in B["beats"]):
-        print(head + "the app timed too few beats")
-        return None
-    o = ev.measure(x, fs, B, lift, 100)
-    r = o["reading"]
-    if r is None:
-        print(head + "no reading: " + o["why"])
-        return None
-    if "sd" not in o:
-        print(head + "no reading: the resamples found no sounds")
-        return None
-    be = abs(r["first_gap"]) - abs(truth["unlockGapMs"])
-    amp = o["amp"] - truth["meanAmplitude"]
-    print(head + "read %.2f +- %.2f ms (%+.2f) %s | %.0f +- %.0f degrees (%+.0f) %s | resamples failing %.0f%%, unlock %.1f dB" % (
-        abs(r["first_gap"]), o["sd"]["first_gap"], be, "shown" if o["show_beat_error"] else "HELD",
-        o["amp"], o["amp_sd"], amp, "shown" if o["show_amplitude"] else "HELD", 100 * o["fail"], r["first_db"]))
-    return {"be": be, "amp": amp, "show_be": o["show_beat_error"], "show_amp": o["show_amplitude"]}
+    out = []
+    rows = ev.band_rows(x, fs)
+    for way in ways:
+        head = "%-36s %strue %.2f ms and %.0f degrees | " % (name, "" if len(ways) == 1 else WAYS[way] + ", ", abs(truth["unlockGapMs"]), truth["meanAmplitude"])
+        if any(sum(b["ok"]) < 10 for b in B["beats"]):
+            print(head + "the app timed too few beats")
+            out.append(None)
+            continue
+        o = ev.measure(None, fs, B, lift, 100, rows=rows, reline=way)
+        r = o["reading"]
+        if r is None:
+            print(head + "no reading: " + o["why"])
+            out.append(None)
+            continue
+        if "sd" not in o:
+            print(head + "no reading: the resamples found no sounds")
+            out.append(None)
+            continue
+        be = abs(r["first_gap"]) - abs(truth["unlockGapMs"])
+        amp = o["amp"] - truth["meanAmplitude"]
+        print(head + "read %.2f +- %.2f ms (%+.2f) %s | %.0f +- %.0f degrees (%+.0f) %s | resamples failing %.0f%%, unlock %.1f dB%s" % (
+            abs(r["first_gap"]), o["sd"]["first_gap"], be, "shown" if o["show_beat_error"] else "HELD",
+            o["amp"], o["amp_sd"], amp, "shown" if o["show_amplitude"] else "HELD", 100 * o["fail"], r["first_db"],
+            "" if not way else " | " + o.get("relined", "")))
+        out.append({"be": be, "amp": amp, "show_be": o["show_beat_error"], "show_amp": o["show_amplitude"]})
+    return out
 
 
-def sims(outdir):
+def sims(outdir, ways=(False,)):
     os.makedirs(outdir, exist_ok=True)
     cases = []
     for seed in range(1, 9):
@@ -119,14 +146,15 @@ def sims(outdir):
             cases.append(("lever beat error %s ms" % label, seed, "lever", {"restOffsetDeg": rest}, 50))
     groups = {}
     for group, seed, kind, over, lift in cases:
-        groups.setdefault(group, []).append(simulate(outdir, "%s, seed %d" % (group, seed), kind, dict(over, seed=seed), lift))
+        for way, result in zip(ways, simulate(outdir, "%s, seed %d" % (group, seed), kind, dict(over, seed=seed), lift, ways)):
+            groups.setdefault((group, way), []).append(result)
     print()
-    for group, results in groups.items():
+    for (group, way), results in groups.items():
         got = [s for s in results if s]
         be = [abs(s["be"]) for s in got if s["show_be"]]
         amp = [abs(s["amp"]) for s in got if s["show_amp"]]
-        print("%-36s %d runs; beat error shown in %d, worst error %s ms; amplitude shown in %d, worst error %s degrees" % (
-            group, len(results), len(be), ("%.2f" % max(be)) if be else "-", len(amp), ("%.0f" % max(amp)) if amp else "-"))
+        print("%-36s %s%d runs; beat error shown in %d, worst error %s ms; amplitude shown in %d, worst error %s degrees" % (
+            group, "" if len(ways) == 1 else WAYS[way] + ", ", len(results), len(be), ("%.2f" % max(be)) if be else "-", len(amp), ("%.0f" % max(amp)) if amp else "-"))
 
 
 SKIP = 12  # beats of each type left out at the start, while the Kalman tracker settles
@@ -230,10 +258,13 @@ RECORDINGS = [
 ]
 
 
-def suite(outdir, match=None):
+def suite(outdir, match=None, ways=(False,)):
     os.makedirs(outdir, exist_ok=True)
-    made = subprocess.run(["node", os.path.join(HERE, "suite.mjs"), outdir] + ([match] if match else []), capture_output=True, text=True)
-    print(made.stdout + made.stderr)
+    if any(f.endswith(".truth.json") for f in os.listdir(outdir)):
+        print("Using the watches an earlier run left in %s.\n" % outdir)
+    else:
+        made = subprocess.run(["node", os.path.join(HERE, "suite.mjs"), outdir] + ([match] if match else []), capture_output=True, text=True)
+        print(made.stdout + made.stderr)
     print("Simulated watches of the unit tests. The lift angle is chosen per beat rate so that the")
     print("watch's unlock-to-lock time reads 280 degrees: there is no balance behind these watches.\n")
     tally = {}
@@ -244,43 +275,47 @@ def suite(outdir, match=None):
         if not os.path.exists(prefix + ".beats.json"):
             verdict = "right" if truth["expect"] == "none" else "nothing"
             print("%-32s no beats from the app: %s" % (label, "right, there is no watch" if truth["expect"] == "none" else "nothing to measure"))
-            tally.setdefault(verdict, []).append(label)
+            for way in ways:
+                tally.setdefault((way, verdict), []).append(label)
             continue
         B = ev.load_beats(prefix + ".beats.json")
         if any(sum(b["ok"]) < 10 for b in B["beats"]):
             print("%-32s the app timed too few beats" % label)
-            tally.setdefault("nothing", []).append(label)
+            for way in ways:
+                tally.setdefault((way, "nothing"), []).append(label)
             continue
         fs, x = ev.load_wav(prefix + ".wav")
+        rows = ev.band_rows(x, fs)
         # The lift angle at which this watch's time from first to last sound reads 280 degrees,
         # so that the gate on believable times passes it and the check falls on the times.
         lift_ms = truth["liftMs"] or 7.0
         lift = float(2 * 280 * np.sin(np.pi * B["bph"] / 7200 * lift_ms * 1e-3))
-        o = ev.measure(x, fs, B, lift, 100)
-        r = o["reading"]
-        head = "%-32s %s vph, lift %.1f deg | " % (label, B["bph"], lift)
-        if r is None or "sd" not in o:
-            why = o["why"] if r is None else "the resamples found no sounds"
-            verdict = "right" if truth["expect"] in ("refuse", "none") else "nothing"
-            print(head + "no reading: %s%s" % (why, " (right: the beats share no first sound)" if truth["expect"] == "refuse" else ""))
-            tally.setdefault(verdict, []).append(label)
-            continue
-        be, lt = abs(r["first_gap"]), 0.5 * (r["lift0"] + r["lift1"])
-        shown = o["show_beat_error"]
-        if truth["expect"] == "reading" and truth["beatErrorMs"] is not None:
-            e_be, e_lt = be - truth["beatErrorMs"], lt - truth["liftMs"]
-            ok = abs(e_be) <= TOL_MS and abs(e_lt) <= TOL_MS
-            verdict = ("right" if ok else "WRONG") if shown else ("held, would be right" if ok else "held, would be wrong")
-            print(head + "beat error %.2f +- %.2f (true %.2f, %+.2f), unlock to lock %.2f and %.2f (true %.2f) | %s, unlock %.1f dB, resamples failing %.0f%%" % (
-                be, o["sd"]["first_gap"], truth["beatErrorMs"], e_be, r["lift0"], r["lift1"], truth["liftMs"], verdict, r["first_db"], 100 * o["fail"]))
-        else:
-            verdict = "WRONG" if shown else "held"
-            print(head + "beat error %.2f +- %.2f, unlock to lock %.2f and %.2f | %s: %s" % (
-                be, o["sd"]["first_gap"], r["lift0"], r["lift1"], verdict, "a reading where the beats share no first sound" if shown else "held back, as it should be"))
-        tally.setdefault(verdict, []).append(label)
+        for way in ways:
+            o = ev.measure(None, fs, B, lift, 100, rows=rows, reline=way)
+            r = o["reading"]
+            head = "%-32s %s%s vph, lift %.1f deg | " % (label, "" if len(ways) == 1 else WAYS[way] + ", ", B["bph"], lift)
+            if r is None or "sd" not in o:
+                why = o["why"] if r is None else "the resamples found no sounds"
+                verdict = "right" if truth["expect"] in ("refuse", "none") else "nothing"
+                print(head + "no reading: %s%s" % (why, " (right: the beats share no first sound)" if truth["expect"] == "refuse" else ""))
+                tally.setdefault((way, verdict), []).append(label)
+                continue
+            be, lt = abs(r["first_gap"]), 0.5 * (r["lift0"] + r["lift1"])
+            shown = o["show_beat_error"]
+            if truth["expect"] == "reading" and truth["beatErrorMs"] is not None:
+                e_be, e_lt = be - truth["beatErrorMs"], lt - truth["liftMs"]
+                ok = abs(e_be) <= TOL_MS and abs(e_lt) <= TOL_MS
+                verdict = ("right" if ok else "WRONG") if shown else ("held, would be right" if ok else "held, would be wrong")
+                print(head + "beat error %.2f +- %.2f (true %.2f, %+.2f), unlock to lock %.2f and %.2f (true %.2f) | %s, unlock %.1f dB, resamples failing %.0f%%" % (
+                    be, o["sd"]["first_gap"], truth["beatErrorMs"], e_be, r["lift0"], r["lift1"], truth["liftMs"], verdict, r["first_db"], 100 * o["fail"]))
+            else:
+                verdict = "WRONG" if shown else "held"
+                print(head + "beat error %.2f +- %.2f, unlock to lock %.2f and %.2f | %s: %s" % (
+                    be, o["sd"]["first_gap"], r["lift0"], r["lift1"], verdict, "a reading where the beats share no first sound" if shown else "held back, as it should be"))
+            tally.setdefault((way, verdict), []).append(label)
     print()
-    for verdict, names in sorted(tally.items()):
-        print("%-22s %2d: %s" % (verdict, len(names), ", ".join(names)))
+    for (way, verdict), names in sorted(tally.items()):
+        print("%s%-22s %2d: %s" % ("" if len(ways) == 1 else WAYS[way] + ", ", verdict, len(names), ", ".join(names)))
 
     if match:
         return
@@ -289,36 +324,43 @@ def suite(outdir, match=None):
     for file, args, lift, known in RECORDINGS:
         path = os.path.join(repo, "tests", "fixtures", file)
         prefix = os.path.join(outdir, "rec_" + file[:-4])
-        done = subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "wav", path, prefix] + args, capture_output=True, text=True)
-        said = (done.stdout + done.stderr).strip().splitlines()
         if not os.path.exists(prefix + ".beats.json"):
-            print("%-24s no beats from the app (%s): %s" % (file, known, said[-1][:90] if said else "no output"))
-            continue
+            done = subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "wav", path, prefix] + args, capture_output=True, text=True)
+            said = (done.stdout + done.stderr).strip().splitlines()
+            if not os.path.exists(prefix + ".beats.json"):
+                print("%-24s no beats from the app (%s): %s" % (file, known, said[-1][:90] if said else "no output"))
+                continue
         B = ev.load_beats(prefix + ".beats.json")
         if not B["beats"] or any(sum(b["ok"]) < 10 for b in B["beats"]):
             print("%-24s the app timed too few beats (%s)" % (file, known))
             continue
         fs, x = ev.load_wav(path)
-        o = ev.measure(x, fs, B, lift, 100)
-        r = o["reading"]
-        if r is None or "sd" not in o:
-            print("%-24s no reading (%s): %s" % (file, known, o["why"] if r is None else "the resamples found no sounds"))
-            continue
-        print("%-24s beat error %.2f +- %.2f ms, amplitude %.0f at %d deg, %s (%s)" % (
-            file, abs(r["first_gap"]), o["sd"]["first_gap"], o["amp"], lift, "shown" if o["show_beat_error"] else "held back", known))
+        rows = ev.band_rows(x, fs)
+        for way in ways:
+            o = ev.measure(None, fs, B, lift, 100, rows=rows, reline=way)
+            r = o["reading"]
+            tag = "" if len(ways) == 1 else WAYS[way] + ", "
+            if r is None or "sd" not in o:
+                print("%-24s %sno reading (%s): %s" % (file, tag, known, o["why"] if r is None else "the resamples found no sounds"))
+                continue
+            print("%-24s %sbeat error %.2f +- %.2f ms, amplitude %.0f +- %.0f at %d deg, %s (%s)%s" % (
+                file, tag, abs(r["first_gap"]), o["sd"]["first_gap"], o["amp"], o["amp_sd"], lift, "shown" if o["show_beat_error"] else "held back", known,
+                "" if not way else " | " + o.get("relined", "")))
 
 
 if __name__ == "__main__":
+    ways = (False, True) if "relined" in sys.argv[3:] else (False,)
+    rest = [w for w in sys.argv[3:] if w != "relined"]
     if len(sys.argv) == 5 and sys.argv[1] == "vary":
         vary(sys.argv[2], sys.argv[3], float(sys.argv[4]))
-    elif len(sys.argv) == 3 and sys.argv[1] == "sims":
-        sims(sys.argv[2])
+    elif len(sys.argv) >= 3 and sys.argv[1] == "sims" and not rest:
+        sims(sys.argv[2], ways)
     elif len(sys.argv) == 5 and sys.argv[1] == "kalman":
         kalman(sys.argv[2], sys.argv[3], float(sys.argv[4]))
     elif len(sys.argv) == 3 and sys.argv[1] == "kalman-sims":
         kalman_sims(sys.argv[2])
-    elif len(sys.argv) in (3, 4) and sys.argv[1] == "suite":
-        suite(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "suite" and len(rest) <= 1:
+        suite(sys.argv[2], rest[0] if rest else None, ways)
     else:
         print(__doc__)
         sys.exit(1)

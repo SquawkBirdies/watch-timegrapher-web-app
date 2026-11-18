@@ -25,6 +25,16 @@ MAX_SD_MS = 0.1      # largest scatter of the beat error over the resamples, as 
 MAX_AMP_SD = 5.0     # largest scatter of the amplitude over the resamples, in degrees
 MAX_FAIL = 0.05      # largest share of resamples in which the sounds are not found
 
+# Matching a sound in a short stretch of beats against a template of it.
+MATCH_SMOOTH_MS = 0.15  # as find_sounds smooths a portrait
+MAX_SHIFT_MS = 1.5      # furthest a sound is looked for from its place in the template
+STRONG = 0.5            # a match counts if it is at least this share of the template against itself
+
+# Lining the beats up again (`measure(..., reline=True)`).
+RELINE_BLOCK_S = 10.0   # blocks whose sounds are matched against the whole stretch's
+RELINE_MIN_BEATS = 10   # fewest beats of each type in a block
+RELINE_NEAR_MS = 1.0    # how far a lined-up sound may be from where the plain average put it
+
 
 def load_wav(path, channel=0):
     fs, x = wavfile.read(path)
@@ -193,6 +203,94 @@ def find_sounds(c, tms, base_until=-14.0, min_z=5.0, min_prom_db=2.5, smooth_ms=
     return sounds, noise
 
 
+def matched(c, tms):
+    """A portrait smoothed as find_sounds smooths it, for matching."""
+    return smooth(c, max(1, int(round(MATCH_SMOOTH_MS / (tms[1] - tms[0])))))
+
+
+def shift_of(ref, blk, tms, lo, hi, nearest=True):
+    """How much later, in milliseconds, a sound comes in `blk` than in `ref`, looked for within
+    MAX_SHIFT_MS. The match at each shift is the product of the reference's stretch from lo to
+    hi and the block's portrait, each with its mean taken off: a matched filter, which suits a
+    faint sound in noise. With `nearest`, of the peaks in the match at least STRONG times the
+    reference's product with itself, the one nearest no shift is taken, so that a louder sound
+    reaching into the search cannot win; without, the largest. None when no peak qualifies, or
+    when the largest is at the edge of the search."""
+    dt = tms[1] - tms[0]
+    i0, i1 = np.searchsorted(tms, lo), np.searchsorted(tms, hi)
+    g = ref[i0:i1] - ref[i0:i1].mean()
+    n = int(round(MAX_SHIFT_MS / dt))
+    if i0 - n < 0 or i1 + n > len(blk):
+        return None
+    score = np.array([np.dot(g, blk[i0 + k:i1 + k] - blk[i0 + k:i1 + k].mean()) for k in range(-n, n + 1)])
+    if nearest:
+        floor = STRONG * np.dot(g, g)
+        peaks = [k for k in range(1, len(score) - 1) if score[k] >= max(score[k - 1], score[k + 1], floor)]
+        if not peaks:
+            return None
+        k = min(peaks, key=lambda k: abs(k - n))
+    else:
+        k = int(np.argmax(score))
+        if k == 0 or k == len(score) - 1:
+            return None
+    a, b, c = score[k - 1], score[k], score[k + 1]
+    frac = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) != 0 else 0.0
+    return (k - n + frac) * dt
+
+
+def windows_of(pair, j):
+    """The stretches of a template matched for beat type j's unlock and lock: from before each
+    sound starts to after it is loudest."""
+    return [(pair[k + str(j)]["onset_ms"] - 0.5, pair[k + str(j)]["peak_ms"] + 0.5) for k in ("f", "l")]
+
+
+def block_shifts(S, times, tms, base_until, weights, templates, windows, block_seconds=RELINE_BLOCK_S, until=None):
+    """How far each beat type's unlock and lock have moved, block by block, against templates of
+    them. templates[j] and windows[j] hold the unlock's and the lock's. Returns for each type the
+    middle times of the blocks and the two shifts in milliseconds, NaN where a sound could not
+    be placed."""
+    t0 = min(t.min() for t in times)
+    t_end = max(t.max() for t in times) if until is None else until
+    out = []
+    for j in (0, 1):
+        mids, su, sl = [], [], []
+        a = t0
+        while a + block_seconds <= t_end + 0.5:
+            idx = [np.flatnonzero((t >= a) & (t < a + block_seconds)) for t in times]
+            if min(len(i) for i in idx) >= RELINE_MIN_BEATS:
+                c = matched(portrait(band_means(S[j], tms, idx[j], base_until), weights), tms)
+                shifts = [shift_of(templates[j][k], c, tms, *windows[j][k]) for k in (0, 1)]
+                mids.append(a + 0.5 * block_seconds)
+                su.append(np.nan if shifts[0] is None else shifts[0])
+                sl.append(np.nan if shifts[1] is None else shifts[1])
+            a += block_seconds
+        out.append((np.array(mids), np.array(su), np.array(sl)))
+    return out
+
+
+def beat_shifts(blocks, times):
+    """Each beat's unlock and lock shift, read off a line through the blocks and held level
+    beyond the first and last. None when a sound was placed in fewer than two blocks of a type:
+    then there is nothing to line up on."""
+    out = []
+    for j in (0, 1):
+        mids, su, sl = blocks[j]
+        per = []
+        for s in (su, sl):
+            ok = ~np.isnan(s)
+            if ok.sum() < 2:
+                return None
+            per.append(np.interp(times[j], mids[ok], s[ok]))
+        out.append(per)
+    return out
+
+
+def shift_rows(S, tms, s_ms):
+    """The stacked beats with each beat read s_ms later, so that a sound that comes s_ms late in
+    that beat lines up with the others."""
+    return [np.array([np.interp(tms + s, tms, row) for row, s in zip(M, s_ms)]) for M in S]
+
+
 def lift_limits(bph, lift_deg=None, amp_lo=150.0, amp_hi=330.0):
     """Shortest and longest believable time from unlock to lock, in milliseconds: an amplitude
     of 150 to 330 degrees. Above 330, Witschi's fault table expects the balance to knock against
@@ -237,7 +335,7 @@ def amplitude(lift_deg, bph, t_ms):
     return lift_deg / (2 * np.sin(np.pi * f * t_ms * 1e-3))
 
 
-def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False):
+def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline=False):
     """Portraits, sounds and paired readings for one recording.
 
     x, fs    audio and its sample rate; or pass `rows` (band envelopes) with fs as their rate
@@ -247,6 +345,16 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     t_from, t_to   use only the beats between these times, in seconds
     weights  band weights to use instead of working them out
     find     keyword arguments for find_sounds; use_peak times sounds at their maxima
+    reline   line the beats up again before averaging, so that a sound whose place moves with
+             the amplitude is not smeared: the beats' timestamps follow their loudest sound, and
+             when the amplitude swings the other sound's place moves with the lift time. Blocks
+             of RELINE_BLOCK_S are matched against the plain average to see how far the unlock
+             and the lock have moved; each beat is shifted by that, once for each sound, and
+             averaged again. A smeared sound's half-rise lands early, which biased the reading.
+             Each resample measures the blocks again from the beats it drew and lines those
+             beats up on what it found, so the shifts' own noise is in the uncertainty.
+             Falls back to the plain average, with `relined` saying why, when a sound is placed
+             in fewer than two blocks.
 
     Returns a dict. `reading` is None, with `why`, when the sounds could not be paired.
     Otherwise it holds, in milliseconds, `first_gap` (the tock's unlock later than midway between
@@ -311,6 +419,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
             "f1": pair["f1"]["onset_ms"],
             "l1": pair["l1"]["onset_ms"],
             "first_db": min(pair["f0"]["level_db"], pair["f1"]["level_db"]),
+            "pair": pair,
         }
         return res, "", ports, w
 
@@ -319,6 +428,70 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
            "stacks": S, "times": times, "base_until": base_until}
     if r is None:
         return out
+    if reline:
+        pair = r["pair"]
+        templates = [[matched(ports[j][0], tms)] * 2 for j in (0, 1)]
+        windows = [windows_of(pair, j) for j in (0, 1)]
+        blocks = block_shifts(S, times, tms, base_until, W, templates, windows)
+        shifts = beat_shifts(blocks, times)
+        if shifts is None:
+            out["relined"] = "not lined up again: a sound was placed in fewer than two blocks of %.0f s" % RELINE_BLOCK_S
+        else:
+            lined = [[shift_rows(S[j], tms, shifts[j][k]) for k in (0, 1)] for j in (0, 1)]
+            # Where the plain average put each sound; the lined-up sound is looked for near it.
+            near = [[pair["f%d" % j]["onset_ms"], pair["l%d" % j]["onset_ms"]] for j in (0, 1)]
+
+            def relined(idx0=None, idx1=None, w=None):
+                g = gap if idx0 is None else float(np.median(resid[1][idx1]) - np.median(resid[0][idx0]))
+                idx = (idx0, idx1)
+                use, stacks = shifts, lined
+                if idx0 is not None:
+                    # The whole procedure again on the drawn beats: their blocks, their shifts,
+                    # and the drawn beats lined up on them. A wrong shift moves a lined-up sound
+                    # one way and the mean shift added back the other, so drawing the shifts
+                    # alone, with the beats left as the whole set lined them up, would overstate
+                    # the scatter.
+                    drawn = [[M[idx[j]] for M in S[j]] for j in (0, 1)]
+                    drawn_times = [times[j][idx[j]] for j in (0, 1)]
+                    use = beat_shifts(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows), drawn_times)
+                    if use is None:
+                        return None, "a sound was placed in fewer than two blocks", ports, w
+                    stacks = [[shift_rows(drawn[j], tms, use[j][k]) for k in (0, 1)] for j in (0, 1)]
+                at, dbs = [], []
+                for j in (0, 1):
+                    found = []
+                    for k in (0, 1):
+                        c = portrait(band_means(stacks[j][k], tms, None, base_until), w)
+                        sounds, _ = find_sounds(c, tms, base_until, **find)
+                        if not sounds:
+                            return None, "a sound was lost in the lined-up average", ports, w
+                        e = min(sounds, key=lambda e: abs(e["onset_ms"] - near[j][k]))
+                        if abs(e["onset_ms"] - near[j][k]) > RELINE_NEAR_MS:
+                            return None, "a lined-up sound is more than %.1f ms from the plain average's" % RELINE_NEAR_MS, ports, w
+                        found.append((e["peak_ms"] if use_peak else e["onset_ms"]) + float(np.mean(use[j][k])))
+                        if k == 0:
+                            dbs.append(e["level_db"])
+                    at.append(found)
+                lifts = [at[j][1] - at[j][0] for j in (0, 1)]
+                if not all(lo <= v <= hi for v in lifts):
+                    return None, "lined-up time from unlock to lock (%.1f and %.1f ms) outside %.1f to %.1f ms" % (lifts[0], lifts[1], lo, hi), ports, w
+                res = {
+                    "first_gap": g + at[1][0] - at[0][0],
+                    "last_gap": g + at[1][1] - at[0][1],
+                    "lift0": lifts[0],
+                    "lift1": lifts[1],
+                    "f0": at[0][0], "l0": at[0][1], "f1": at[1][0], "l1": at[1][1],
+                    "first_db": min(dbs),
+                    "pair": pair,
+                }
+                return res, "", ports, w
+
+            readings = relined
+            r, why, _, _ = readings(w=W)
+            out["reading"], out["why"] = r, why
+            out["relined"] = "lined up again on %d blocks of %.0f s" % (len(blocks[0][0]), RELINE_BLOCK_S)
+            if r is None:
+                return out
     out["amp"] = amplitude(lift, bph, 0.5 * (r["lift0"] + r["lift1"]))
     out["amp_tick"] = amplitude(lift, bph, r["lift0"])
     out["amp_tock"] = amplitude(lift, bph, r["lift1"])
@@ -347,6 +520,8 @@ def describe(o):
     """The result of `measure` as lines of text."""
     lines = ["beats: %d ticks, %d tocks; gap between the app's timestamps %+.3f ms; believable unlock-to-lock time %.1f to %.1f ms" % (o["n0"], o["n1"], o["gap"], o["limits"][0], o["limits"][1])]
     lines.append("band weights: " + " ".join("%.2f" % v for v in o["weights"]))
+    if "relined" in o:
+        lines.append(o["relined"])
     for j, name in ((0, "tick"), (1, "tock")):
         for e in o["ports"][j][1]:
             lines.append("  %s sound: starts %+.2f ms, loudest %+.2f ms, %.1f dB over the noise of the average" % (name, e["onset_ms"], e["peak_ms"], e["level_db"]))

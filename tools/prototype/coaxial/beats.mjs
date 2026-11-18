@@ -16,6 +16,12 @@
 //     overrides, "amplitudeSwing": {"base": 285, "swing": 10, "period": 23} makes the amplitude
 //     wander, and "amplitudeRamp": {"from": 290, "to": 250, "t0": 60, "t1": 180} moves it from
 //     one value to another between two times.
+//
+//   node tools/prototype/coaxial/beats.mjs synth <coaxial|lever> <prefix> ['<json overrides>']
+//     makes the same watch as `sim` but writes only <prefix>.wav and <prefix>.truth.json, in
+//     under a second. The same overrides and seed make the same watch, so a script can keep an
+//     earlier run's beats.json and stream.json and make the audio again without the app's slow
+//     analysis.
 
 import { writeFileSync } from 'node:fs';
 import { readWav } from '../../../tests/helpers/wav.js';
@@ -147,7 +153,7 @@ if (mode === 'wav' && args.length >= 2) {
   writeFileSync(`${prefix}.stream.json`, JSON.stringify(result));
   console.log(`${path}: real-time pipeline, ${result.bph} vph, tracking from ${show(result.lockedAt, 1)} s, ` +
     `beats timed ${result.beats.map((b) => `${b.ok.reduce((s, v) => s + v, 0)} (averaged over ${b.K})`).join(' and ')}`);
-} else if (mode === 'sim' && args.length >= 2) {
+} else if ((mode === 'sim' || mode === 'synth') && args.length >= 2) {
   const [kind, prefix, json] = args;
   const over = json ? JSON.parse(json) : {};
   /** How the amplitude changes with time, kept with the truth so that it can be worked out again. */
@@ -170,6 +176,7 @@ if (mode === 'wav' && args.length >= 2) {
   writeFileSync(`${prefix}.wav`, Buffer.from(encodeWav(watch.channels, watch.sampleRate)));
   const { unlockGapMs, lockGapMs, liftMs, meanAmplitude } = watch.truth;
   writeFileSync(`${prefix}.truth.json`, JSON.stringify({ unlockGapMs, lockGapMs, liftMs, meanAmplitude, bph: options.bph, rate: options.rate, amplitudeSpec }));
+  if (mode === 'synth') process.exit(0);
   const result = beatsOf(watch.channels[0], watch.sampleRate, {});
   writeFileSync(`${prefix}.beats.json`, JSON.stringify(result));
   writeFileSync(`${prefix}.stream.json`, JSON.stringify(streamOf(watch.channels[0], watch.sampleRate, {})));
@@ -177,6 +184,6 @@ if (mode === 'wav' && args.length >= 2) {
     `unlock to lock ${liftMs.map((v) => v.toFixed(3)).join(' and ')} ms; the app reads ${result.bph} vph, ${show(result.rate, 2)} s/day, ` +
     `Swiss-lever beat error ${show(result.leverBeatErrorMs, 3)} ms`);
 } else {
-  console.error('usage: beats.mjs wav <file.wav> <prefix> [bph] [start] [end]\n       beats.mjs stream <file.wav> <prefix> [bph]\n       beats.mjs sim <coaxial|lever> <prefix> [json overrides]');
+  console.error('usage: beats.mjs wav <file.wav> <prefix> [bph] [start] [end]\n       beats.mjs stream <file.wav> <prefix> [bph]\n       beats.mjs sim <coaxial|lever> <prefix> [json overrides]\n       beats.mjs synth <coaxial|lever> <prefix> [json overrides]');
   process.exit(1);
 }

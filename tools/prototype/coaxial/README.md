@@ -45,11 +45,18 @@ python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track-lever lever  # about half an hour
 python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about fifteen minutes
+python3 -I tools/prototype/coaxial/track.py swings /tmp/swings relined  # about an hour
+python3 -I tools/prototype/coaxial/track.py steady /tmp/steady relined  # about half an hour
 ```
 
 `beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
 stream` its real-time pipeline. The last argument of `analyze.py` is the lift angle. `--app`
-works on envelopes made the way the app's filter bank makes them.
+works on envelopes made the way the app's filter bank makes them, and `--reline` lines the
+beats up again before averaging (see "Lining the beats up again"). Given `relined`, `checks.py
+sims` and `suite` and `track.py sims`, `swings` and `steady` run every watch both ways. Those
+commands keep each simulated watch's timestamps in their directory; run again on the same
+directory, they make only the audio again (`beats.mjs synth`, under a second) and check that its
+truth matches, since the app's analysis is the slow part.
 
 | File | What it does |
 | --- | --- |
@@ -275,6 +282,70 @@ each at least a block long. Those shown were 3.5° rms and 8.8° at worst. Every
 was shown. Many short watches rather than a
 few long ones, because making a simulated 600 s watch took over 15 minutes against 2 for 180 s.
 
+## Lining the beats up again
+
+`analyze.py --reline`, and the commands above given `relined`, line each beat up again before
+averaging. The 10 s blocks are matched against the plain average to see how far the unlock and
+the lock have moved. Each beat is shifted by that, read off a line through the blocks, once for
+each sound, and averaged again, so that the sound that moves with the amplitude stands sharp.
+Each sound's time is its place in its lined-up average plus the beats' mean shift. Each
+resample repeats the whole procedure, blocks included, on the beats it draws. In the amplitude
+filter the lined-up averages become the templates the blocks are matched against. A sound must
+be placed in at least two blocks, so a 20 s recording falls back to the plain average.
+
+Whole recordings of swinging watches, three of each, 180 s, as analyze.py reads them; amplitude
+error against the true mean lift time of all the beats, and in brackets how many were shown:
+
+| Watch | As now | Lined up again |
+| --- | --- | --- |
+| Lever, ±15° every 60 s | −4.1° to −3.8° (3) | −0.2° to +0.1° (3) |
+| Lever, ±30° every 60 s | −19.8° to −19.0° (3) | −1.1° to +2.1° (2) |
+| Lever, ±15° every 5 s | −3.9° to −2.9° (3) | −3.9° to −2.8° (3) |
+| Co-axial, ±15° every 60 s | +0.3° to +1.5° (3) | −1.3° to 0.0° (3) |
+| Co-axial, ±30° every 60 s | +9.1° to +13.1° (3) | −1.0° to +0.2° (3) |
+| Co-axial, ±15° every 5 s | +0.2° to +1.7° (3) | +0.5° to +2.0° (3) |
+
+As now, every biased reading in that table was shown: the gates do not see this bias. Beat error
+stayed within 0.08 ms of the truth either way; lined up, the lever's ±30° showed it in only 1
+of 3. The amplitude filter's blocks, against the truth averaged over each block, rms and worst
+over 36 blocks:
+
+| Watch | As now | Lined up again |
+| --- | --- | --- |
+| Lever, ±15° every 60 s | 6.3°, 8.9° | 0.9°, 2.5° |
+| Lever, ±30° every 60 s | 31.3°, 42.2° | 2.7°, 4.7° |
+| Co-axial, ±15° every 60 s | 2.7°, 4.9° | 7.2°, 32.6° |
+| Co-axial, ±30° every 60 s | 11.6°, 24.0° | 5.8°, 18.3° |
+
+The 5 s swings were unchanged: 6.4° rms on the lever both ways, 2.9° and 3.2° on the co-axial.
+
+Any change of amplitude within a recording does the same. On `track.py sims`'s cases, two
+watches each, the co-axial's whole recording read as now +5.6° to +6.5° off on the fall from
+290° to 250° and +7.6° to +9.0° on the 30° step, all shown; lined up, −0.3° to +0.3° and −1.3°
+to +0.2°. The lever's fall went from +2.1° to +3.1° off to +0.2° to +0.4°, and its step, held
+back as now, was shown lined up, within 0.3°. The filter's blocks were about the same both ways
+in those cases, except the lever's ±10° swing: 2.2° rms as now, 0.8° lined up.
+
+Where nothing changes:
+
+- `checks.py sims`, the 46 simulated watches: no wrong reading either way, and the readings
+  moved little. But lined up, the co-axial's stated beat-error uncertainty rose from mostly
+  0.03 to 0.05 ms to 0.06 to 0.13 ms, so beat error was shown in 20 of 46 instead of 33, and
+  amplitude in 30 instead of 33. The faint unlock gives each block a noisy shift, and lining
+  the beats up on noise spreads them again. The lever's were unchanged.
+- `checks.py suite`: the same verdicts on the unit tests' 36 watches, none shown wrongly; one
+  held reading, the 1 ms jitter, became no reading. The Omega capture read 0.30 ms and 285°
+  against 0.31 ms and 284°; the ETA's 0.15 ms and 263° both ways; the Voice Memos recordings
+  and the no-watch capture gave nothing either way.
+- `track.py steady`: no restart either way on 16 watches of each kind. The co-axial measured
+  166 blocks lined up against 172; the lever's were the same.
+- A whole-recording reading takes about four times as long lined up: with 50 resamples, the
+  Omega capture went from 4.5 s to 18.6 s, a 180 s lever from 22 s to 92 s.
+
+So on the lever, lining up takes the bias away and costs nothing measured. On the co-axial it
+takes away the bias of a large change in the whole reading, but adds scatter where nothing
+changes and made the filter's blocks worse at ±15°. It stays an option, off by default.
+
 ## Through the app's unit tests
 
 `npm test` runs only the JavaScript pipeline, so it cannot test the prototype. `suite.mjs`
@@ -338,10 +409,9 @@ captures read as before, with uncertainties within 0.01 ms of what they were.
   30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it.
 - The averaging assumes the amplitude holds still over the beats averaged. On simulated watches
   a ±15° swing moved the lever's reading 5° low and a ±30° swing 22° low; the co-axial's read
-  high, by up to 14° at ±30°. See "Larger swings, and false restarts". Lining each beat up
-  again on how far its sounds have moved, block by block, before averaging took the lever's
-  error away for once-a-minute swings in a first test, not yet part of the prototype; it cannot
-  help a swing faster than a block.
+  high, by up to 14° at ±30°. See "Larger swings, and false restarts". Lining the beats up
+  again, an option, takes it away on the lever for swings slower than a block, but on the
+  co-axial it costs precision where nothing swings; see "Lining the beats up again".
 - The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
   a good reading back.
 - It is not yet a general measure. On the simulated watches of the unit tests it showed a
