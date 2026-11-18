@@ -30,7 +30,7 @@ MATCH_SMOOTH_MS = 0.15  # as find_sounds smooths a portrait
 MAX_SHIFT_MS = 1.5      # furthest a sound is looked for from its place in the template
 STRONG = 0.5            # a match counts if it is at least this share of the template against itself
 
-# Lining the beats up again (`measure(..., reline=True)`).
+# Lining the beats up again (`measure`'s reline, on by default).
 RELINE_BLOCK_S = 10.0   # blocks whose sounds are matched against the whole stretch's
 RELINE_MIN_BEATS = 10   # fewest beats of each type in a block
 RELINE_NEAR_MS = 1.0    # how far a lined-up sound may be from where the plain average put it
@@ -335,7 +335,7 @@ def amplitude(lift_deg, bph, t_ms):
     return lift_deg / (2 * np.sin(np.pi * f * t_ms * 1e-3))
 
 
-def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline=False):
+def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline=True):
     """Portraits, sounds and paired readings for one recording.
 
     x, fs    audio and its sample rate; or pass `rows` (band envelopes) with fs as their rate
@@ -345,7 +345,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     t_from, t_to   use only the beats between these times, in seconds
     weights  band weights to use instead of working them out
     find     keyword arguments for find_sounds; use_peak times sounds at their maxima
-    reline   line the beats up again before averaging, so that a sound whose place moves with
+    reline   line the beats up again before averaging (the default; False gives the plain
+             average, as before 18 November), so that a sound whose place moves with
              the amplitude is not smeared: the beats' timestamps follow their loudest sound, and
              when the amplitude swings the other sound's place moves with the lift time. Blocks
              of RELINE_BLOCK_S are matched against the plain average to see how far the unlock

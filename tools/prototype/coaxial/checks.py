@@ -2,10 +2,10 @@
 does on simulated watches whose beat error and amplitude are known.
 
 usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.beats.json <lift angle>
-       python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches> [relined]
+       python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches> [plain|both]
        python3 -I tools/prototype/coaxial/checks.py kalman <file.wav> <prefix> <lift angle>
        python3 -I tools/prototype/coaxial/checks.py kalman-sims <directory>
-       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [relined]
+       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [plain|both]
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -17,8 +17,9 @@ twenty minutes. A watch already timed in the directory by an earlier run is not 
 only its audio is made again (`beats.mjs synth`), and the truth it gives is checked against the
 earlier run's.
 
-With `relined`, `sims` and `suite` read every watch both ways, as now and with the beats lined
-up again before averaging (events.measure's reline), and score each way.
+Every reading lines the beats up again before averaging (events.measure's reline). With
+`plain`, `sims` and `suite` use the plain average instead, as before 18 November; with `both`,
+they read every watch both ways and score each.
 
 `suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
@@ -54,7 +55,7 @@ def vary(wav, beats, lift):
     rows = ev.band_rows(x, fs)
     seconds = len(x) / fs
     line("whole recording", ev.measure(x, fs, B, lift, 200, rows=rows))
-    line("whole recording, beats lined up again", ev.measure(x, fs, B, lift, 200, rows=rows, reline=True))
+    line("whole recording, plain average", ev.measure(x, fs, B, lift, 200, rows=rows, reline=False))
     for win in (30, 20, 15, 10):
         a = 1.0
         while a + win <= seconds + 0.01:
@@ -75,10 +76,10 @@ def vary(wav, beats, lift):
     line("envelopes as the app makes them", ev.measure(None, fe, B, lift, 200, rows=app, find={"smooth_ms": 0.25}))
 
 
-WAYS = {False: "as now", True: "lined up again"}
+WAYS = {False: "plain average", True: "lined up"}
 
 
-def simulate(outdir, name, kind, over, lift, ways=(False,)):
+def simulate(outdir, name, kind, over, lift, ways=(True,)):
     """Make one simulated watch, or only its audio when an earlier run in outdir timed it, and
     read it each way. Returns one result per way, None where there was no reading."""
     prefix = os.path.join(outdir, name.replace(" ", "_").replace(",", ""))
@@ -122,7 +123,7 @@ def simulate(outdir, name, kind, over, lift, ways=(False,)):
     return out
 
 
-def sims(outdir, ways=(False,)):
+def sims(outdir, ways=(True,)):
     os.makedirs(outdir, exist_ok=True)
     cases = []
     for seed in range(1, 9):
@@ -258,7 +259,7 @@ RECORDINGS = [
 ]
 
 
-def suite(outdir, match=None, ways=(False,)):
+def suite(outdir, match=None, ways=(True,)):
     os.makedirs(outdir, exist_ok=True)
     if any(f.endswith(".truth.json") for f in os.listdir(outdir)):
         print("Using the watches an earlier run left in %s.\n" % outdir)
@@ -349,8 +350,8 @@ def suite(outdir, match=None, ways=(False,)):
 
 
 if __name__ == "__main__":
-    ways = (False, True) if "relined" in sys.argv[3:] else (False,)
-    rest = [w for w in sys.argv[3:] if w != "relined"]
+    ways = (False, True) if "both" in sys.argv[3:] else (False,) if "plain" in sys.argv[3:] else (True,)
+    rest = [w for w in sys.argv[3:] if w not in ("plain", "both")]
     if len(sys.argv) == 5 and sys.argv[1] == "vary":
         vary(sys.argv[2], sys.argv[3], float(sys.argv[4]))
     elif len(sys.argv) >= 3 and sys.argv[1] == "sims" and not rest:

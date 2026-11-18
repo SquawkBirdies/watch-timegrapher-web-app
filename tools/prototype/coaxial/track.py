@@ -20,15 +20,16 @@ when two measured blocks in a row are both left out and agree with each other, t
 starts again from them: a sudden change is believed once it has been seen twice. `recording`
 and `sims` also print the filter without that restart, as it was before, for comparison.
 
-With `relined` the reference's beats are lined up again before averaging (Reference.reline),
-so that a swing in amplitude during the reference does not smear the sound whose place moves
-with it. `sims`, `swings` and `steady` then run both ways on every watch; `sims` and `swings`
-also read each watch whole both ways, as analyze.py would with --reline.
+The reference's beats are lined up again before averaging (Reference.reline), so that a change
+of amplitude during the reference does not smear the sound whose place moves with it. With
+`plain` the reference is the plain average, as before 18 November; with `both`, `sims`, `swings`
+and `steady` run both ways on every watch, and `sims` and `swings` also read each watch whole
+both ways, as analyze.py would with and without --plain.
 
-usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest] [relined]
-       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest] [relined]
-       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever] [relined] [seeds...]
-       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [relined] [runs] [seconds]
+usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest] [plain]
+       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest] [plain|both]
+       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever] [plain|both] [seeds...]
+       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [plain|both] [runs] [seconds]
        python3 -I tools/prototype/coaxial/track.py figure <sims output> <recording output> out.png
 
 `recording` reads <prefix>.stream.json from `beats.mjs stream`. `sims` makes simulated watches
@@ -74,7 +75,7 @@ def portraits(S, tms, idx, base_until, weights=None):
 class Reference:
     """Where the unlock and the lock are in the averaged beat of a reference stretch."""
 
-    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline=False):
+    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline=True):
         self.S, self.times, self.tms, self.base_until = S, times, tms, base_until
         # Take the strong match nearest each sound's place (True) or the strongest (False, the
         # earlier search).
@@ -224,10 +225,11 @@ def true_amplitude(spec, constant, t):
     return np.full(t.shape, constant)
 
 
-def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline=False):
+def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline=True):
     fs, x = ev.load_wav(wav)
     B = ev.load_beats(stream_json)
-    o = ev.measure(x, fs, B, lift, 0)
+    # Only the stacked beats are wanted here; the reference does its own lining up.
+    o = ev.measure(x, fs, B, lift, 0, reline=False)
     return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest, reline), o
 
 
@@ -258,7 +260,7 @@ def show(rows, bph, lift, truth=None):
         print(line)
 
 
-def recording(wav, prefix, lift, nearest=True, reline=False):
+def recording(wav, prefix, lift, nearest=True, reline=True):
     fs, x = ev.load_wav(wav)
     seconds = len(x) / fs
     ref, o = prepare(wav, prefix + ".stream.json", lift, seconds + 1, nearest, reline)
@@ -296,18 +298,19 @@ def simulate(outdir, kind, name, over, seed, seconds):
     os.remove(prefix + ".wav")
     rows = ev.band_rows(x, fs)
     B = ev.load_beats(prefix + ".stream.json")
-    o = ev.measure(None, fs, B, lift, 0, rows=rows)
+    # Only the stacked beats are wanted here; the reference does its own lining up.
+    o = ev.measure(None, fs, B, lift, 0, rows=rows, reline=False)
     truth = json.load(open(prefix + ".truth.json"))
     return {"o": o, "rows": rows, "fs": fs, "B": B, "whole": ev.load_beats(prefix + ".beats.json"), "bph": o["bph"], "lift": lift, "truth": truth, "spec": truth["amplitudeSpec"]}
 
 
-def reference(sim, reference_seconds, nearest=True, reline=False):
+def reference(sim, reference_seconds, nearest=True, reline=True):
     o = sim["o"]
     return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], sim["lift"], reference_seconds, nearest, reline)
 
 
-# The two ways of averaging that `sims`, `swings` and `steady` compare when given `relined`.
-WAYS = {False: "as now", True: "lined up again"}
+# The two ways of averaging that `sims`, `swings` and `steady` compare when given `both`.
+WAYS = {False: "plain average", True: "lined up"}
 
 
 def whole(sim, reline, resamples=100):
@@ -346,7 +349,7 @@ def swing_fit(t, v, period):
     return float(np.hypot(c[1], c[2])), float(-phase / w)
 
 
-def swings(outdir, kind="coaxial", ways=(False,), seeds=(91, 92, 93, 94)):
+def swings(outdir, kind="coaxial", ways=(True,), seeds=(91, 92, 93, 94)):
     """Larger and faster swings than `sims` tries. Witschi's training document says the meshing of
     the gears can move a watch's amplitude by up to 30 degrees, and that this is normal. In most
     movements the wheel that carries the seconds hand turns once a minute, hence the 60 s swings;
@@ -419,7 +422,7 @@ def swings(outdir, kind="coaxial", ways=(False,), seeds=(91, 92, 93, 94)):
             print(whole_summary("%-32s %-14s" % (name, WAYS[way]), got, len(got)))
 
 
-def steady(outdir, kind="coaxial", runs=16, seconds=180, ways=(False,)):
+def steady(outdir, kind="coaxial", runs=16, seconds=180, ways=(True,)):
     """How often the restart fires when nothing changes: many runs at a steady 285 degrees, where
     every restart is a false one. Counts restarts and gated blocks at each setting, how far the
     filter strays, and how often an app would show a dash. Many short runs rather than a few long
@@ -477,7 +480,7 @@ def steady(outdir, kind="coaxial", runs=16, seconds=180, ways=(False,)):
             "; worst within two blocks after a restart %.1f" % max(np.abs(s["after"])) if s["after"] else ""))
 
 
-def sims(outdir, kind="coaxial", nearest=True, ways=(False,)):
+def sims(outdir, kind="coaxial", nearest=True, ways=(True,)):
     os.makedirs(outdir, exist_ok=True)
     reference_seconds, block_seconds = 60, 10
     cases = [
@@ -606,13 +609,13 @@ def figure(sims_path, recording_path, out):
 
 if __name__ == "__main__":
     words = sys.argv[3:]
-    ways = (False, True) if "relined" in words else (False,)
+    ways = (False, True) if "both" in words else (False,) if "plain" in words else (True,)
     kind = "lever" if "lever" in words else "coaxial"
     numbers = [int(w) for w in words if w.isdigit()]
     if len(sys.argv) == 5 and sys.argv[1] == "figure":
         figure(sys.argv[2], sys.argv[3], sys.argv[4])
     elif len(sys.argv) >= 5 and sys.argv[1] == "recording":
-        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:], "relined" in sys.argv[5:])
+        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:], "plain" not in sys.argv[5:])
     elif len(sys.argv) >= 3 and sys.argv[1] == "sims":
         sims(sys.argv[2], kind, "strongest" not in words, ways)
     elif len(sys.argv) >= 3 and sys.argv[1] == "swings":
