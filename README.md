@@ -73,6 +73,19 @@ so the tick and the tock found are both its ticks, and its tocks fall halfway be
 0.005 ms in every reading, against a true 0.50 ms. The pipeline now looks for a beat halfway
 between the tick and the tock, and shows no beat error when it finds one.
 
+Left to find the beat rate itself, the pipeline can take a 36,000 vph watch whose tock is much
+quieter than its tick for an 18,000 vph watch, and the halfway check does not see a tock that
+faint. Of 36 simulated 36,000 vph watches run for 60 s, with the tock at 0.1 to 0.8 of the tick,
+16 were taken for 18,000 vph: the rate stayed within 0.4 s/day, but the beat error read 0.008 to
+0.023 ms against a true 0.50 ms. None of them had the tock at 0.8 of the tick, and the ETA's two
+captures have it at 0.79 and 0.91. None of 24 simulated 18,000 vph watches was taken for
+36,000. In 9 of the 16 the tock is clear over the whole 60 s, but the lock was taken on the first
+8 to 32 s and the rate was not checked again; in the other 7 nothing in the sound tells the watch
+from an 18,000 vph one. Checking the rate again would hold back the beat error of a true
+18,000 vph watch by about a minute, and on 18 November it was decided not to. Choosing
+36,000 vph in the settings avoids the wrong beat error: of the 16, two then read it right, six
+give the rate alone and eight give nothing within 60 s.
+
 The escapement can be set to Swiss lever (the default) or co-axial: pass
 `{ escapement: 'coaxial' }` to `Pipeline` or `analyze`. A co-axial escapement's tick and tock
 are different sounds, so the gap between them is not the beat error. In co-axial mode the rate
