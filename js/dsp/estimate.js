@@ -1,6 +1,7 @@
 // Stage 8 of the pipeline: turn beat timestamps into readings.
 
 import { robustLine, median, parabolicOffset } from './mathutil.js';
+import { clusterStrength } from './template.js';
 
 /**
  * @typedef {Object} BeatSeries
@@ -161,6 +162,14 @@ export const MAX_OFFSET_SD_MS = 0.1;
 export const MIN_SIMILARITY = 0.35;
 /** Largest timestamp scatter of either beat type, in milliseconds, for a beat error to be reported. */
 export const MAX_SCATTER_MS = 0.2;
+/**
+ * A cluster halfway between the tick and the tock counts as a beat when it is at least this
+ * share of the weaker of the two, in the units of `clusterStrength`, and at least
+ * HALFWAY_OF_BACKGROUND times the template's background.
+ */
+export const HALFWAY_OF_BEAT = 0.1;
+/** See HALFWAY_OF_BEAT. */
+export const HALFWAY_OF_BACKGROUND = 100;
 
 /**
  * @typedef {Object} Readings
@@ -170,9 +179,59 @@ export const MAX_SCATTER_MS = 0.2;
  * @property {number|null} jitterMs scatter of the timestamps about the fitted line
  * @property {number|null} beatErrorMs gap between the tick and tock trace lines; null when unreliable
  * @property {number|null} beatOffsetMs signed offset of the tocks from the midpoint between ticks
- * @property {{offsetMs: number, offsetSdMs: number, similarity: number}|null} beatErrorDetail
- *   the raw tick-tock comparison, kept even when the beat error is judged unreliable
+ * @property {{offsetMs: number, offsetSdMs: number, similarity: number, halfway: boolean}|null} beatErrorDetail
+ *   the raw tick-tock comparison, kept even when the beat error is judged unreliable; `halfway`
+ *   when a beat lies halfway between the tick and the tock (see `halfwayBeat`)
  */
+
+/**
+ * Whether the template holds a beat halfway between its tick and its tock, on both sides. It
+ * does when the beat rate given is half the watch's own: given 18,000 vph, a 36,000 vph watch is
+ * folded at four of its beats, the tick and the tock found are two of its ticks (or two of its
+ * tocks), and its other beats fall halfway between them. Their gap is then not the beat error,
+ * though the rate in seconds per day is still right. Between a true tick and tock there is only
+ * background. The halfway cluster must stand out both against the beats, so that a template
+ * with weak beats does not pass for one with an extra beat, and against the background, so
+ * that a noisy template, whose beats barely stand out, does not either.
+ * @param {Float32Array[]} template
+ * @param {[number, number]} clusters tick and tock positions in samples
+ * @param {number} envelopeRate
+ * @returns {{ofBeat: number, ofBackground: number, found: boolean}} the weaker halfway cluster
+ *   against the weaker beat and against the background (the 90th percentile of the template
+ *   more than 15 ms from the beats and the halfway points)
+ */
+export function halfwayBeat(template, clusters, envelopeRate) {
+  const cs = clusterStrength(template, envelopeRate);
+  const nb = cs.length;
+  const [c1, c2] = clusters;
+  const at = (/** @type {number} */ g) => cs[((g % nb) + nb) % nb];
+  const halfway = [Math.round((c1 + c2) / 2), Math.round((c1 + c2 + nb) / 2)];
+  // The tock is found within 12 ms of half a period from the tick; a halfway beat is looked for
+  // as widely.
+  const w = Math.floor(0.012 * envelopeRate);
+  let weakest = Infinity;
+  for (const m of halfway) {
+    let best = 0;
+    for (let j = -w; j <= w; j++) best = Math.max(best, at(m + j));
+    weakest = Math.min(weakest, best);
+  }
+  const ex = Math.floor(0.015 * envelopeRate);
+  /** @type {number[]} */
+  const away = [];
+  for (let g = 0; g < nb; g++) {
+    const far = [c1, c2, ...halfway].every((c) => {
+      const d = Math.abs(g - c) % nb;
+      return Math.min(d, nb - d) > ex;
+    });
+    if (far) away.push(cs[g]);
+  }
+  away.sort((a, b) => a - b);
+  const background = away.length ? away[Math.floor(0.9 * (away.length - 1))] : 0;
+  const beat = Math.min(cs[c1], cs[c2]);
+  const ofBeat = beat > 0 ? weakest / beat : 0;
+  const ofBackground = weakest / (background + 1e-30);
+  return { ofBeat, ofBackground, found: ofBeat >= HALFWAY_OF_BEAT && ofBackground >= HALFWAY_OF_BACKGROUND };
+}
 
 /**
  * The rate from two independent fits, weighted by their uncertainties. When the two disagree by
@@ -235,7 +294,8 @@ export function summarize(beats, nominalPeriod, template, clusters, envelopeRate
     // tock can be compared.
     const offset = raw - referenceGap + align.shiftSeconds;
     const offsetSdMs = Math.hypot(fitTick.jitterMs / Math.sqrt(fitTick.count), fitTock.jitterMs / Math.sqrt(fitTock.count));
-    result.beatErrorDetail = { offsetMs: offset * 1e3, offsetSdMs, similarity: align.similarity };
+    const halfway = escapement === 'coaxial' ? false : halfwayBeat(template, clusters, envelopeRate).found;
+    result.beatErrorDetail = { offsetMs: offset * 1e3, offsetSdMs, similarity: align.similarity, halfway };
     const precise = offsetSdMs <= MAX_OFFSET_SD_MS && Math.max(fitTick.jitterMs, fitTock.jitterMs) <= MAX_SCATTER_MS;
     both = precise && (escapement === 'coaxial' || align.similarity >= MIN_SIMILARITY);
     if (both) {
@@ -243,7 +303,9 @@ export function summarize(beats, nominalPeriod, template, clusters, envelopeRate
       result.rate = joint.rate;
       result.rateSd = joint.rateSd;
       result.jitterMs = joint.jitterMs;
-      if (escapement !== 'coaxial') {
+      // With a beat halfway between them, the tick and the tock are the same kind of beat: the
+      // rate stands, but their gap is not the beat error.
+      if (escapement !== 'coaxial' && !halfway) {
         result.beatOffsetMs = offset * 1e3;
         result.beatErrorMs = Math.abs(offset) * 1e3;
       }

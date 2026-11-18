@@ -66,11 +66,12 @@ The beat rate can be given instead of detected: pass `{ bph: 21600 }` to `Pipeli
 rate as the last argument of either command-line tool. Only that rate is then searched. In
 tests this did not make the lock arrive sooner, but it cut the computing spent while listening
 to noise to between 30% and 40%. A wrong rate unrelated to the true one gives no lock. A mix-up
-between 18,000 and 36,000 vph can still lock, and the rate in seconds per day is then still
-right. But a 36,000 vph watch given as 18,000 vph shows a wrong beat error: the app takes every
-other beat, so its ticks and its tocks are both the watch's ticks. On simulated watches with a
-true beat error of 0.50 ms, run for 60 s, it showed about 0.01 ms or less in 20 to 32 readings.
-The test for this runs 40 s, in which the watch gave no beat error at all, so it did not catch it.
+between 18,000 and 36,000 vph can still lock; the rate in seconds per day is then still right
+and no beat error is shown. Told 18,000 vph, a 36,000 vph watch has its every other beat taken,
+so the tick and the tock found are both its ticks, and its tocks fall halfway between them. Until
+18 November that went unnoticed: run for 60 s, such a watch showed a beat error of about
+0.005 ms in every reading, against a true 0.50 ms. The pipeline now looks for a beat halfway
+between the tick and the tock, and shows no beat error when it finds one.
 
 The escapement can be set to Swiss lever (the default) or co-axial: pass
 `{ escapement: 'coaxial' }` to `Pipeline` or `analyze`. A co-axial escapement's tick and tock

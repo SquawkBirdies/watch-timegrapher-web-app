@@ -36,8 +36,9 @@ import { medfilt } from './mathutil.js';
  * @property {number|null} jitterMs scatter of the timestamps about the fitted line
  * @property {number|null} beatErrorMs gap between the tick and tock trace lines; null when unreliable
  * @property {number|null} beatOffsetMs signed offset of the tocks from the midpoint between ticks
- * @property {{offsetMs: number, offsetSdMs: number, similarity: number}|null} beatErrorDetail
- *   the raw tick-tock comparison, kept even when the beat error is judged unreliable
+ * @property {{offsetMs: number, offsetSdMs: number, similarity: number, halfway: boolean}|null} beatErrorDetail
+ *   the raw tick-tock comparison, kept even when the beat error is judged unreliable; `halfway`
+ *   when a beat lies halfway between the tick and the tock
  * @property {Float32Array[]} template averaged tick-tock cycle per band and channel
  * @property {[number, number]} clusters tick and tock positions in the template, in samples
  */
