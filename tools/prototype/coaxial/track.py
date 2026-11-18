@@ -14,8 +14,8 @@ block's beats. A one-state Kalman filter then follows that time from block to bl
     model        t_k+1 = t_k + w,   w ~ N(0, q * seconds between blocks)
     measurement  z_k = t_k + v,     v ~ N(0, R_k), R_k from resampling block k
 
-and the amplitude is the usual formula applied to t_k. A block further than 3 standard
-deviations from the filter is left out, but when two measured blocks in a row are both left out
+and the amplitude is the usual formula applied to t_k, shown only while its own uncertainty is
+5 degrees or less. A block further than 3 standard deviations from the filter is left out, but when two measured blocks in a row are both left out
 and agree with each other, the filter starts again from them: a sudden change is believed once
 it has been seen twice. `recording` and `sims` also print the filter without that restart, as
 it was before, for comparison.
@@ -47,6 +47,11 @@ MAX_SHIFT_MS = 1.5    # furthest a sound is looked for from its place in the ref
 STRONG = 0.5          # a match counts if it is at least this share of the reference against itself
 MIN_BEATS = 10        # fewest beats of each type in a block
 GATE = 3.0            # a block further than this many standard deviations from the filter is left out
+DRIFT_DEG = 2.0       # how far the amplitude may wander in a second, the filter's default: at 1, it
+                      # kept only a third of a 15 degree swing once a minute (see `swings`)
+DASH_DEG = 5.0        # a dash rather than the filter's value while its own uncertainty is over this,
+                      # as for the whole-recording reading, so that a value held over blocks with no
+                      # measurement is not shown
 
 
 def smoothed(c, tms):
@@ -214,7 +219,18 @@ def prepare(wav, stream_json, lift, reference_seconds, nearest=True):
     return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest), o
 
 
+def filter_sd_deg(row, amp):
+    """The filter's uncertainty after a block, in degrees of amplitude."""
+    return amp(row["state"]) * row["state_sd"] / row["state"]
+
+
+def shown(row, amp):
+    """Whether an app would show the filter's value after this block, rather than a dash."""
+    return row["state"] is not None and filter_sd_deg(row, amp) <= DASH_DEG
+
+
 def show(rows, bph, lift, truth=None):
+    """Print each block and the filter after it; "dash" marks a value an app would not show."""
     amp = lambda t: ev.amplitude(lift, bph, t)
     for r in rows:
         line = "  %5.0f s  beats %2d+%2d  " % (r["t"], r["beats"][0], r["beats"][1])
@@ -226,7 +242,7 @@ def show(rows, bph, lift, truth=None):
             # The scatter of the amplitude that goes with the scatter of the time.
             line += "block %5.1f +- %4.1f%s  " % (amp(r["z"]), amp(r["z"]) * r["sd"] / r["z"], "r" if r.get("restarted") else " " if r["used"] else "*")
         if r["state"] is not None:
-            line += "filter %5.1f +- %4.1f" % (amp(r["state"]), amp(r["state"]) * r["state_sd"] / r["state"])
+            line += "filter %5.1f +- %4.1f%s" % (amp(r["state"]), filter_sd_deg(r, amp), "" if shown(r, amp) else "  dash")
         print(line)
 
 
@@ -239,10 +255,10 @@ def recording(wav, prefix, lift, nearest=True):
         return
     print("reference: all %d+%d beats, unlock to lock %.2f and %.2f ms, amplitude %.0f degrees" % (ref.beats[0], ref.beats[1], ref.lift[0], ref.lift[1], ev.amplitude(lift, o["bph"], 0.5 * sum(ref.lift))))
     for block_seconds in (10, 15):
-        print("blocks of %d s, amplitude allowed to wander by 1 degree in a second; * = left out by the filter's gate, r = the filter started again:" % block_seconds)
-        show(follow(ref, block_seconds, 1.0, o["bph"], lift), o["bph"], lift)
-    print("blocks of 10 s, 1 degree in a second, gate only (the filter without the restart):")
-    show(follow(ref, 10, 1.0, o["bph"], lift, restart=False), o["bph"], lift)
+        print("blocks of %d s, amplitude allowed to wander by %g degrees in a second; * = left out by the filter's gate, r = the filter started again:" % (block_seconds, DRIFT_DEG))
+        show(follow(ref, block_seconds, DRIFT_DEG, o["bph"], lift), o["bph"], lift)
+    print("blocks of 10 s, %g degrees in a second, gate only (the filter without the restart):" % DRIFT_DEG)
+    show(follow(ref, 10, DRIFT_DEG, o["bph"], lift, restart=False), o["bph"], lift)
 
 
 def simulate(outdir, kind, name, over, seed, seconds, reference_seconds, nearest=True):
@@ -307,9 +323,8 @@ def swings(outdir, kind="coaxial"):
                 s = summary.setdefault((name, drift), {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0, "kept": [], "lag": []})
                 s["block"] += [amp(r["z"]) - truth(r["t"]) for r in measured]
                 s["filter"] += [amp(r["state"]) - truth(r["t"]) for r in later]
-                # As the app would show it: a dash while the filter's own uncertainty is over 5
-                # degrees, the limit the whole-recording reading uses.
-                s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if amp(r["state"]) * r["state_sd"] / r["state"] <= 5.0]
+                # As an app would show it, with a dash while the filter is unsure.
+                s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if shown(r, amp)]
                 s["missing"] += len(later) - len(measured)
                 s["gated"] += sum(1 for r in measured if not r["used"])
                 s["restarts"] += sum(1 for r in rows if r["restarted"])
@@ -343,7 +358,7 @@ def steady(outdir, kind="coaxial", runs=16, seconds=180):
     os.makedirs(outdir, exist_ok=True)
     reference_seconds, block_seconds = 60, 10
     drifts = (0.5, 1.0, 2.0, 4.0)
-    summary = {d: {"blocks": 0, "measured": 0, "gated": 0, "restarts": 0, "filter": [], "after": []} for d in drifts}
+    summary = {d: {"blocks": 0, "measured": 0, "gated": 0, "restarts": 0, "filter": [], "shown": [], "after": []} for d in drifts}
     block_err, block_z = [], []
     for seed in range(101, 101 + runs):
         ref, bph, lift, spec = simulate(outdir, kind, "steady 285 for %d s" % seconds, {}, seed, seconds, reference_seconds)
@@ -366,6 +381,7 @@ def steady(outdir, kind="coaxial", runs=16, seconds=180):
             s["measured"] += sum(1 for r in scored if r["z"] is not None)
             s["gated"] += sum(1 for r in scored if r["z"] is not None and not r["used"])
             s["filter"] += [amp(r["state"]) - 285.0 for r in scored]
+            s["shown"] += [amp(r["state"]) - 285.0 for r in scored if shown(r, amp)]
             for i, r in enumerate(rows):
                 if r["restarted"]:
                     s["restarts"] += 1
@@ -380,8 +396,9 @@ def steady(outdir, kind="coaxial", runs=16, seconds=180):
     for drift, s in summary.items():
         # With none seen in n blocks, the rate is below 3/n with 95% confidence.
         bound = " (so fewer than 1 in %d blocks, with 95%% confidence)" % (s["measured"] // 3) if s["restarts"] == 0 else ""
-        print("%.1f deg/s: %d blocks scored, %d measured, %d gated out, %d restarts%s; filter rms %.1f, worst %.1f degrees%s" % (
+        print("%.1f deg/s: %d blocks scored, %d measured, %d gated out, %d restarts%s; filter rms %.1f, worst %.1f degrees; shown within %g degrees of uncertainty %d, rms %.1f, worst %.1f%s" % (
             drift, s["blocks"], s["measured"], s["gated"], s["restarts"], bound, rms(s["filter"]), max(np.abs(s["filter"])),
+            DASH_DEG, len(s["shown"]), rms(s["shown"]), max(np.abs(s["shown"])) if s["shown"] else float("nan"),
             "; worst within two blocks after a restart %.1f" % max(np.abs(s["after"])) if s["after"] else ""))
 
 
@@ -397,7 +414,7 @@ def sims(outdir, kind="coaxial", nearest=True):
         ("step 285 to 255 at 120 s", {"amplitudeRamp": {"from": 285, "to": 255, "t0": 120, "t1": 120.5}}),
         ("wandering 285 +- 10, every 60 s", {"amplitudeSwing": {"base": 285, "swing": 10, "period": 60}}),
     ]
-    drifts = (0.5, 1.0, 2.0)
+    drifts = (0.5, 1.0, 2.0, 4.0)
     summary = {}
     for name, over in cases:
         for seed in (91, 92):
@@ -416,7 +433,7 @@ def sims(outdir, kind="coaxial", nearest=True):
             blocks = measure_blocks(ref, block_seconds)
             for drift, restart in [(d, r) for r in (True, False) for d in drifts]:
                 rows = run_filter(ref, blocks, block_seconds, drift, bph, lift, restart)
-                if drift == 1.0:
+                if drift == DRIFT_DEG:
                     if not restart:
                         print("%s, seed %d, gate only (the filter without the restart):" % (name, seed))
                     show(rows, bph, lift, truth)
@@ -425,9 +442,10 @@ def sims(outdir, kind="coaxial", nearest=True):
                 block_err = [amp(r["z"]) - truth(r["t"]) for r in later if r["z"] is not None]
                 filter_err = [amp(r["state"]) - truth(r["t"]) for r in later]
                 key = (name, drift, restart)
-                s = summary.setdefault(key, {"block": [], "filter": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0})
+                s = summary.setdefault(key, {"block": [], "filter": [], "shown": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0})
                 s["block"] += block_err
                 s["filter"] += filter_err
+                s["shown"] += [amp(r["state"]) - truth(r["t"]) for r in later if shown(r, amp)]
                 s["missing"] += sum(1 for r in later if r["z"] is None)
                 s["gated"] += sum(1 for r in later if r["z"] is not None and not r["used"])
                 s["restarts"] += sum(1 for r in rows if r["restarted"])
@@ -435,8 +453,9 @@ def sims(outdir, kind="coaxial", nearest=True):
     print()
     rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
     for (name, drift, restart), s in summary.items():
-        print("%-36s drift %.1f deg/s%s: blocks alone rms error %.1f, worst %.1f; filter rms error %.1f, worst %.1f; %d blocks, %d without a measurement, %d gated out, %d restarts" % (
-            name, drift, "" if restart else ", gate only", rms(s["block"]), max(np.abs(s["block"])) if s["block"] else float("nan"), rms(s["filter"]), max(np.abs(s["filter"])) if s["filter"] else float("nan"), s["blocks"], s["missing"], s["gated"], s["restarts"]))
+        print("%-36s drift %.1f deg/s%s: blocks alone rms error %.1f, worst %.1f; filter rms error %.1f, worst %.1f; shown within %g degrees of uncertainty %d, rms %.1f, worst %.1f; %d blocks, %d without a measurement, %d gated out, %d restarts" % (
+            name, drift, "" if restart else ", gate only", rms(s["block"]), max(np.abs(s["block"])) if s["block"] else float("nan"), rms(s["filter"]), max(np.abs(s["filter"])) if s["filter"] else float("nan"),
+            DASH_DEG, len(s["shown"]), rms(s["shown"]), max(np.abs(s["shown"])) if s["shown"] else float("nan"), s["blocks"], s["missing"], s["gated"], s["restarts"]))
 
 
 def read_tracks(path):

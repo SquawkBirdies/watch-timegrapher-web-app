@@ -143,8 +143,12 @@ measurement  z(k)   = t(k) + v,   v ~ N(0, R(k)),  R(k) from resampling block k
 amplitude    lift angle / (2 sin(pi f t))
 ```
 
-q is set as how far the amplitude may wander in a second, in degrees. A block more than 3
-standard deviations from the filter's value is left out. When two measured blocks in a row are
+q is set as how far the amplitude may wander in a second, in degrees: 2° by default, which was
+1° until the larger swings below showed it smoothing them away. The filter's value is shown only
+while its own uncertainty is 5° or less, the limit the whole-recording reading uses; otherwise
+the commands print "dash", as an app would show one, so that a value held over blocks with no
+measurement is not shown. A block more than 3 standard deviations from the filter's value is
+left out. When two measured blocks in a row are
 both left out but agree with each other within 3 standard deviations, the filter starts again
 from them: a sudden change is believed once it has been seen twice. Both commands also print
 the filter without that restart, gate only, as it was before.
@@ -204,7 +208,8 @@ that filter's error from 7.0° rms to 3.0°.
 
 On the Omega's Safari capture, with the whole capture as the reference, so not an independent
 test, the six 10 s blocks read 280°, 282°, 289°, 287°, 286° and 282°, each with a scatter of
-1.3° to 2.0°. The filter at 1° a second followed them: 280°, 282°, 288°, 287°, 286°, 282°.
+1.3° to 2.0°. The filter at 2° a second, its default, followed them with no dash: 280°, 282°,
+289°, 287°, 286°, 282°. At 1° a second it read 288° for the third.
 
 Limits of this part: it needs the reference first, a minute here. The reference is fixed, and a
 sound is looked for within 1.5 ms of its place in it, which on both simulated watches covers
@@ -239,13 +244,17 @@ references read 280.7° to 282.9° on the co-axial and 284.0° to 284.7° on the
   it inherits the error. The co-axial reads 1° to 2° high at ±15° and 11° to 14° high at ±30°.
   The 5 s swing does the same as the 60 s one, so what matters is the spread of amplitudes among
   the beats averaged, not how fast it changes; the ±10° swing above cost the lever about 2°. The
-  likely cause, not yet proven: when the beats' timing moves, each sound is smeared in the
-  average, and the point where a smeared sound is half risen lands early. Witschi times each
-  vibration on its own, so its readings should not be biased this way. Averaging is what lets
-  the prototype find the co-axial's faint unlock at all.
-- At its default of 1° a second the filter smooths away most of a real swing: it keeps 32% of
-  the co-axial's ±15° and 57% of the lever's, 20 s late, where the blocks alone keep 90%. At
-  2° a second it keeps 69% and 90%.
+  cause, checked against the simulator's true unlock and lock times: the app's timestamp
+  follows a beat's loudest sound, so a sound whose place moves with the lift time is smeared in
+  the average, and the point where a smeared sound is half risen lands early. In the lever that
+  is the unlock: at ±15° it lands 0.07 ms before its true mean where a steady watch's lands
+  0.05 ms after, so the lift reads 0.11 ms long. At ±30° the swing piles beats at its two ends,
+  the smeared unlock splits in two and the earlier half is taken. Witschi times each vibration
+  on its own, so its readings should not be biased this way. Averaging is what lets the
+  prototype find the co-axial's faint unlock at all.
+- At 1° a second, its default until now, the filter smoothed away most of a real swing: it kept
+  32% of the co-axial's ±15° and 57% of the lever's, 20 s late, where the blocks alone keep 90%.
+  At 2° a second it keeps 69% and 90%, so 2° is now the default.
 - The worst errors at 2° and 4° a second, about 21° on the co-axial, are blocks with no
   measurement, where the filter holds its last value while the swing goes on. Shown only while
   its own uncertainty is 5° or less, as an app would show it, the co-axial's ±15° swing at
@@ -260,7 +269,10 @@ with 95% confidence, so fewer than about one in 10 minutes. The co-axial's block
 their resampling says: 7 of 172 lie beyond twice their own scatter and 1 beyond three times. 20
 of its 192 blocks gave no measurement. A looser setting costs little when nothing changes: the
 co-axial filter's error went from 3.5° rms, 7.8° at worst, at 1° a second to 3.6° and 8.9° at
-2°, and 3.8° and 13.0° at 4°. The lever's stayed at 0.6° rms. Many short watches rather than a
+2°, and 3.8° and 13.0° at 4°. The lever's stayed at 0.6° rms. With the dash, the steady co-axial
+showed 159 of its 192 readings at 2° a second, against 189 at 1°: about one in six is a dash,
+each at least a block long. Those shown were 3.5° rms and 8.8° at worst. Every lever reading
+was shown. Many short watches rather than a
 few long ones, because making a simulated 600 s watch took over 15 minutes against 2 for 180 s.
 
 ## Through the app's unit tests
@@ -326,7 +338,10 @@ captures read as before, with uncertainties within 0.01 ms of what they were.
   30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it.
 - The averaging assumes the amplitude holds still over the beats averaged. On simulated watches
   a ±15° swing moved the lever's reading 5° low and a ±30° swing 22° low; the co-axial's read
-  high, by up to 14° at ±30°. See "Larger swings, and false restarts".
+  high, by up to 14° at ±30°. See "Larger swings, and false restarts". Lining each beat up
+  again on how far its sounds have moved, block by block, before averaging took the lever's
+  error away for once-a-minute swings in a first test, not yet part of the prototype; it cannot
+  help a swing faster than a block.
 - The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
   a good reading back.
 - It is not yet a general measure. On the simulated watches of the unit tests it showed a
