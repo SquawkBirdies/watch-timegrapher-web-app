@@ -2,8 +2,9 @@
 // js/audio/simulator.js places each beat's sounds at fixed times around the beat. Here the
 // balance swings as a sine with a given amplitude and rest position, the unlock and the lock of
 // each beat happen when it passes given angles, and the sounds follow from those events. So the
-// truth is known for the readings that depend on the events inside a beat: the beat error as a
-// timing machine defines it (from the unlocks), the time from unlock to lock, and the amplitude.
+// truth is known for the readings that depend on the events inside a beat: the beat error as
+// Witschi's instruments define it (from the unlocks), the time from unlock to lock, and the
+// amplitude.
 // The two beats can have different sounds and different angles, as a co-axial escapement does.
 
 import { Cascade, bandpassSections } from '../../js/dsp/biquad.js';
@@ -53,7 +54,7 @@ import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
  * @property {Float64Array} unlock time of each beat's unlock, in seconds
  * @property {Float64Array} lock time of each beat's lock, in seconds
  * @property {number} unlockGapMs how much later than midway between the even beats' unlocks
- *   the odd beats' unlocks fall, on average; its size is the beat error a timing machine shows
+ *   the odd beats' unlocks fall, on average; its size is the beat error as Witschi defines it
  * @property {number} lockGapMs the same for the locks
  * @property {[number, number]} liftMs mean time from unlock to lock in the even and odd beats
  * @property {number} meanAmplitude amplitude averaged over the recording, in degrees
