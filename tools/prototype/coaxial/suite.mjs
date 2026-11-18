@@ -1,13 +1,21 @@
 // Prototype check: the watches of the app's unit tests, for the co-axial prototype.
 //
-//   node tools/prototype/coaxial/suite.mjs <directory> [part of a watch name]
+//   node tools/prototype/coaxial/suite.mjs <directory> [part of a watch name] [--as-tested]
 //
-// Builds the 36 simulated watches the test files make as whole recordings, the same way and with
-// the same seeds, and for each writes <name>.wav (the first channel, as the app takes it),
+// Builds the 36 simulated watches the test files make as whole recordings, with the same settings
+// and seeds, and for each writes <name>.wav (the first channel, as the app takes it),
 // <name>.beats.json (the app's whole-recording analysis in co-axial mode, as beats.mjs writes it)
 // and <name>.truth.json. checks.py suite then runs the prototype on them and on the recordings in
 // tests/fixtures. Two kinds are left out: the watches tests/interface.test.js makes as live
 // streams (WatchStream), and the Voice Memos ETA recording tests/irregular.test.js re-times.
+//
+// Louder and 60 s long, as decided on 18 November. The tests' own watches are quiet on purpose,
+// to test the timing of faint watches: the first sound of their quieter beat stands only 0.3 to
+// 1.9 dB over the background, against 3.8 dB in the Omega's Safari capture, and in 20 to 75 s that
+// is too little for the prototype to time it. So each watch here runs 60 s, and its gain is
+// raised, never lowered, until the first sound of its quieter beat is as loud as that of the
+// default watch at gain 3.6, whose quieter unlock stands about 3.8 dB over the background.
+// --as-tested builds them as the tests do.
 //
 // The truth: these watches come from js/audio/simulator.js, which places each beat's sounds at
 // fixed times around it. The tock's sounds all move by `beatOffsetMs`, so that is the true beat
@@ -24,6 +32,42 @@ import { basketCase } from '../../../tests/helpers/irregular.js';
 import { join } from '../../../tests/helpers/stream.js';
 
 const DEFAULT_SOUNDS = [{ dt: -0.007, amp: 0.25 }, { dt: -0.0045, amp: 0.45 }, { dt: 0, amp: 1.0 }];
+
+const AS_TESTED = process.argv.includes('--as-tested');
+const SECONDS = 60;
+// How loud the first sound of the quieter beat is made, in the simulator's units: the default
+// watch's tock (its sounds at 0.8 of the tick's) at gain 3.6. Measured at the unlock's place in
+// the average, in its loudest band, that stood 2.7 to 3.1 dB over the background at gain 3 and
+// 7.0 to 7.2 dB at gain 6; the level grows as the square of the gain, so 3.6 gives about 3.8 dB.
+const QUIET_FIRST = 0.25 * 0.8 * 3.6;
+
+/**
+ * Loudness of the first sound of a watch's quieter beat, per unit of gain.
+ * @param {import('../../../js/audio/simulator.js').WatchOptions} o
+ */
+function quieterFirst(o) {
+  const tick = o.tickSounds || DEFAULT_SOUNDS;
+  const tock = o.tockSounds || tick;
+  // The simulator plays the tock at 0.8 of the tick when the two share their sounds.
+  return Math.min(tick[0].amp, tock[0].amp * (o.tockSounds ? 1 : 0.8));
+}
+
+/**
+ * The gain a watch is built with: as the test has it, or raised to QUIET_FIRST.
+ * @param {import('../../../js/audio/simulator.js').WatchOptions} o
+ */
+function gainFor(o) {
+  const gain = o.gain ?? 1;
+  return AS_TESTED || gain === 0 ? gain : Math.max(gain, QUIET_FIRST / quieterFirst(o));
+}
+
+/**
+ * A length in seconds: as the test has it, or SECONDS.
+ * @param {number} tested
+ */
+function secondsFor(tested) {
+  return AS_TESTED ? tested : SECONDS;
+}
 
 /**
  * Time from a beat's first sound to its last sound that is at least half as loud as its loudest,
@@ -62,7 +106,7 @@ function sim(name, test, o, extra = {}) {
   return {
     name,
     test,
-    make: () => synthesizeWatch(o),
+    make: () => synthesizeWatch({ ...o, gain: gainFor(o), seconds: secondsFor(o.seconds) }),
     beatErrorMs: o.gain === 0 ? null : sameShape ? Math.abs(o.beatOffsetMs || 0) : null,
     liftMs: o.gain === 0 || !sameShape ? null : liftOf(tick),
     expect: o.gain === 0 ? 'none' : sameShape ? 'reading' : 'refuse',
@@ -88,7 +132,9 @@ const cases = [
     test: 'stream: ticking stops',
     make: () => {
       const w = { bph: 28800, rate: 5, beatOffsetMs: 0.2, gain: 1.6 };
-      return { sampleRate: 48000, channels: join([synthesizeWatch({ ...w, seconds: 20, seed: 5 }), synthesizeWatch({ ...w, gain: 0, seconds: 20, seed: 6 }), synthesizeWatch({ ...w, seconds: 25, seed: 7 })]) };
+      const g = gainFor(w);
+      // 20 s of ticking, a pause, 25 s more: 65 s as tested, 60 s with a 15 s pause here.
+      return { sampleRate: 48000, channels: join([synthesizeWatch({ ...w, gain: g, seconds: 20, seed: 5 }), synthesizeWatch({ ...w, gain: 0, seconds: AS_TESTED ? 20 : 15, seed: 6 }), synthesizeWatch({ ...w, gain: g, seconds: 25, seed: 7 })]) };
     },
     beatErrorMs: 0.2,
     liftMs: 7,
@@ -111,7 +157,7 @@ const cases = [
   ...[1, 2, 3].map((seed) => ({
     name: `basket case ${seed}`,
     test: 'irregular: basket case',
-    make: () => basketCase(seed),
+    make: () => basketCase(seed, { seconds: secondsFor(60), gain: gainFor({ bph: 18000, seconds: 60, gain: 1.6 }) }),
     beatErrorMs: 2,
     liftMs: 7,
     expect: /** @type {'reading'} */ ('reading'),
@@ -125,7 +171,10 @@ const cases = [
     test: 'reference: carried timing reference',
     make: () => {
       const w = { bph: 21600, rate: 0, beatOffsetMs: 0, gain: 1.4, tickSounds: coaxialTick.map((s) => ({ ...s, decayMs: 0.5 })) };
-      return { sampleRate: 48000, channels: join([synthesizeWatch({ ...w, seconds: 48, seed: 51, tockSounds: twoSoundTock(0.72, 0.56) }), synthesizeWatch({ ...w, seconds: 60, seed: 52, tockSounds: twoSoundTock(0.6, 0.66) })]) };
+      const parts = [{ seconds: 48, seed: 51, tockSounds: twoSoundTock(0.72, 0.56) }, { seconds: 60, seed: 52, tockSounds: twoSoundTock(0.6, 0.66) }];
+      // One gain for both parts, set by the quieter of the two tocks; 30 s each here.
+      const g = Math.max(...parts.map((p) => gainFor({ ...w, ...p })));
+      return { sampleRate: 48000, channels: join(parts.map((p) => synthesizeWatch({ ...w, ...p, gain: g, seconds: AS_TESTED ? p.seconds : SECONDS / 2 }))) };
     },
     beatErrorMs: 0,
     liftMs: 3.7,
@@ -142,7 +191,8 @@ const cases = [
     name: 'live run with a gap',
     test: 'live: microphone cut off for 2 s',
     make: () => {
-      const w = synthesizeWatch({ bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds: 75, sampleRate: 48000, seed: 61 });
+      const o = { bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds: 75, sampleRate: 48000, seed: 61 };
+      const w = synthesizeWatch({ ...o, gain: gainFor(o), seconds: secondsFor(o.seconds) });
       const audio = w.channels[0].slice();
       audio.fill(0, 25 * 48000, 27 * 48000);
       return { sampleRate: 48000, channels: [audio] };
@@ -154,9 +204,9 @@ const cases = [
   },
 ];
 
-const [dir, match] = process.argv.slice(2);
+const [dir, match] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 if (!dir) {
-  console.error('usage: suite.mjs <directory> [part of a watch name, to make only those]');
+  console.error('usage: suite.mjs <directory> [part of a watch name, to make only those] [--as-tested]');
   process.exit(1);
 }
 mkdirSync(dir, { recursive: true });
