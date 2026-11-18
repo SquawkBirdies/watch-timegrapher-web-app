@@ -417,6 +417,13 @@ captures read as before, with uncertainties within 0.01 ms of what they were.
   description was found of what Spe1 does.
 - The 3861's unlock stands only 3.5 to 5.5 dB over the background, mostly above 18 kHz. It took
   30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it.
+- The ETA's beat error from the unlocks is not steady across its 30 s capture, and why is not
+  yet known. Its 10 s stretches read 0.21, 0.16 and 0.10 ms (the first 12 s for the first), each
+  ± 0.02, while the gap between the app's timestamps held at 0.41 to 0.42 ms. Either the unlock
+  moves against the rest of the beat or the stated uncertainty is too small; the whole capture's
+  0.15 ± 0.01 ms hides it, and a longer capture would tell. Its unlock itself is found from
+  4 s of beats on. Lined up, the first 20 s were held back, with 18% of resamples failing to find
+  the sounds, where the plain average read 0.16 ± 0.01 ms.
 - The averaging assumes the amplitude holds still over the beats averaged. On simulated watches
   a ±15° swing moved the lever's reading 5° low and a ±30° swing 22° low; the co-axial's read
   high, by up to 14° at ±30°. See "Larger swings, and false restarts". Lining the beats up
