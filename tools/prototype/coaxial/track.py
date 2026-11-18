@@ -14,7 +14,11 @@ block's beats. A one-state Kalman filter then follows that time from block to bl
     model        t_k+1 = t_k + w,   w ~ N(0, q * seconds between blocks)
     measurement  z_k = t_k + v,     v ~ N(0, R_k), R_k from resampling block k
 
-and the amplitude is the usual formula applied to t_k.
+and the amplitude is the usual formula applied to t_k. A block further than 3 standard
+deviations from the filter is left out, but when two measured blocks in a row are both left out
+and agree with each other, the filter starts again from them: a sudden change is believed once
+it has been seen twice. `recording` and `sims` also print the filter without that restart, as
+it was before, for comparison.
 
 usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest]
        python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest]
@@ -120,26 +124,18 @@ class Reference:
         return 0.5 * (lifts[0] + lifts[1])
 
 
-def follow(ref, block_seconds, drift_deg, bph, lift, resamples=40, seed=1):
-    """Measure every block and run the filter over the measurements.
-
-    drift_deg  how far the amplitude may wander in one second, in degrees: the filter's q
-
-    Returns one dict per block: its middle time, how many beats, the block's own measurement
-    and its scatter under resampling, and the filter's value and uncertainty after the block."""
+def measure_blocks(ref, block_seconds, resamples=40, seed=1):
+    """Measure every block: one dict per block with its middle time, how many beats, and its
+    time from unlock to lock with the scatter of that under resampling (None when a block gave
+    no measurement)."""
     rng = np.random.default_rng(seed)
     t_end = max(t.max() for t in ref.times)
     t0 = min(t.min() for t in ref.times)
-    t_ref = 0.5 * (ref.lift[0] + ref.lift[1])
-    # One degree of amplitude in milliseconds of unlock-to-lock time, near the reference.
-    ms_per_deg = t_ref / ev.amplitude(lift, bph, t_ref)
-    q = (drift_deg * ms_per_deg) ** 2
-    state, var = None, None
     out = []
     a = t0
     while a + block_seconds <= t_end + 0.5:
         idx = [np.flatnonzero((t >= a) & (t < a + block_seconds)) for t in ref.times]
-        row = {"t": a + 0.5 * block_seconds, "beats": [len(i) for i in idx], "z": None, "sd": None, "used": False}
+        row = {"t": a + 0.5 * block_seconds, "beats": [len(i) for i in idx], "z": None, "sd": None}
         if min(len(i) for i in idx) >= MIN_BEATS:
             z = ref.block(idx)
             if z is not None:
@@ -147,6 +143,27 @@ def follow(ref, block_seconds, drift_deg, bph, lift, resamples=40, seed=1):
                 zs = np.array([v for v in zs if v is not None])
                 if len(zs) >= 0.8 * resamples:
                     row["z"], row["sd"] = z, max(float(zs.std()), 0.02)
+        out.append(row)
+        a += block_seconds
+    return out
+
+
+def run_filter(ref, blocks, block_seconds, drift_deg, bph, lift, restart=True):
+    """Run the filter over measured blocks. Returns a copy of each block with whether the filter
+    used it, and the filter's value and uncertainty after it.
+
+    drift_deg  how far the amplitude may wander in one second, in degrees: the filter's q
+    restart    start again from two measured blocks in a row that the gate left out but that
+               agree with each other; False gives the earlier filter, gate only"""
+    t_ref = 0.5 * (ref.lift[0] + ref.lift[1])
+    # One degree of amplitude in milliseconds of unlock-to-lock time, near the reference.
+    ms_per_deg = t_ref / ev.amplitude(lift, bph, t_ref)
+    q = (drift_deg * ms_per_deg) ** 2
+    state, var = None, None
+    left_out = []
+    out = []
+    for block in blocks:
+        row = dict(block, used=False, restarted=False)
         if state is not None:
             var += q * block_seconds
         if row["z"] is not None:
@@ -157,10 +174,24 @@ def follow(ref, block_seconds, drift_deg, bph, lift, resamples=40, seed=1):
                 state += gain * (row["z"] - state)
                 var *= 1 - gain
                 row["used"] = True
+                left_out = []
+            else:
+                left_out.append(row)
+                a, b = left_out[-2:] if len(left_out) >= 2 else (None, None)
+                if restart and a is not None and abs(a["z"] - b["z"]) <= GATE * np.hypot(a["sd"], b["sd"]):
+                    w = [1 / a["sd"] ** 2, 1 / b["sd"] ** 2]
+                    state = (w[0] * a["z"] + w[1] * b["z"]) / sum(w)
+                    var = 1 / sum(w)
+                    row["used"], row["restarted"] = True, True
+                    left_out = []
         row["state"], row["state_sd"] = state, (None if var is None else float(np.sqrt(var)))
         out.append(row)
-        a += block_seconds
     return out
+
+
+def follow(ref, block_seconds, drift_deg, bph, lift, resamples=40, seed=1, restart=True):
+    """Measure every block and run the filter over the measurements."""
+    return run_filter(ref, measure_blocks(ref, block_seconds, resamples, seed), block_seconds, drift_deg, bph, lift, restart)
 
 
 def true_amplitude(spec, constant, t):
@@ -191,7 +222,7 @@ def show(rows, bph, lift, truth=None):
             line += "block: no measurement       "
         else:
             # The scatter of the amplitude that goes with the scatter of the time.
-            line += "block %5.1f +- %4.1f%s  " % (amp(r["z"]), amp(r["z"]) * r["sd"] / r["z"], " " if r["used"] else "*")
+            line += "block %5.1f +- %4.1f%s  " % (amp(r["z"]), amp(r["z"]) * r["sd"] / r["z"], "r" if r.get("restarted") else " " if r["used"] else "*")
         if r["state"] is not None:
             line += "filter %5.1f +- %4.1f" % (amp(r["state"]), amp(r["state"]) * r["state_sd"] / r["state"])
         print(line)
@@ -206,8 +237,10 @@ def recording(wav, prefix, lift, nearest=True):
         return
     print("reference: all %d+%d beats, unlock to lock %.2f and %.2f ms, amplitude %.0f degrees" % (ref.beats[0], ref.beats[1], ref.lift[0], ref.lift[1], ev.amplitude(lift, o["bph"], 0.5 * sum(ref.lift))))
     for block_seconds in (10, 15):
-        print("blocks of %d s, amplitude allowed to wander by 1 degree in a second; * = left out by the filter's gate:" % block_seconds)
+        print("blocks of %d s, amplitude allowed to wander by 1 degree in a second; * = left out by the filter's gate, r = the filter started again:" % block_seconds)
         show(follow(ref, block_seconds, 1.0, o["bph"], lift), o["bph"], lift)
+    print("blocks of 10 s, 1 degree in a second, gate only (the filter without the restart):")
+    show(follow(ref, 10, 1.0, o["bph"], lift, restart=False), o["bph"], lift)
 
 
 def sims(outdir, kind="coaxial", nearest=True):
@@ -238,32 +271,36 @@ def sims(outdir, kind="coaxial", nearest=True):
                 continue
             amp = lambda t: ev.amplitude(lift, bph, t)
             print("%s, seed %d: reference from the first %d s (%d+%d beats): %.0f degrees" % (name, seed, reference_seconds, ref.beats[0], ref.beats[1], amp(0.5 * sum(ref.lift))))
-            for drift in drifts:
-                rows = follow(ref, block_seconds, drift, bph, lift)
+            blocks = measure_blocks(ref, block_seconds)
+            for drift, restart in [(d, r) for r in (True, False) for d in drifts]:
+                rows = run_filter(ref, blocks, block_seconds, drift, bph, lift, restart)
                 if drift == 1.0:
+                    if not restart:
+                        print("%s, seed %d, gate only (the filter without the restart):" % (name, seed))
                     show(rows, bph, lift, truth)
                 # Blocks after the reference stretch are the test: the filter has not seen them.
                 later = [r for r in rows if r["t"] > reference_seconds and r["state"] is not None]
                 block_err = [amp(r["z"]) - truth(r["t"]) for r in later if r["z"] is not None]
                 filter_err = [amp(r["state"]) - truth(r["t"]) for r in later]
-                key = (name, drift)
-                s = summary.setdefault(key, {"block": [], "filter": [], "missing": 0, "gated": 0, "blocks": 0})
+                key = (name, drift, restart)
+                s = summary.setdefault(key, {"block": [], "filter": [], "missing": 0, "gated": 0, "blocks": 0, "restarts": 0})
                 s["block"] += block_err
                 s["filter"] += filter_err
                 s["missing"] += sum(1 for r in later if r["z"] is None)
                 s["gated"] += sum(1 for r in later if r["z"] is not None and not r["used"])
+                s["restarts"] += sum(1 for r in rows if r["restarted"])
                 s["blocks"] += len(later)
     print()
     rms = lambda v: float(np.sqrt(np.mean(np.square(v)))) if len(v) else float("nan")
-    for (name, drift), s in summary.items():
-        print("%-36s drift %.1f deg/s: blocks alone rms error %.1f, worst %.1f; filter rms error %.1f, worst %.1f; %d blocks, %d without a measurement, %d gated out" % (
-            name, drift, rms(s["block"]), max(np.abs(s["block"])) if s["block"] else float("nan"), rms(s["filter"]), max(np.abs(s["filter"])) if s["filter"] else float("nan"), s["blocks"], s["missing"], s["gated"]))
+    for (name, drift, restart), s in summary.items():
+        print("%-36s drift %.1f deg/s%s: blocks alone rms error %.1f, worst %.1f; filter rms error %.1f, worst %.1f; %d blocks, %d without a measurement, %d gated out, %d restarts" % (
+            name, drift, "" if restart else ", gate only", rms(s["block"]), max(np.abs(s["block"])) if s["block"] else float("nan"), rms(s["filter"]), max(np.abs(s["filter"])) if s["filter"] else float("nan"), s["blocks"], s["missing"], s["gated"], s["restarts"]))
 
 
 def read_tracks(path):
     """The tracks printed by `sims` or `recording`: a list of (heading, rows)."""
     import re
-    row = re.compile(r"^\s+(\d+) s\s+beats\s+\d+\+\s*\d+\s+(?:true\s+([\d.]+)\s+)?(?:block\s+([\d.]+) \+-\s+([\d.]+)(\*| )|block: no measurement)\s+(?:filter\s+([\d.]+) \+-\s+([\d.]+))?")
+    row = re.compile(r"^\s+(\d+) s\s+beats\s+\d+\+\s*\d+\s+(?:true\s+([\d.]+)\s+)?(?:block\s+([\d.]+) \+-\s+([\d.]+)(\*| |r)|block: no measurement)\s+(?:filter\s+([\d.]+) \+-\s+([\d.]+))?")
     tracks = []
     for text in open(path):
         m = row.match(text)
@@ -283,7 +320,7 @@ def figure(sims_path, recording_path, out):
     surface, ink, ink2, grid = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
     blue, orange = "#2a78d6", "#eb6834"
     plt.rcParams.update({"font.size": 11, "axes.edgecolor": grid, "axes.labelcolor": ink2, "xtick.color": ink2, "ytick.color": ink2, "text.color": ink})
-    sims = [t for t in read_tracks(sims_path) if "seed 91" in t[0]]
+    sims = [t for t in read_tracks(sims_path) if "seed 91" in t[0] and "gate only" not in t[0]]
     capture = read_tracks(recording_path)[0]
     titles = ["Simulated: steady at 285\u00b0", "Simulated: falling from 290\u00b0 to 250\u00b0", "Simulated: dropping from 285\u00b0 to 255\u00b0 at once", "Simulated: wandering by \u00b110\u00b0 every 60 s"]
     fig = plt.figure(figsize=(8.2, 10.2), facecolor=surface)
