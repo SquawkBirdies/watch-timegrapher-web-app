@@ -392,8 +392,8 @@ Louder and 60 s long, lined up as by default; the plain average gave the same ve
 The two wrong readings come from the beat rate the test gives. Told 18,000 vph, the app takes
 every other beat of a 36,000 vph watch, so its ticks and its tocks are both the watch's ticks:
 the gap between them is not the beat error, and the true tocks are never timed. The app's own
-Swiss-lever reading has the same fault (see Limits). A beat halfway between the app's beats
-would give it away.
+Swiss-lever reading had the same fault until 18 November (see Limits). A beat halfway between
+the app's beats gives it away, and the app now looks for one.
 
 As the tests make them (`--as-tested`), with the plain average:
 
@@ -511,9 +511,10 @@ the stated scatter can be too small; the fresh search in each resample is what h
   irregular watch, whose uncertainty came to 0.25 to 0.89 ms.
 - A beat rate given at half the watch's own pairs the watch's ticks with its ticks. On the
   36,000 vph watches told 18,000 vph the prototype showed 0.01 and 0.03 ms against a true
-  0.50 ms. The app's live pipeline does the same in Swiss-lever mode: on those watches run for
-  60 s it showed a beat error of about 0.01 ms or less in 20 to 32 of its readings, at the tests'
-  gain of 1.4 and louder. Its test runs 40 s, too short for the watch to give a reading. A port
-  needs to look for a beat halfway between the app's beats.
+  0.50 ms. The app's live pipeline did the same in Swiss-lever mode until 18 November: on those
+  watches run for 60 s it showed a beat error of about 0.01 ms or less in 20 to 32 of its
+  readings, at the tests' gain of 1.4 and louder. Its test ran 40 s, too short for the watch to
+  give a reading. The app now shows no beat error when it finds a beat halfway between its
+  beats, and a port needs the same check.
 - One watch and one capture. The averaging itself runs on a whole recording, in Python, even
   when the beat times come from the real-time pipeline.

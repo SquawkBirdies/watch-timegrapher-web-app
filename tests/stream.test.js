@@ -157,14 +157,22 @@ test('a wrong beat rate from the user never gives a wrong rate or beat error', (
     }
   }
   // 18,000 and 36,000 vph are exact multiples, so a mix-up can still lock. The rate in seconds
-  // per day is then still right, and no beat error is shown.
-  for (const [actual, told] of /** @type {[number, number][]} */ ([[18000, 36000], [36000, 18000]])) {
+  // per day is then still right, and no beat error is shown. Told 18,000 vph, a 36,000 vph watch
+  // has its every other beat taken, so the tick and the tock found are both its ticks, and its
+  // tocks fall halfway between them. It is run for 60 s: in 40 s it gives no reading at all, and
+  // in 60 s, before the halfway beat was looked for, every reading showed about 0.005 ms.
+  for (const [actual, told, seconds] of /** @type {[number, number, number][]} */ ([[18000, 36000, 40], [36000, 18000, 60]])) {
     for (const rate of [-10, 10]) {
-      const w = synthesizeWatch({ bph: actual, rate, beatOffsetMs: 0.5, gain: 1.4, seconds: 40, seed: actual });
+      const w = synthesizeWatch({ bph: actual, rate, beatOffsetMs: 0.5, gain: 1.4, seconds, seed: actual });
       const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { bph: told } });
-      if (r.last && r.last.rate !== null) {
-        near(r.last.rate, rate, 1, `${actual} vph watch, told ${told}: rate`);
-        assert.equal(r.last.beatErrorMs, null, `${actual} vph watch, told ${told}: beat error`);
+      const read = r.readings.filter((x) => x.rate !== null);
+      if (actual === 36000) {
+        assert.ok(read.length >= 10, `${actual} vph watch, told ${told}: ${read.length} readings`);
+        assert.ok(read.some((x) => x.beatErrorDetail && x.beatErrorDetail.halfway), 'the beat halfway between was found');
+      }
+      for (const x of read) {
+        near(x.rate, rate, 1, `${actual} vph watch, told ${told}: rate at ${x.t.toFixed(1)} s`);
+        assert.equal(x.beatErrorMs, null, `${actual} vph watch, told ${told}: beat error at ${x.t.toFixed(1)} s`);
       }
     }
   }

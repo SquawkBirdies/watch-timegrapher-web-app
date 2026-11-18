@@ -57,13 +57,13 @@ export function buildSplitTemplates(rows, period, shifts, length = rows[0].lengt
 }
 
 /**
- * Locate the tick and the tock in a template: the strongest half-millisecond cluster, and the
- * strongest one about half a period away from it.
+ * How strongly each half-millisecond stretch of a template stands out: the squared positive
+ * values of every band, summed over the bands and over the half millisecond that starts there.
  * @param {Float32Array[]} template
  * @param {number} envelopeRate envelope sample rate in hertz
- * @returns {[number, number]} the two cluster positions in samples, earlier one first
+ * @returns {Float64Array} one value per template sample
  */
-export function findClusters(template, envelopeRate) {
+export function clusterStrength(template, envelopeRate) {
   const nb = template[0].length;
   const comb = new Float64Array(nb);
   for (const t of template) for (let g = 0; g < nb; g++) if (t[g] > 0) comb[g] += t[g] * t[g];
@@ -74,6 +74,19 @@ export function findClusters(template, envelopeRate) {
     for (let j = 0; j < k; j++) s += comb[(g + j) % nb];
     cs[g] = s;
   }
+  return cs;
+}
+
+/**
+ * Locate the tick and the tock in a template: the strongest half-millisecond cluster, and the
+ * strongest one about half a period away from it.
+ * @param {Float32Array[]} template
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @returns {[number, number]} the two cluster positions in samples, earlier one first
+ */
+export function findClusters(template, envelopeRate) {
+  const nb = template[0].length;
+  const cs = clusterStrength(template, envelopeRate);
   let c1 = 0;
   for (let g = 1; g < nb; g++) if (cs[g] > cs[c1]) c1 = g;
   const half = nb >> 1;
