@@ -51,10 +51,12 @@ python3 -I tools/prototype/coaxial/track.py steady /tmp/steady both     # about 
 
 `beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
 stream` its real-time pipeline. The last argument of `analyze.py` is the lift angle. `--app`
-works on envelopes made the way the app's filter bank makes them. Every reading lines the beats
-up again before averaging (see "Lining the beats up again"); `analyze.py --plain`, and `plain`
-on the other commands, give the plain average instead. Given `both`, `checks.py sims` and
-`suite` and `track.py sims`, `swings` and `steady` run every watch both ways. Those
+works on envelopes made the way the app's filter bank makes them. Every reading lines up again,
+before averaging, the sounds whose 10 s blocks show them moving (see "Lining up only the sounds
+that move"). `analyze.py --lined`, and `lined` on the other commands, line every sound up;
+`--plain` and `plain` give the plain average. Given `both`, `checks.py sims` and `suite` and
+`track.py sims`, `swings` and `steady` run every watch plain and lined, given `three` all three
+ways, and the words `plain`, `lined` and `test` (the default) can be given together. Those
 commands keep each simulated watch's timestamps in their directory; run again on the same
 directory, they make only the audio again (`beats.mjs synth`, under a second) and check that its
 truth matches, since the app's analysis is the slow part.
@@ -101,25 +103,27 @@ All on a computer. Nothing has been compared with a timing machine.
 
 | Recording | Beat error from the first sounds | Amplitude |
 | --- | --- | --- |
-| Omega 3861, Safari capture, 60 s | 0.30 ± 0.03 ms | 285° at a 36° lift angle |
+| Omega 3861, Safari capture, 60 s | 0.31 ± 0.03 ms | 284° at a 36° lift angle |
 | ETA 2836-2, Safari capture, 30 s | 0.15 ± 0.01 ms | 263° at a 50° lift angle |
 | The three Voice Memos recordings | nothing shown | nothing shown |
 
-These line the beats up again before averaging, the default since 18 November. The plain
-average read the Omega at 0.31 ± 0.03 ms and 284°, and the ETA the same as above; most of the
-figures below that are not about lining up came from the plain average. The ± is the scatter
-under resampling only. Across the analysis choices the Omega's beat error runs from 0.26 to
-0.38 ms (plain average). The ETA's last sounds are 0.31 ms apart, which is the app's own
-Swiss-lever reading: the app's timestamps sit at the loudest part of each beat, which in a lever
-watch is the drop, while Witschi's instruments time the unlock.
+These line up only the sounds that move, the default since 18 November: on the Omega the two
+locks, on the ETA nothing. The plain average read both the same; with every sound lined up the
+Omega read 0.30 ± 0.03 ms and 285°. Most of the figures below that are not about lining up came
+from the plain average. The ± is the scatter under resampling only. Across the analysis choices
+the Omega's beat error runs from 0.26 to 0.38 ms (plain average). The ETA's last sounds are
+0.31 ms apart, which is the app's own Swiss-lever reading: the app's timestamps sit at the
+loudest part of each beat, which in a lever watch is the drop, while Witschi's instruments time
+the unlock.
 
 On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background) with a true
 beat error of 0, 0.5, 1 and 2 ms, sixteen runs all read within 0.10 ms, and amplitudes of 200° to
 310° read 1° to 5° low. With the unlock 2 dB over the background or less, or with only 20 s of
 audio, nothing was shown. Of all 46 simulated runs, 33 were shown and none of those was more than
-0.10 ms or 5° out. Lined up, the default now, the same 46 showed beat error in 19 and amplitude
-in 30, none more than 0.09 ms or 6° out: the co-axial's faint unlock gives noisy shifts to line
-the beats up on, which widens the stated uncertainty (see "Lining the beats up again").
+0.10 ms or 5° out, and lining up only the sounds that move, the default, gave the same. With
+every sound lined up the same 46 showed beat error in 19 and amplitude in 30, none more than
+0.09 ms or 6° out: the co-axial's faint unlock gives noisy shifts to line the beats up on, which
+widens the stated uncertainty (see "Lining the beats up again").
 
 The low amplitudes come from the simulated watch, not from the method. About 2° is a delay
 `balance.js` adds to every lock, 0.05 ms on average, which its true amplitude does not count.
@@ -312,9 +316,10 @@ few long ones, because making a simulated 600 s watch took over 15 minutes again
 
 ## Lining the beats up again
 
-Since 18 November every reading lines each beat up again before averaging; `analyze.py
---plain`, and `plain` on the other commands, give the plain average, and `both` reads every
-watch both ways. The 10 s blocks are matched against the plain average to see how far the unlock and
+From 18 November every reading lined each beat up again before averaging, until, the same day,
+lining up only the sounds that move took its place as the default (next section). `analyze.py
+--lined`, and `lined` on the other commands, still line every sound up. The 10 s blocks are
+matched against the plain average to see how far the unlock and
 the lock have moved. Each beat is shifted by that, read off a line through the blocks, once for
 each sound, and averaged again, so that the sound that moves with the amplitude stands sharp.
 Each sound's time is its place in its lined-up average plus the beats' mean shift. Each
@@ -374,9 +379,61 @@ Where nothing changes:
 So on the lever, lining up takes the bias away and costs nothing measured. On the co-axial it
 takes away the bias of a large change in the whole reading, but adds scatter where nothing
 changes and made the filter's blocks worse at ±15°. Lawrence chose on 18 November to make it
-the default for both escapements. Lining up only when the blocks show the amplitude changing,
-which might keep the gain without the cost, is written up in the investigation doc and not yet
-tried.
+the default for both escapements, and later that day to line up only the sounds that move.
+
+## Lining up only the sounds that move
+
+The default since 18 November (`events.moved`). Lining up helps only when a sound moves against
+the timestamps; where nothing moves, the shifts it lines the beats up on are noise. So each sound
+of each beat type is tested first. Each 10 s block's beats are resampled 40 times, which gives
+each block shift its own scatter σᵢ, floored at 0.01 ms. If a sound does not move, its n shifts
+sᵢ scatter about their weighted mean as their σᵢ say, and Σ((sᵢ − s̄)/σᵢ)² follows a χ²
+distribution with n − 1 degrees of freedom. The sound is lined up only when the sum passes its 1%
+point, 15.1 for the 6 blocks of 60 s and 32.0 for the 17 of 180 s; otherwise it keeps a shift of
+zero and stays where the plain average puts it. When no sound moves, the reading is the plain
+average's, resamples and all. The choice is made once, on all the beats, and each resample lines
+up the same sounds. In the amplitude filter the test is made on the reference's blocks.
+
+On the 46 simulated watches beat error was shown in 33 and amplitude in 33, as plain, none more
+than 0.10 ms or 5° out. The test lined up a sound in 3: the two wandering by ±10° every 23 s, and
+one steady watch by mistake (amplitude 200, seed 21: the tock's lock at 15.1 against 13.3), whose
+reading did not change. On the 16 steady watches of each kind in `track.py steady` the filter's
+blocks read as plain, within 0.1°.
+
+Whole recordings, 180 s, amplitude error against the truth, with the test:
+
+| Watch | Plain | Lined up | Only what moves |
+| --- | --- | --- | --- |
+| Lever, ±15° every 60 s | −4.1° to −3.8° | −0.2° to +0.1° | −0.2° to +0.1° |
+| Lever, ±30° every 60 s | −19.8° to −19.0° | −1.1° to +2.1° | −1.2° to +2.1° |
+| Co-axial, ±15° every 60 s | +0.3° to +1.5° | −1.3° to 0.0° | −0.8° to +0.1° |
+| Co-axial, ±30° every 60 s | +9.1° to +13.1° | −1.0° to +0.2° | −1.6° to +0.2° |
+| Co-axial, falling from 290° to 250° | +5.6° to +6.5° | −0.3° to +0.3° | −0.7° to +0.4° |
+| Co-axial, 30° step | +7.6° to +9.0° | −1.3° to +0.2° | −0.8° to +0.3° |
+
+Each was shown as often as lined up, beat error too. The smallest change tried, ±10° every 60 s,
+was found in all four watches read whole, the moving sounds summing 52 to 1,208 against a limit
+of 32, and ±15° every 60 s in all six 60 s references, 20 to 900 against 13.3 to 15.1. A swing
+faster than a block mostly stays plain: at ±15° every 5 s, 5 of 6 whole readings and 5 of 6
+references lined nothing up, and such a swing reads as its average either way.
+
+- The filter's co-axial blocks still lose at ±15° every 60 s: the test finds the swing and lines
+  the reference up, and the blocks read 4.1° rms against 2.7° plain and 7.2° lined up. At ±30°,
+  6.1° against 11.6° plain and 5.8° lined up. The lever's filter reads as lined up.
+- On the ETA capture's beats from 1 to 21 s nothing moves (largest sum 2.6 against 6.6), so the
+  plain 0.165 ± 0.011 ms is shown, where lined up it was held back with 17% of resamples
+  failing; so is a 30 s simulated co-axial (seed 51). A change found on just two blocks would
+  still be lined up on them and could still be held back.
+- `checks.py suite` gave the same verdicts all three ways on the unit tests' 36 watches. On the
+  Omega capture the test lines up both locks (26.1 and 20.4 against 13.3 on 4): either the
+  amplitude changed during the capture or the scatter is too small on real audio, and one capture
+  cannot tell.
+- The test took about 15 s on a 180 s recording that read in 19 s plain and 77 s lined up. Where
+  a sound moves, lining it up costs as before.
+- A small change the test misses keeps its bias while showing the plain average's tighter
+  uncertainty, and the uncertainty leaves out the chance that the choice was wrong.
+- Whether live readings jump when a sound flips between plain and lined up as the window moves
+  has not been measured.
 
 ## Through the app's unit tests
 
@@ -515,14 +572,15 @@ the stated scatter can be too small; the fresh search in each resample is what h
   ± 0.02, while the gap between the app's timestamps held at 0.41 to 0.42 ms. Either the unlock
   moves against the rest of the beat or the stated uncertainty is too small; the whole capture's
   0.15 ± 0.01 ms hides it, and a longer capture would tell. Its unlock itself is found from
-  4 s of beats on. Lined up, the first 20 s were held back, with 18% of resamples failing to find
-  the sounds, where the plain average read 0.16 ± 0.01 ms.
+  4 s of beats on. With every sound lined up, the first 20 s were held back, with 18% of
+  resamples failing to find the sounds, where the plain average read 0.16 ± 0.01 ms; lining up
+  only what moves keeps them plain.
 - The averaging assumes the amplitude holds still over the beats averaged. On simulated watches
   a ±15° swing moved the lever's reading 5° low and a ±30° swing 22° low; the co-axial's read
-  high, by up to 14° at ±30°. See "Larger swings, and false restarts". Lining the beats up
-  again, the default now, takes it away on the lever, and in the co-axial's whole reading, for
-  changes slower than a block, but on a steady co-axial it costs precision; see "Lining the
-  beats up again".
+  high, by up to 14° at ±30°. See "Larger swings, and false restarts". Lining up the sounds
+  that move, the default now, takes it away on the lever, and in the co-axial's whole reading,
+  for changes slower than a block, without the precision lining every sound up costs a steady
+  co-axial; see "Lining up only the sounds that move".
 - The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
   a good reading back.
 - A watch with a faint unlock needs minutes, not seconds. The unit tests' watches, whose weaker
