@@ -30,10 +30,19 @@ MATCH_SMOOTH_MS = 0.15  # as find_sounds smooths a portrait
 MAX_SHIFT_MS = 1.5      # furthest a sound is looked for from its place in the template
 STRONG = 0.5            # a match counts if it is at least this share of the template against itself
 
-# Lining the beats up again (`measure`'s reline, on by default).
+# Lining the beats up again (`measure`'s reline).
 RELINE_BLOCK_S = 10.0   # blocks whose sounds are matched against the whole stretch's
 RELINE_MIN_BEATS = 10   # fewest beats of each type in a block
 RELINE_NEAR_MS = 1.0    # how far a lined-up sound may be from where the plain average put it
+
+# Lining up only the sounds that move (`measure`'s reline="test", the default). A sound whose
+# block shifts scatter no more than their own resampled scatter allows is left on the plain
+# average.
+TEST_RESAMPLES = 40     # resamples of each block's beats for the scatter of its shifts, as the filter's
+TEST_P = 0.01           # the chance that a sound which does not move is lined up all the same
+TEST_MIN_BLOCKS = 2     # fewest blocks in which a sound was placed for it to be tested at all
+TEST_MIN_SD_MS = 0.01   # floor on a block shift's scatter, so that a loud sound's tiny one cannot
+                        # turn a hundredth of a millisecond into a change
 
 
 def load_wav(path, channel=0):
@@ -244,16 +253,19 @@ def windows_of(pair, j):
     return [(pair[k + str(j)]["onset_ms"] - 0.5, pair[k + str(j)]["peak_ms"] + 0.5) for k in ("f", "l")]
 
 
-def block_shifts(S, times, tms, base_until, weights, templates, windows, block_seconds=RELINE_BLOCK_S, until=None):
+def block_shifts(S, times, tms, base_until, weights, templates, windows, block_seconds=RELINE_BLOCK_S, until=None, resamples=0, seed=1):
     """How far each beat type's unlock and lock have moved, block by block, against templates of
     them. templates[j] and windows[j] hold the unlock's and the lock's. Returns for each type the
     middle times of the blocks and the two shifts in milliseconds, NaN where a sound could not
-    be placed."""
+    be placed. With `resamples`, each block's beats are also resampled that many times and the
+    scatter of each shift is returned after the shifts, NaN where fewer than four in five
+    resamples placed the sound, as the filter requires of a block."""
     t0 = min(t.min() for t in times)
     t_end = max(t.max() for t in times) if until is None else until
+    rng = np.random.default_rng(seed)
     out = []
     for j in (0, 1):
-        mids, su, sl = [], [], []
+        mids, su, sl, du, dl = [], [], [], [], []
         a = t0
         while a + block_seconds <= t_end + 0.5:
             idx = [np.flatnonzero((t >= a) & (t < a + block_seconds)) for t in times]
@@ -263,26 +275,77 @@ def block_shifts(S, times, tms, base_until, weights, templates, windows, block_s
                 mids.append(a + 0.5 * block_seconds)
                 su.append(np.nan if shifts[0] is None else shifts[0])
                 sl.append(np.nan if shifts[1] is None else shifts[1])
+                if resamples:
+                    drawn = [[shift_of(templates[j][k], cb, tms, *windows[j][k]) for k in (0, 1)]
+                             for cb in (matched(portrait(band_means(S[j], tms, rng.choice(idx[j], len(idx[j])), base_until), weights), tms) for _ in range(resamples))]
+                    for k, d in ((0, du), (1, dl)):
+                        got = [v[k] for v in drawn if v[k] is not None]
+                        d.append(float(np.std(got)) if len(got) >= 0.8 * resamples else np.nan)
             a += block_seconds
-        out.append((np.array(mids), np.array(su), np.array(sl)))
+        out.append((np.array(mids), np.array(su), np.array(sl)) + ((np.array(du), np.array(dl)) if resamples else ()))
     return out
 
 
-def beat_shifts(blocks, times):
-    """Each beat's unlock and lock shift, read off a line through the blocks and held level
-    beyond the first and last. None when a sound was placed in fewer than two blocks of a type:
-    then there is nothing to line up on."""
+def moved(blocks, p=TEST_P):
+    """Which sounds move against the beats' timestamps, from block_shifts with resamples. If a
+    sound does not move, its n shifts s_i scatter about their weighted mean as their own scatter
+    sd_i says, and sum(((s_i - mean) / sd_i)^2) follows a chi-squared distribution with n - 1
+    degrees of freedom; the sound counts as moving when the sum is beyond the point that
+    chance passes with probability p. Returns for each beat type and sound (unlock, lock) a dict
+    with `moved`, `chi2`, `dof` and the `limit` it was held to; a sound placed in fewer than
+    TEST_MIN_BLOCKS blocks is not tested and does not count as moving."""
     out = []
     for j in (0, 1):
-        mids, su, sl = blocks[j]
+        _, su, sl, du, dl = blocks[j]
+        row = []
+        for s, d in ((su, du), (sl, dl)):
+            ok = ~np.isnan(s) & ~np.isnan(d)
+            n = int(ok.sum())
+            if n < TEST_MIN_BLOCKS:
+                row.append({"moved": False, "chi2": float("nan"), "dof": max(n - 1, 0), "limit": float("nan")})
+                continue
+            w = 1.0 / np.maximum(d[ok], TEST_MIN_SD_MS) ** 2
+            mean = float((w * s[ok]).sum() / w.sum())
+            chi2 = float((w * (s[ok] - mean) ** 2).sum())
+            limit = float(stats.chi2.ppf(1 - p, n - 1))
+            row.append({"moved": chi2 > limit, "chi2": chi2, "dof": n - 1, "limit": limit})
+        out.append(row)
+    return out
+
+
+def beat_shifts(blocks, times, use=None):
+    """Each beat's unlock and lock shift, read off a line through the blocks and held level
+    beyond the first and last. None when a sound was placed in fewer than two blocks of a type:
+    then there is nothing to line up on. With `use` (from `moved`), a sound that does not move
+    keeps a shift of zero, so it stays where the plain average puts it, and only the sounds that
+    move need placing in two blocks."""
+    out = []
+    for j in (0, 1):
+        mids, su, sl = blocks[j][:3]
         per = []
-        for s in (su, sl):
+        for k, s in enumerate((su, sl)):
+            if use is not None and not use[j][k]["moved"]:
+                per.append(np.zeros(len(times[j])))
+                continue
             ok = ~np.isnan(s)
             if ok.sum() < 2:
                 return None
             per.append(np.interp(times[j], mids[ok], s[ok]))
         out.append(per)
     return out
+
+
+def describe_moved(use):
+    """Which sounds `moved` found moving, and each sound's sum against its limit, as text."""
+    parts = []
+    for j, beat in ((0, "tick"), (1, "tock")):
+        for k, sound in ((0, "unlock"), (1, "lock")):
+            u = use[j][k]
+            if np.isnan(u["chi2"]):
+                parts.append("%s %s not tested" % (beat, sound))
+            else:
+                parts.append("%s %s %s (%.1f against %.1f on %d)" % (beat, sound, "moves" if u["moved"] else "steady", u["chi2"], u["limit"], u["dof"]))
+    return ", ".join(parts)
 
 
 def shift_rows(S, tms, s_ms):
@@ -335,7 +398,7 @@ def amplitude(lift_deg, bph, t_ms):
     return lift_deg / (2 * np.sin(np.pi * f * t_ms * 1e-3))
 
 
-def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline=True):
+def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline="test"):
     """Portraits, sounds and paired readings for one recording.
 
     x, fs    audio and its sample rate; or pass `rows` (band envelopes) with fs as their rate
@@ -345,7 +408,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     t_from, t_to   use only the beats between these times, in seconds
     weights  band weights to use instead of working them out
     find     keyword arguments for find_sounds; use_peak times sounds at their maxima
-    reline   line the beats up again before averaging (the default; False gives the plain
+    reline   True lines the beats up again before averaging (False gives the plain
              average, as before 18 November), so that a sound whose place moves with
              the amplitude is not smeared: the beats' timestamps follow their loudest sound, and
              when the amplitude swings the other sound's place moves with the lift time. Blocks
@@ -356,6 +419,12 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
              beats up on what it found, so the shifts' own noise is in the uncertainty.
              Falls back to the plain average, with `relined` saying why, when a sound is placed
              in fewer than two blocks.
+             reline="test", the default since 18 November, lines up only the sounds whose
+             block shifts show a change (`moved`):
+             a sound that does not move is left where the plain average puts it, and when none
+             moves the reading is the plain average's, resamples and all. The choice is made
+             once, on all the beats; each resample then lines up the same sounds. `moved` in
+             the result says what the test found.
 
     Returns a dict. `reading` is None, with `why`, when the sounds could not be paired.
     Otherwise it holds, in milliseconds, `first_gap` (the tock's unlock later than midway between
@@ -433,9 +502,15 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         pair = r["pair"]
         templates = [[matched(ports[j][0], tms)] * 2 for j in (0, 1)]
         windows = [windows_of(pair, j) for j in (0, 1)]
-        blocks = block_shifts(S, times, tms, base_until, W, templates, windows)
-        shifts = beat_shifts(blocks, times)
-        if shifts is None:
+        test = reline == "test"
+        blocks = block_shifts(S, times, tms, base_until, W, templates, windows, resamples=TEST_RESAMPLES if test else 0)
+        use = moved(blocks) if test else None
+        shifts = beat_shifts(blocks, times, use)
+        if use is not None:
+            out["moved"] = use
+        if use is not None and not any(u["moved"] for row in use for u in row):
+            out["relined"] = "not lined up again: no sound moved: " + describe_moved(use)
+        elif shifts is None:
             out["relined"] = "not lined up again: a sound was placed in fewer than two blocks of %.0f s" % RELINE_BLOCK_S
         else:
             lined = [[shift_rows(S[j], tms, shifts[j][k]) for k in (0, 1)] for j in (0, 1)]
@@ -454,7 +529,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
                     # the scatter.
                     drawn = [[M[idx[j]] for M in S[j]] for j in (0, 1)]
                     drawn_times = [times[j][idx[j]] for j in (0, 1)]
-                    use = beat_shifts(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows), drawn_times)
+                    use = beat_shifts(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows), drawn_times, out.get("moved"))
                     if use is None:
                         return None, "a sound was placed in fewer than two blocks", ports, w
                     stacks = [[shift_rows(drawn[j], tms, use[j][k]) for k in (0, 1)] for j in (0, 1)]
@@ -490,7 +565,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
             readings = relined
             r, why, _, _ = readings(w=W)
             out["reading"], out["why"] = r, why
-            out["relined"] = "lined up again on %d blocks of %.0f s" % (len(blocks[0][0]), RELINE_BLOCK_S)
+            out["relined"] = "lined up again on %d blocks of %.0f s" % (len(blocks[0][0]), RELINE_BLOCK_S) + (": " + describe_moved(use) if use is not None else "")
             if r is None:
                 return out
     out["amp"] = amplitude(lift, bph, 0.5 * (r["lift0"] + r["lift1"]))

@@ -2,10 +2,10 @@
 does on simulated watches whose beat error and amplitude are known.
 
 usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.beats.json <lift angle>
-       python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches> [plain|both]
+       python3 -I tools/prototype/coaxial/checks.py sims <directory for the simulated watches> [plain|lined|test|both|three]
        python3 -I tools/prototype/coaxial/checks.py kalman <file.wav> <prefix> <lift angle>
        python3 -I tools/prototype/coaxial/checks.py kalman-sims <directory>
-       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [plain|both]
+       python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [plain|lined|test|both|three]
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -17,9 +17,11 @@ twenty minutes. A watch already timed in the directory by an earlier run is not 
 only its audio is made again (`beats.mjs synth`), and the truth it gives is checked against the
 earlier run's.
 
-Every reading lines the beats up again before averaging (events.measure's reline). With
-`plain`, `sims` and `suite` use the plain average instead, as before 18 November; with `both`,
-they read every watch both ways and score each.
+Every reading lines up again, before averaging, the sounds whose blocks show them moving
+(events.measure's reline="test"). With `lined`, `sims` and `suite` line every sound up, and with
+`plain` they use the plain average, as before 18 November; with `both` they read every watch plain
+and lined and score each, and with `three` all three ways. `plain`, `lined` and `test` can also
+be given together.
 
 `suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
@@ -56,6 +58,7 @@ def vary(wav, beats, lift):
     seconds = len(x) / fs
     line("whole recording", ev.measure(x, fs, B, lift, 200, rows=rows))
     line("whole recording, plain average", ev.measure(x, fs, B, lift, 200, rows=rows, reline=False))
+    line("whole recording, every sound lined up", ev.measure(x, fs, B, lift, 200, rows=rows, reline=True))
     for win in (30, 20, 15, 10):
         a = 1.0
         while a + win <= seconds + 0.01:
@@ -76,7 +79,9 @@ def vary(wav, beats, lift):
     line("envelopes as the app makes them", ev.measure(None, fe, B, lift, 200, rows=app, find={"smooth_ms": 0.25}))
 
 
-WAYS = {False: "plain average", True: "lined up"}
+WAYS = {False: "plain average", True: "lined up", "test": "lined up if moved"}
+# The words that choose them on the command line, in any combination.
+WAY_WORDS = {"plain": (False,), "lined": (True,), "test": ("test",), "both": (False, True), "three": (False, True, "test")}
 
 
 def simulate(outdir, name, kind, over, lift, ways=(True,)):
@@ -315,7 +320,7 @@ def suite(outdir, match=None, ways=(True,)):
                     be, o["sd"]["first_gap"], r["lift0"], r["lift1"], verdict, "a reading where the beats share no first sound" if shown else "held back, as it should be"))
             tally.setdefault((way, verdict), []).append(label)
     print()
-    for (way, verdict), names in sorted(tally.items()):
+    for (way, verdict), names in sorted(tally.items(), key=lambda item: (ways.index(item[0][0]), item[0][1])):
         print("%s%-22s %2d: %s" % ("" if len(ways) == 1 else WAYS[way] + ", ", verdict, len(names), ", ".join(names)))
 
     if match:
@@ -350,8 +355,9 @@ def suite(outdir, match=None, ways=(True,)):
 
 
 if __name__ == "__main__":
-    ways = (False, True) if "both" in sys.argv[3:] else (False,) if "plain" in sys.argv[3:] else (True,)
-    rest = [w for w in sys.argv[3:] if w not in ("plain", "both")]
+    words = sys.argv[3:]
+    ways = tuple(dict.fromkeys(w for word in words for w in WAY_WORDS.get(word, ()))) or ("test",)
+    rest = [w for w in words if w not in WAY_WORDS]
     if len(sys.argv) == 5 and sys.argv[1] == "vary":
         vary(sys.argv[2], sys.argv[3], float(sys.argv[4]))
     elif len(sys.argv) >= 3 and sys.argv[1] == "sims" and not rest:

@@ -1,12 +1,13 @@
 """Beat error and amplitude of one recording from the sounds inside each beat.
 
 usage: python3 -I tools/prototype/coaxial/analyze.py <file.wav> <prefix>.beats.json <lift angle>
-           [--app] [--from seconds --to seconds] [--resamples n] [--plain] [--plot out.png]
+           [--app] [--from seconds --to seconds] [--resamples n] [--plain | --lined] [--plot out.png]
 
 <prefix>.beats.json comes from beats.mjs. --app works on envelopes made the way the app's
-filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. The beats
-are lined up again before averaging (see events.measure); --plain gives the plain average, as
-before 18 November.
+filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. The sounds
+whose 10 s blocks show them moving are lined up again before averaging (see events.measure and
+events.moved); --lined lines every sound up, and --plain gives the plain average, as before
+18 November.
 """
 import argparse
 import os
@@ -24,17 +25,20 @@ p.add_argument("--app", action="store_true")
 p.add_argument("--from", dest="t_from", type=float)
 p.add_argument("--to", dest="t_to", type=float)
 p.add_argument("--resamples", type=int, default=200)
-p.add_argument("--plain", action="store_true")
+way = p.add_mutually_exclusive_group()
+way.add_argument("--plain", action="store_true")
+way.add_argument("--lined", action="store_true")
 p.add_argument("--plot")
 a = p.parse_args()
 
+reline = False if a.plain else True if a.lined else "test"
 fs, x = ev.load_wav(a.wav)
 B = ev.load_beats(a.beats)
 if a.app:
     rows, fe = ev.app_rows(x, fs)
-    o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25}, reline=not a.plain)
+    o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25}, reline=reline)
 else:
-    o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=not a.plain)
+    o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=reline)
 print("\n".join(ev.describe(o)))
 
 if a.plot:

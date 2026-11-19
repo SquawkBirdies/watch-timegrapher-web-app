@@ -20,16 +20,19 @@ when two measured blocks in a row are both left out and agree with each other, t
 starts again from them: a sudden change is believed once it has been seen twice. `recording`
 and `sims` also print the filter without that restart, as it was before, for comparison.
 
-The reference's beats are lined up again before averaging (Reference.reline), so that a change
-of amplitude during the reference does not smear the sound whose place moves with it. With
-`plain` the reference is the plain average, as before 18 November; with `both`, `sims`, `swings`
-and `steady` run both ways on every watch, and `sims` and `swings` also read each watch whole
-both ways, as analyze.py would with and without --plain.
+The sounds of the reference's beats that move against the timestamps are lined up again before
+averaging (Reference.reline, events.moved), so that a change of amplitude during the reference
+does not smear the sound whose place moves with it. With `lined` every sound is lined up, as
+from 18 November until the test was added the same day; with `plain` the reference is the plain
+average, as before. `both` runs `sims`, `swings` and `steady` plain and lined on every watch,
+`three` all three ways, and the words `plain`, `lined` and `test` (the default) can also be
+given together. With more than one way, `sims` and `swings` also read each watch whole each
+way, as analyze.py would.
 
-usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest] [plain]
-       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest] [plain|both]
-       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever] [plain|both] [seeds...]
-       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [plain|both] [runs] [seconds]
+usage: python3 -I tools/prototype/coaxial/track.py recording <file.wav> <prefix> <lift angle> [strongest] [plain|lined]
+       python3 -I tools/prototype/coaxial/track.py sims <directory> [coaxial|lever] [strongest] [plain|lined|test|both|three]
+       python3 -I tools/prototype/coaxial/track.py swings <directory> [coaxial|lever] [plain|lined|test|both|three] [seeds...]
+       python3 -I tools/prototype/coaxial/track.py steady <directory> [coaxial|lever] [plain|lined|test|both|three] [runs] [seconds]
        python3 -I tools/prototype/coaxial/track.py figure <sims output> <recording output> out.png
 
 `recording` reads <prefix>.stream.json from `beats.mjs stream`. `sims` makes simulated watches
@@ -75,7 +78,7 @@ def portraits(S, tms, idx, base_until, weights=None):
 class Reference:
     """Where the unlock and the lock are in the averaged beat of a reference stretch."""
 
-    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline=True):
+    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline="test"):
         self.S, self.times, self.tms, self.base_until = S, times, tms, base_until
         # Take the strong match nearest each sound's place (True) or the strongest (False, the
         # earlier search).
@@ -86,6 +89,7 @@ class Reference:
         self.pair, self.why = ev.pair_beats(sounds[0], sounds[1], bph, lift)
         self.beats = [len(i) for i in idx]
         self.relined = None
+        self.moved = None
         if self.pair is not None:
             self.lift = [self.pair["lift0"], self.pair["lift1"]]
             # The reference stretch's own reading of each beat type's lift
@@ -95,18 +99,25 @@ class Reference:
             self.templates = [[smoothed(c, tms)] * 2 for c in raw]
             self.windows = [ev.windows_of(self.pair, j) for j in (0, 1)]
             if reline:
-                self.reline(idx, until)
+                self.reline(idx, until, test=reline == "test")
 
-    def reline(self, idx, until):
+    def reline(self, idx, until, test=False):
         """Line the reference's beats up again before averaging, as events.measure does with
         reline: blocks within the reference say how far each sound has moved, each beat is
         shifted by that once for the unlock and once for the lock, and the two lined-up averages
         become the templates. Blocks are then measured against those, and the lift where the
-        shifts are zero comes from them too, so a block's lift is that plus its own shifts."""
+        shifts are zero comes from them too, so a block's lift is that plus its own shifts.
+        With `test`, only the sounds whose block shifts show a change are lined up (events.moved);
+        the others keep a shift of zero, and when none moves the reference stays plain."""
         S = [[M[idx[j]] for M in self.S[j]] for j in (0, 1)]
         times = [self.times[j][idx[j]] for j in (0, 1)]
-        blocks = ev.block_shifts(S, times, self.tms, self.base_until, self.weights, self.templates, self.windows, until=until)
-        shifts = ev.beat_shifts(blocks, times)
+        blocks = ev.block_shifts(S, times, self.tms, self.base_until, self.weights, self.templates, self.windows, until=until, resamples=ev.TEST_RESAMPLES if test else 0)
+        use = ev.moved(blocks) if test else None
+        self.moved = use
+        if use is not None and not any(u["moved"] for row in use for u in row):
+            self.relined = "not lined up again: no sound moved: " + ev.describe_moved(use)
+            return
+        shifts = ev.beat_shifts(blocks, times, use)
         if shifts is None:
             self.relined = "not lined up again: a sound was placed in fewer than two blocks"
             return
@@ -127,7 +138,7 @@ class Reference:
             lift.append(found[1][1]["onset_ms"] - found[0][1]["onset_ms"])
         self.templates, self.windows, self.lift = templates, windows, lift
         self.stretch_lift = [lift[j] + float(np.mean(shifts[j][1] - shifts[j][0])) for j in (0, 1)]
-        self.relined = "lined up again on %d blocks" % len(blocks[0][0])
+        self.relined = "lined up again on %d blocks" % len(blocks[0][0]) + (": " + ev.describe_moved(use) if use is not None else "")
 
     def block(self, idx):
         """Mean time from unlock to lock of the beats in idx (one index array per beat type), or
@@ -225,7 +236,7 @@ def true_amplitude(spec, constant, t):
     return np.full(t.shape, constant)
 
 
-def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline=True):
+def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline="test"):
     fs, x = ev.load_wav(wav)
     B = ev.load_beats(stream_json)
     # Only the stacked beats are wanted here; the reference does its own lining up.
@@ -260,7 +271,7 @@ def show(rows, bph, lift, truth=None):
         print(line)
 
 
-def recording(wav, prefix, lift, nearest=True, reline=True):
+def recording(wav, prefix, lift, nearest=True, reline="test"):
     fs, x = ev.load_wav(wav)
     seconds = len(x) / fs
     ref, o = prepare(wav, prefix + ".stream.json", lift, seconds + 1, nearest, reline)
@@ -304,13 +315,15 @@ def simulate(outdir, kind, name, over, seed, seconds):
     return {"o": o, "rows": rows, "fs": fs, "B": B, "whole": ev.load_beats(prefix + ".beats.json"), "bph": o["bph"], "lift": lift, "truth": truth, "spec": truth["amplitudeSpec"]}
 
 
-def reference(sim, reference_seconds, nearest=True, reline=True):
+def reference(sim, reference_seconds, nearest=True, reline="test"):
     o = sim["o"]
     return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], sim["lift"], reference_seconds, nearest, reline)
 
 
 # The two ways of averaging that `sims`, `swings` and `steady` compare when given `both`.
-WAYS = {False: "plain average", True: "lined up"}
+WAYS = {False: "plain average", True: "lined up", "test": "lined up if moved"}
+# The words that choose them on the command line, in any combination.
+WAY_WORDS = {"plain": (False,), "lined": (True,), "test": ("test",), "both": (False, True), "three": (False, True, "test")}
 
 
 def whole(sim, reline, resamples=100):
@@ -323,7 +336,7 @@ def whole(sim, reline, resamples=100):
         return None
     t = sim["truth"]
     true_amp = ev.amplitude(sim["lift"], sim["bph"], 0.5 * (t["liftMs"][0] + t["liftMs"][1]))
-    return {"amp": o["amp"] - true_amp, "be": abs(r["first_gap"]) - abs(t["unlockGapMs"]), "show_amp": o["show_amplitude"], "show_be": o["show_beat_error"]}
+    return {"amp": o["amp"] - true_amp, "be": abs(r["first_gap"]) - abs(t["unlockGapMs"]), "show_amp": o["show_amplitude"], "show_be": o["show_beat_error"], "relined": o.get("relined")}
 
 
 def whole_summary(label, got, runs):
@@ -374,7 +387,10 @@ def swings(outdir, kind="coaxial", ways=(True,), seeds=(91, 92, 93, 94)):
             for way in ways:
                 label = "%s, seed %d, %s" % (name, seed, WAYS[way])
                 # 50 resamples rather than analyze.py's 200: enough to say shown or held back.
-                wholes.setdefault((name, way), []).append(whole(sim, way, 50) if len(ways) > 1 else None)
+                got = whole(sim, way, 50) if len(ways) > 1 else None
+                wholes.setdefault((name, way), []).append(got)
+                if got and got["relined"]:
+                    print("%s: whole recording %s" % (label, got["relined"]))
                 ref = reference(sim, reference_seconds, reline=way)
                 if ref.pair is None:
                     print("%s: no reference: %s" % (label, ref.why))
@@ -500,7 +516,10 @@ def sims(outdir, kind="coaxial", nearest=True, ways=(True,)):
             for way in ways:
                 tag = "" if len(ways) == 1 else ", " + WAYS[way]
                 if len(ways) > 1:
-                    wholes.setdefault((name, way), []).append(whole(sim, way, 50))
+                    got = whole(sim, way, 50)
+                    wholes.setdefault((name, way), []).append(got)
+                    if got and got["relined"]:
+                        print("%s, seed %d%s: whole recording %s" % (name, seed, tag, got["relined"]))
                 ref = reference(sim, reference_seconds, nearest, way)
                 if ref.pair is None:
                     print("%s, seed %d%s: no reference: %s" % (name, seed, tag, ref.why))
@@ -609,13 +628,13 @@ def figure(sims_path, recording_path, out):
 
 if __name__ == "__main__":
     words = sys.argv[3:]
-    ways = (False, True) if "both" in words else (False,) if "plain" in words else (True,)
+    ways = tuple(dict.fromkeys(w for word in words for w in WAY_WORDS.get(word, ()))) or ("test",)
     kind = "lever" if "lever" in words else "coaxial"
     numbers = [int(w) for w in words if w.isdigit()]
     if len(sys.argv) == 5 and sys.argv[1] == "figure":
         figure(sys.argv[2], sys.argv[3], sys.argv[4])
     elif len(sys.argv) >= 5 and sys.argv[1] == "recording":
-        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:], "plain" not in sys.argv[5:])
+        recording(sys.argv[2], sys.argv[3], float(sys.argv[4]), "strongest" not in sys.argv[5:], False if "plain" in sys.argv[5:] else True if "lined" in sys.argv[5:] else "test")
     elif len(sys.argv) >= 3 and sys.argv[1] == "sims":
         sims(sys.argv[2], kind, "strongest" not in words, ways)
     elif len(sys.argv) >= 3 and sys.argv[1] == "swings":
