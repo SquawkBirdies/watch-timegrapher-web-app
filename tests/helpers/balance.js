@@ -39,10 +39,9 @@ import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
  * @property {[number, number]} lockDeg angle after the line of centres at which the lock
  *   happens, for the even and for the odd beats
  * @property {[BeatSound[], BeatSound[]]} sounds the sounds of the even and of the odd beats
- * @property {number} [lockJitterMs] scale of a random delay of each lock: the delay is the size
- *   of a normal draw with this standard deviation, so it is never negative and averages about
- *   0.8 times this. The true amplitude does not count it, so a method that times the lock reads
- *   the amplitude slightly low
+ * @property {number} [lockJitterMs] standard deviation of each lock's time from beat to beat, in
+ *   milliseconds. The variation averages zero, so the mean time from unlock to lock is the one
+ *   the amplitude and the angles give, and a method that times the lock reads the true amplitude
  * @property {number} [levelJitterDb] standard deviation of each sound's loudness from beat to
  *   beat, in decibels; 1.5 when absent
  * @property {number} [sampleRate]
@@ -135,7 +134,7 @@ export function synthesizeBalanceWatch(options) {
     const A = amplitudeAt(tCentre);
     const rest = j === 0 ? restOffsetDeg : -restOffsetDeg;
     const tUnlock = tCentre + Math.asin((-unlockDeg[j] - rest) / A) / omega;
-    const tLock = tCentre + Math.asin((lockDeg[j] - rest) / A) / omega + Math.abs(lockJitterMs * vary()) * 1e-3;
+    const tLock = tCentre + Math.asin((lockDeg[j] - rest) / A) / omega + lockJitterMs * vary() * 1e-3;
     unlocks.push(tUnlock);
     locks.push(tLock);
     amplitudeSum += A;
@@ -186,7 +185,8 @@ const HIGH = /** @type {[number, number]} */ ([9000, 22000]);
  * A co-axial watch with the pattern found in the Omega 3861's Safari capture. Even beats take
  * the impulse on the balance itself: a faint unlock, one loud impact, the lock. Odd beats take
  * it through the lever: a faint unlock, a faint and then a moderate impact, the lock. The time
- * from unlock to lock is about 8% longer in the even beats.
+ * from unlock to lock is about 8% longer in the even beats; the two beats' lift angles average
+ * 36°, the lift angle the prototype reads the Omega at.
  * @param {Partial<BalanceWatchOptions> & {unlockDb?: number}} [overrides] `unlockDb` sets how
  *   far the unlock stands over the noise; the capture's stood about 5 dB over it
  * @returns {BalanceWatchOptions}
@@ -200,7 +200,7 @@ export function coaxialWatch(overrides = {}) {
     amplitude: 285,
     restOffsetDeg: 0,
     unlockDeg: [18, 18],
-    lockDeg: [19.55, 16.65],
+    lockDeg: [19.45, 16.55],
     lockJitterMs: 0.06,
     sounds: [
       [
