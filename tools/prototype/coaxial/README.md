@@ -24,7 +24,9 @@ first sound of a lever beat, the unlock, is timed for the rate and the beat erro
 from its start to the start of the last, loudest sound for the amplitude. No other maker's
 description was found.
 
-A reading is held back unless resampling the beats supports it (`events.py` has the limits).
+A reading is held back unless resampling the beats supports it (`events.py` has the limits). A
+resample that takes another sound counts as failing, not as scatter (see "Resamples that find
+another sound").
 Each resample draws beats with their sounds and their timestamps, so a watch whose beats
 scatter is given the uncertainty that scatter brings.
 
@@ -435,6 +437,45 @@ references lined nothing up, and such a swing reads as its average either way.
 - Whether live readings jump when a sound flips between plain and lined up as the window moves
   has not been measured.
 
+## Resamples that find another sound
+
+Since 18 November a resample that places the unlock or the lock of either beat more than 0.5 ms
+from where all the beats put it counts as failing (`OTHER_SOUND_MS`), as one that finds nothing
+believable does, and the scatter comes from the rest. Before, its reading counted as scatter,
+and one such resample in a hundred could hold back a reading every other sign supported.
+
+Every resample was kept for 108 readings, with 100 resamples each: the 46 simulated watches,
+the 33 of the unit tests' watches that give a reading, the 16 simulated co-axials of
+`checks.py kalman-sims` read on the real-time timestamps, and the two Safari captures whole and
+in 30, 20, 15 and 10 s windows as `checks.py vary` cuts them. 36 were held back: 16 by failing
+resamples alone, 10 by failing resamples and scatter, and 10 by scatter alone, six of those the
+irregular watches. 39 of the 10,800 resamples, in 12 readings, had taken another sound: mostly
+one beat's unlock, and often its lock, at an earlier sound 2 to 7 ms away, with a time from
+unlock to lock still believable; on the Omega's short windows, some the tick's unlock 0.5 to
+0.8 ms late. One or two of them raised the beat error's scatter from 0.02 to 0.07 ms without
+them to between 0.27 and 0.74 ms.
+
+With the rule, three readings held back before are shown: simulated co-axials of 30 s and 60 s,
+0.025 and 0.010 ms off the truth, and the ETA capture from 11 to 21 s at 0.15 ms, which has no
+truth but agrees with the whole capture and with its earlier 10 to 20 s reading of 0.16 ms.
+`checks.py sims` and `suite` gave the same verdicts as before on every watch and recording; only
+the 20 s co-axial that one stray had given a scatter of 0.96 ms now reads ±0.04, still held by
+its 40% failing. The irregular watches stay held: none of their resamples found another sound.
+
+- It trusts the sounds all the beats found while at least 95% of the resamples agree. If all the
+  beats took the wrong sound and up to 5% of the resamples found the right one, the reading would
+  now be shown. None of the 108 did that.
+- The resamples that found another sound are left out of the scatter, which therefore says
+  nothing of the chance of taking another sound, as for the resamples that fail.
+- The 0.5 ms was chosen, not measured; 0.3 ms gave the same verdicts. Some of the Omega's
+  short-window resamples placed the tick's unlock 0.5 to 0.8 ms late, which may be the same faint
+  sound starting late rather than another sound.
+- The failing share holds back far more. A limit of 20% instead of 5% would show five more of the
+  108, the four with a truth within 0.05 ms, but readings 36% and 39% failing were 0.17 and
+  0.11 ms off, so it stays at 5%.
+- 5 failing resamples of 100 come to 0.05000000000000004 in the code, just over the limit, so a
+  reading exactly at it is held back, as the Omega's first 30 s is.
+
 ## Through the app's unit tests
 
 `npm test` runs only the JavaScript pipeline, so it cannot test the prototype. `suite.mjs`
@@ -581,8 +622,10 @@ the stated scatter can be too small; the fresh search in each resample is what h
   that move, the default now, takes it away on the lever, and in the co-axial's whole reading,
   for changes slower than a block, without the precision lining every sound up costs a steady
   co-axial; see "Lining up only the sounds that move".
-- The gate on the scatter of the resamples is touchy: one stray resample in a hundred can hold
-  a good reading back.
+- Most readings that are held back are held by failing resamples: 26 of 36 of the 108 readings
+  in "Resamples that find another sound", at 8% to 93% failing against the 5% limit. A resample
+  carries the noise twice over, so it loses a faint sound that all the beats together find.
+  Resamples that took another sound, which made the scatter gate touchy, now count as failing.
 - A watch with a faint unlock needs minutes, not seconds. The unit tests' watches, whose weaker
   unlock stands 0.3 to 1.9 dB over the background, gave a reading for 1 of the 35 that tick in
   20 to 75 s; watches like them read after 2 to 4 minutes (see "Why the unit tests' watches give

@@ -24,6 +24,8 @@ HF_BANDS = [(5000, 7000), (7000, 9000), (9000, 11500), (11500, 14500), (14500, 1
 MAX_SD_MS = 0.1      # largest scatter of the beat error over the resamples, as the app's gate
 MAX_AMP_SD = 5.0     # largest scatter of the amplitude over the resamples, in degrees
 MAX_FAIL = 0.05      # largest share of resamples in which the sounds are not found
+OTHER_SOUND_MS = 0.5 # a resample placing a sound further than this from where all the beats put it
+                     # has found another sound, and counts as failing
 
 # Matching a sound in a short stretch of beats against a template of it.
 MATCH_SMOOTH_MS = 0.15  # as find_sounds smooths a portrait
@@ -429,7 +431,10 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     Returns a dict. `reading` is None, with `why`, when the sounds could not be paired.
     Otherwise it holds, in milliseconds, `first_gap` (the tock's unlock later than midway between
     the ticks' unlocks; its size is the beat error), `last_gap` (the same for the locks) and
-    `lift0`, `lift1` (unlock to lock in the ticks and in the tocks).
+    `lift0`, `lift1` (unlock to lock in the ticks and in the tocks). With resamples, `fail` is the
+    share of them that did not find the sounds: nothing believable, or another sound
+    (`other_sound`, a sound placed more than OTHER_SOUND_MS from where all the beats put it).
+    The scatter in `sd` and `amp_sd` comes from the rest.
     """
     find = find or {}
     bph = B["bph"]
@@ -574,14 +579,26 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     if nboot <= 0:
         return out
     names = ("first_gap", "last_gap", "lift0", "lift1")
+    # Where all the beats put the unlock and the lock of each beat type. A resample that places
+    # one of them further away than OTHER_SOUND_MS has taken another sound, usually a noise bump
+    # 2 to 7 ms before the unlock: its reading is not a measure of the same sounds, so it counts
+    # as failing rather than as scatter.
+    places = ("f0", "l0", "f1", "l1")
+    whole_places = np.array([r[k] for k in places])
     rng = np.random.default_rng(seed)
     boot = []
+    other = 0
     for _ in range(nboot):
         rb, _, _, _ = readings(rng.integers(0, n0, n0), rng.integers(0, n1, n1), W)
-        if rb is not None:
-            boot.append([rb[k] for k in names])
+        if rb is None:
+            continue
+        if np.any(np.abs(np.array([rb[k] for k in places]) - whole_places) > OTHER_SOUND_MS):
+            other += 1
+            continue
+        boot.append([rb[k] for k in names])
     boot = np.array(boot) if boot else np.zeros((0, 4))
     out["fail"] = 1 - len(boot) / nboot
+    out["other_sound"] = other / nboot
     if len(boot) > 5:
         out["sd"] = dict(zip(names, boot.std(axis=0)))
         out["amp_sd"] = float(amplitude(lift, bph, 0.5 * (boot[:, 2] + boot[:, 3])).std())
@@ -614,5 +631,6 @@ def describe(o):
     lines.append("amplitude at %.0f degrees of lift: %.0f%s degrees (tick alone %.0f, tock alone %.0f)%s" % (
         o["lift"], o["amp"], (" +- %.0f" % o["amp_sd"]) if "amp_sd" in o else "", o["amp_tick"], o["amp_tock"], held(o.get("show_amplitude", True))))
     if "fail" in o:
-        lines.append("resamples in which the sounds were not found: %.0f%%; the weaker unlock stands %.1f dB over the noise of the average" % (100 * o["fail"], r["first_db"]))
+        lines.append("resamples in which the sounds were not found: %.0f%% (another sound in %.0f%%); the weaker unlock stands %.1f dB over the noise of the average" % (
+            100 * o["fail"], 100 * o["other_sound"], r["first_db"]))
     return lines
