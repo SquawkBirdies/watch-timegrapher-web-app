@@ -597,7 +597,9 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
             continue
         boot.append([rb[k] for k in names])
     boot = np.array(boot) if boot else np.zeros((0, 4))
-    out["fail"] = 1 - len(boot) / nboot
+    # Counted, not 1 minus the share kept: 1 - 95 / 100 is 0.05000000000000004, which put a
+    # reading exactly at the limit over it.
+    out["fail"] = (nboot - len(boot)) / nboot
     out["other_sound"] = other / nboot
     if len(boot) > 5:
         out["sd"] = dict(zip(names, boot.std(axis=0)))

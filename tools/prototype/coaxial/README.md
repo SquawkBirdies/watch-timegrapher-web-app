@@ -473,8 +473,10 @@ its 40% failing. The irregular watches stay held: none of their resamples found 
 - The failing share holds back far more. A limit of 20% instead of 5% would show five more of the
   108, the four with a truth within 0.05 ms, but readings 36% and 39% failing were 0.17 and
   0.11 ms off, so it stays at 5%.
-- 5 failing resamples of 100 come to 0.05000000000000004 in the code, just over the limit, so a
-  reading exactly at it is held back, as the Omega's first 30 s is.
+- Until 18 November the failing share was worked out as 1 minus the share kept, and 5 failing
+  resamples of 100 came to 0.05000000000000004, just over the limit, so a reading exactly at it
+  was held back. It is now counted. Of the 108, that shows only the Omega capture's first 30 s,
+  at 0.29 ± 0.04 ms and 284 ± 1°, against 0.31 ms and 284° for the whole capture.
 
 ## Through the app's unit tests
 
