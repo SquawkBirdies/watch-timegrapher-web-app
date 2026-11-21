@@ -36,6 +36,10 @@ STRONG = 0.5            # a match counts if it is at least this share of the tem
 RELINE_BLOCK_S = 10.0   # blocks whose sounds are matched against the whole stretch's
 RELINE_MIN_BEATS = 10   # fewest beats of each type in a block
 RELINE_NEAR_MS = 1.0    # how far a lined-up sound may be from where the plain average put it
+RELINE_MAX_SD_MS = 0.3  # a block's shift for a sound that scatters by more than this over the
+                        # block's resamples, or that fewer than four in five resamples placed, is
+                        # left out of the line the beats are shifted along: some of its resamples
+                        # took another sound, and the shift itself may have
 
 # Lining up only the sounds that move (`measure`'s reline="test", the default). A sound whose
 # block shifts scatter no more than their own resampled scatter allows is left on the plain
@@ -337,6 +341,40 @@ def beat_shifts(blocks, times, use=None):
     return out
 
 
+def reliable(blocks, left_out=None):
+    """Blocks from block_shifts (with resamples) with the shifts that lining up should not rest
+    on blanked: those that scatter by more than RELINE_MAX_SD_MS over their block's resamples, or
+    whose scatter could not be had because fewer than four in five resamples placed the sound.
+    Such a shift has usually taken another sound in some of its resamples, and it can have on all
+    the beats: in a simulated co-axial swinging by 30 degrees, the tock unlock's last block gave a
+    shift of -1.06 ms where the unlock had moved -0.20 ms. The shifts are joined block to block,
+    so that one shift moved the lined-up unlock, and the beat error, by 0.13 ms. Returns the
+    blocks and, for each beat type and sound, which blocks were left out.
+
+    With `left_out` from the whole set, those blocks are left out instead: a resample's blocks
+    have no resamples of their own, and the whole set decides, as it decides which sounds move.
+    A resample that drew none of the first beats can start its blocks later and have one fewer;
+    then its blocks do not line up with the whole set's, and nothing is left out of them."""
+    out, mask = [], []
+    for j in (0, 1):
+        b = list(blocks[j])
+        if left_out is None:
+            m = [~(np.nan_to_num(b[3 + k], nan=np.inf) <= RELINE_MAX_SD_MS) for k in (0, 1)]
+        else:
+            m = left_out[j]
+        for k in (0, 1):
+            if len(m[k]) == len(b[1 + k]):
+                b[1 + k] = np.where(m[k], np.nan, b[1 + k])
+        out.append(tuple(b))
+        mask.append(m)
+    return out, mask
+
+
+def count_left_out(left_out, use=None):
+    """How many block shifts `reliable` left out, of the sounds that are lined up."""
+    return int(sum(np.sum(left_out[j][k]) for j in (0, 1) for k in (0, 1) if use is None or use[j][k]["moved"]))
+
+
 def describe_moved(use):
     """Which sounds `moved` found moving, and each sound's sum against its limit, as text."""
     parts = []
@@ -418,7 +456,9 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
              and the lock have moved; each beat is shifted by that, once for each sound, and
              averaged again. A smeared sound's half-rise lands early, which biased the reading.
              Each resample measures the blocks again from the beats it drew and lines those
-             beats up on what it found, so the shifts' own noise is in the uncertainty.
+             beats up on what it found, so the shifts' own noise is in the uncertainty. A
+             block's shift that scatters by more than RELINE_MAX_SD_MS over the block's own
+             resamples is left out (`reliable`), in the whole set and in every resample.
              Falls back to the plain average, with `relined` saying why, when a sound is placed
              in fewer than two blocks.
              reline="test", the default since 18 November, lines up only the sounds whose
@@ -508,8 +548,12 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         templates = [[matched(ports[j][0], tms)] * 2 for j in (0, 1)]
         windows = [windows_of(pair, j) for j in (0, 1)]
         test = reline == "test"
-        blocks = block_shifts(S, times, tms, base_until, W, templates, windows, resamples=TEST_RESAMPLES if test else 0)
+        # Each block is resampled whichever way, for its shifts' scatter: the test rests on it,
+        # and so does leaving out the shifts that took another sound.
+        blocks = block_shifts(S, times, tms, base_until, W, templates, windows, resamples=TEST_RESAMPLES)
         use = moved(blocks) if test else None
+        blocks, left_out = reliable(blocks)
+        out["left_out"] = left_out
         shifts = beat_shifts(blocks, times, use)
         if use is not None:
             out["moved"] = use
@@ -534,7 +578,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
                     # the scatter.
                     drawn = [[M[idx[j]] for M in S[j]] for j in (0, 1)]
                     drawn_times = [times[j][idx[j]] for j in (0, 1)]
-                    use = beat_shifts(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows), drawn_times, out.get("moved"))
+                    use = beat_shifts(reliable(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows), left_out)[0], drawn_times, out.get("moved"))
                     if use is None:
                         return None, "a sound was placed in fewer than two blocks", ports, w
                     stacks = [[shift_rows(drawn[j], tms, use[j][k]) for k in (0, 1)] for j in (0, 1)]
@@ -570,7 +614,10 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
             readings = relined
             r, why, _, _ = readings(w=W)
             out["reading"], out["why"] = r, why
-            out["relined"] = "lined up again on %d blocks of %.0f s" % (len(blocks[0][0]), RELINE_BLOCK_S) + (": " + describe_moved(use) if use is not None else "")
+            n_out = count_left_out(left_out, use)
+            out["relined"] = "lined up again on %d blocks of %.0f s" % (len(blocks[0][0]), RELINE_BLOCK_S) + (
+                ", leaving out %d shift%s that scattered by more than %.1f ms" % (n_out, "" if n_out == 1 else "s", RELINE_MAX_SD_MS) if n_out else "") + (
+                ": " + describe_moved(use) if use is not None else "")
             if r is None:
                 return out
     out["amp"] = amplitude(lift, bph, 0.5 * (r["lift0"] + r["lift1"]))
