@@ -95,8 +95,8 @@ describe the watch, and the beat-error checks passed it.
 
 A prototype in `tools/prototype/coaxial/` measures a co-axial watch's beat error and amplitude
 from the sounds inside each beat: the first, the unlock, and the last, the lock, which both
-beats share. It is not part of the app. On the Omega's Safari capture it read 0.30 ms and, at a
-36° lift angle, 285°; on the ETA's, 0.15 ms and 263° at 50°. Neither has been compared with a
+beats share. It is not part of the app. On the Omega's Safari capture it read 0.31 ms and, at a
+36° lift angle, 284°; on the ETA's, 0.15 ms and 263° at 50°. Neither has been compared with a
 timing machine. On the simulated watches of the unit tests it showed no wrong reading, but it
 showed a reading for only 1 of the 35 that tick: the first sound of their weaker beat stands 0.3
 to 1.9 dB over the background, against 3.8 dB in the Omega's capture and 11.8 dB in the ETA's.

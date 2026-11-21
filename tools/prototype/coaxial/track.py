@@ -108,12 +108,17 @@ class Reference:
         become the templates. Blocks are then measured against those, and the lift where the
         shifts are zero comes from them too, so a block's lift is that plus its own shifts.
         With `test`, only the sounds whose block shifts show a change are lined up (events.moved);
-        the others keep a shift of zero, and when none moves the reference stays plain."""
+        the others keep a shift of zero, and when none moves the reference stays plain. A block's
+        shift that scatters by more than events.RELINE_MAX_SD_MS over its resamples is left out
+        (events.reliable)."""
         S = [[M[idx[j]] for M in self.S[j]] for j in (0, 1)]
         times = [self.times[j][idx[j]] for j in (0, 1)]
-        blocks = ev.block_shifts(S, times, self.tms, self.base_until, self.weights, self.templates, self.windows, until=until, resamples=ev.TEST_RESAMPLES if test else 0)
+        blocks = ev.block_shifts(S, times, self.tms, self.base_until, self.weights, self.templates, self.windows, until=until, resamples=ev.TEST_RESAMPLES)
         use = ev.moved(blocks) if test else None
         self.moved = use
+        # As events.measure does: a block's shift that took another sound in some of its
+        # resamples is not lined up on.
+        blocks, left_out = ev.reliable(blocks)
         if use is not None and not any(u["moved"] for row in use for u in row):
             self.relined = "not lined up again: no sound moved: " + ev.describe_moved(use)
             return
@@ -138,7 +143,10 @@ class Reference:
             lift.append(found[1][1]["onset_ms"] - found[0][1]["onset_ms"])
         self.templates, self.windows, self.lift = templates, windows, lift
         self.stretch_lift = [lift[j] + float(np.mean(shifts[j][1] - shifts[j][0])) for j in (0, 1)]
-        self.relined = "lined up again on %d blocks" % len(blocks[0][0]) + (": " + ev.describe_moved(use) if use is not None else "")
+        n_out = ev.count_left_out(left_out, use)
+        self.relined = "lined up again on %d blocks" % len(blocks[0][0]) + (
+            ", leaving out %d shift%s that scattered by more than %.1f ms" % (n_out, "" if n_out == 1 else "s", ev.RELINE_MAX_SD_MS) if n_out else "") + (
+            ": " + ev.describe_moved(use) if use is not None else "")
 
     def block(self, idx):
         """Mean time from unlock to lock of the beats in idx (one index array per beat type), or
