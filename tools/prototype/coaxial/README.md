@@ -47,7 +47,7 @@ python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track-lever lever  # about half an hour
 python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about 40 minutes
-python3 -I tools/prototype/coaxial/checks.py pairing /tmp/pairing      # about fifteen minutes
+python3 -I tools/prototype/coaxial/checks.py pairing /tmp/pairing      # about twenty minutes
 python3 -I tools/prototype/coaxial/track.py swings /tmp/swings both     # about an hour
 python3 -I tools/prototype/coaxial/track.py steady /tmp/steady both     # about half an hour
 ```
@@ -606,10 +606,10 @@ the unlock, three seeds each, read by default with 100 resamples:
 | Before | 1 | 0.009 ms | 0.0° |
 | Now | 30 | 0.027 ms | 0.7° |
 
-The app's Swiss-lever beat error read all 30 within 0.010 ms. `checks.py pairing` runs eleven of
-these watches and the lost-unlock ones: every lever with a loud impulse shown within 0.02 ms and
-0.5°, the two with a sound after the drop give nothing, and the one at 220° reads 79° high (see
-Limits).
+The app's Swiss-lever beat error read all 30 within 0.010 ms. `checks.py pairing` runs eight of
+these watches, four whose unlock is lost and one whose impulse cannot be heard: every lever with
+a loud impulse is shown within 0.02 ms and 0.5°, and the other five give nothing (see "A lever
+whose unlock is lost").
 
 Nothing else moved. The six recordings read as before to the last digit, as do the 36 watches
 of `checks.py suite`; its blurred three sounds still gives nothing, since its first sound is
@@ -626,6 +626,49 @@ Its limits:
   unlock.
 - A lost unlock whose first sound found is quieter than a later sound inside the believable
   times would still be taken; not tried.
+
+## A lever whose unlock is lost
+
+Since 22 November a pairing is refused when nothing lies between the first sound and the lock in
+a beat (`events.pair_beats`).
+
+Why. When the unlock is too faint to find, the first sound found is the impulse, and the lift
+is timed from it: short by the impulse's delay, so the amplitude reads high. Where that still
+reads under 330°, it was shown. Of 11 simulated levers (60 s, true beat error about 0.5 ms)
+with the unlock at −10 dB, 6 were shown 44° to 109° high: 200° and 220° at 28,800 vph read
+263° and 299°, 220° at 21,600 read 274°, 220° and 260° at 18,000 read 264° and 323°, and 220°
+at 36,000 read 329°. The other 5 read over 330° and were refused. Their beat errors were right
+within 0.01 ms. A co-axial with its unlock lost read 0.93 ms off at 220° and was held back. Noise
+added to the ETA's Safari capture loses its unlock the same way, at 18 and 21 dB over its
+background above 5 kHz; at the ETA's 263° the impulse is 5.0 ms before the drop, which reads
+over 330°.
+
+What gives it away. Both escapements make a sound between the unlock and the lock in each beat:
+the lever its impulse, the co-axial its impulse in one beat and a sound 4.2 ms after the unlock
+in the other. That sound is louder than the unlock, by 7 to 8 dB in the ETA, so when the unlock
+is heard it is heard too. In every right reading of 376 watches surveyed (the simulated ones of
+these checks, of the amplitude filter's runs and of the investigation, and the recordings) such
+a sound lay there in both beats, except in one of the suite's: the made-up watch whose tock
+changes its loudest sound has only two sounds in its tock. With the unlock lost, none did.
+
+Read by default with 100 resamples, the rule refused all ten lost-unlock readings that were
+shown or held (the six levers above, three more at 220° and the co-axial). Of the other 156
+watches so read, it acted on only three, and in no resample of any. The six recordings, the 46
+watches of `checks.py sims` and the suite's other 35 read as before to the last digit. The
+three are its cost: two levers whose impulse cannot be heard (−10 dB) give nothing where they
+read right, and so does the suite's two-sound tock, which read 0.05 ms against 0. A lever whose
+impulse stood 6 dB under its unlock was still found and read right. It costs one search of a
+beat's few sounds.
+
+Its limits:
+
+- The lost unlock was made by setting it to −10 dB in the simulated lever, and on real audio by
+  adding white noise to a capture.
+- A lever with a further sound between its impulse and its drop in both beats would still be
+  timed from its impulse with its unlock lost. The ETA has one, 5.1 ms after its unlock, in its
+  tock only. Not tried.
+- A lever whose impulse cannot be heard gives nothing. None has been seen; in both captures the
+  impulse is louder than the unlock.
 
 ## Through the app's unit tests
 
@@ -655,10 +698,10 @@ Louder and 60 s long, lined up as by default; the plain average gave the same ve
 | Outcome on the 36 watches | Watches |
 | --- | --- |
 | shown and wrong | 2: the 36,000 vph watches told 18,000 vph read 0.01 and 0.03 ms against 0.50 |
-| shown and right | 23, none more than 0.05 ms off, stated to ±0.01 to ±0.07 ms |
+| shown and right | 22, none more than 0.05 ms off, stated to ±0.01 to ±0.07 ms |
 | refused, rightly | 1: the two-sound co-axial, whose beats share no first sound |
 | held back, would have been wrong | 6: 3 basket cases and 1, 2 and 5 ms jitter, by their scatter |
-| nothing | 4: the two 18,000 vph watches told 36,000, which the app could not time; the blurred three sounds, whose loudest later sound comes 2.0 ms after its first and whose last is quieter than its first; and no watch |
+| nothing | 5: the two 18,000 vph watches told 36,000, which the app could not time; the blurred three sounds, whose loudest later sound comes 2.0 ms after its first and whose last is quieter than its first; the two-sound watch whose tock changes its loudest sound, with nothing between its tock's first sound and its lock, which read 0.05 ms against 0 until 22 November; and no watch |
 
 The two wrong readings come from the beat rate the test gives. Told 18,000 vph, the app takes
 every other beat of a 36,000 vph watch, so its ticks and its tocks are both the watch's ticks:
@@ -671,11 +714,11 @@ As the tests make them (`--as-tested`), with the plain average:
 | Outcome on the 36 watches | Watches |
 | --- | --- |
 | shown and wrong by more than 0.1 ms | 0 |
-| shown and right | 1: the two-sound watch whose tock changes its loudest sound, 0.01 ms against 0 |
+| shown and right | 0; the two-sound watch whose tock changes its loudest sound read 0.01 ms against 0 until 22 November, and now gives nothing, with nothing between its tock's first sound and its lock |
 | refused, rightly | 1: the two-sound co-axial, whose beats share no first sound |
 | held back, would have been right | 7, off by 0.01 to 0.07 ms |
 | held back, would have been wrong | 6: 3 basket cases, 1 and 5 ms jitter, a run with a 2 s gap |
-| nothing to measure | 21 |
+| nothing to measure | 21, and the two-sound watch above |
 
 The two Safari captures read as above. The three Voice Memos recordings and the capture with no
 watch give nothing.
@@ -796,11 +839,9 @@ small; the fresh search in each resample is what held these back.
   readings, at the tests' gain of 1.4 and louder. Its test ran 40 s, too short for the watch to
   give a reading. The app now shows no beat error when it finds a beat halfway between its
   beats, and a port needs the same check.
-- A lever whose unlock is too faint to find is timed from its impulse, so the time to the drop
-  comes out short by the impulse's delay and the amplitude high. At 220° a simulated lever with
-  its unlock at −10 dB read 299°, 79° high, and showed it, its beat error right
-  (`checks.py pairing`). At 270° the same watch reads over 330° and is refused; by the formula
-  the wrong reading passes below about 235° at 28,800 vph. The pairing's guard does not change
-  this.
+- A lever whose unlock is too faint to find is refused, since nothing lies between its first
+  sound, the impulse, and its lock (see "A lever whose unlock is lost"). So is a lever whose
+  impulse cannot be heard. One with a further sound between its impulse and its drop in both
+  beats would still be timed from its impulse, its amplitude high.
 - One watch and one capture. The averaging itself runs on a whole recording, in Python, even
   when the beat times come from the real-time pipeline.

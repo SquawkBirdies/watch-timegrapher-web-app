@@ -97,12 +97,12 @@ A prototype in `tools/prototype/coaxial/` measures a co-axial watch's beat error
 from the sounds inside each beat: the first, the unlock, and the last, the lock, which both
 beats share. It is not part of the app. On the Omega's Safari capture it read 0.31 ms and, at a
 36° lift angle, 284°; on the ETA's, 0.15 ms and 263° at 50°. Neither has been compared with a
-timing machine. On the simulated watches of the unit tests it showed no wrong reading, but it
-showed a reading for only 1 of the 35 that tick: the first sound of their weaker beat stands 0.3
-to 1.9 dB over the background, against 3.8 dB in the Omega's capture and 11.8 dB in the ETA's.
-Made as loud as the Omega and 60 s long, 23 of them read within 0.05 ms, and the two 36,000 vph
-watches given as 18,000 vph read about 0 ms against 0.50, as the app's own Swiss-lever reading
-does. Its README gives the method, its checks, and its limits.
+timing machine. On the simulated watches of the unit tests it shows no reading for any of the 35
+that tick: the first sound of their weaker beat stands 0.3 to 1.9 dB over the background,
+against 3.8 dB in the Omega's capture and 11.8 dB in the ETA's. Made as loud as the Omega and
+60 s long, 22 of them read within 0.05 ms, and the two 36,000 vph watches given as 18,000 vph
+read about 0 ms against 0.50, as the app's own Swiss-lever reading does. Its README gives the
+method, its checks, and its limits.
 
 Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
 reads less steadily. The last readings at 20 s were +6.91 s/day for the ETA, +0.45 s/day for the
