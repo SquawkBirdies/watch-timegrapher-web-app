@@ -6,6 +6,7 @@ usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.bea
        python3 -I tools/prototype/coaxial/checks.py kalman <file.wav> <prefix> <lift angle>
        python3 -I tools/prototype/coaxial/checks.py kalman-sims <directory>
        python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [plain|lined|test|both|three]
+       python3 -I tools/prototype/coaxial/checks.py pairing <directory> [plain|lined|test|both|three]
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -27,6 +28,9 @@ be given together.
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
 reading against the truth. It takes about fifteen minutes. When the directory already holds
 the watches from an earlier run, they are used again.
+
+`pairing` reads simulated levers whose impulse is as loud as their drop or louder, and levers
+whose unlock is too faint to find, against the truth, in about fifteen minutes.
 """
 import json
 import os
@@ -153,6 +157,49 @@ def sims(outdir, ways=(True,)):
     groups = {}
     for group, seed, kind, over, lift in cases:
         for way, result in zip(ways, simulate(outdir, "%s, seed %d" % (group, seed), kind, dict(over, seed=seed), lift, ways)):
+            groups.setdefault((group, way), []).append(result)
+    print()
+    for (group, way), results in groups.items():
+        got = [s for s in results if s]
+        be = [abs(s["be"]) for s in got if s["show_be"]]
+        amp = [abs(s["amp"]) for s in got if s["show_amp"]]
+        print("%-36s %s%d runs; beat error shown in %d, worst error %s ms; amplitude shown in %d, worst error %s degrees" % (
+            group, "" if len(ways) == 1 else WAYS[way] + ", ", len(results), len(be), ("%.2f" % max(be)) if be else "-", len(amp), ("%.0f" % max(amp)) if amp else "-"))
+
+
+def lever_sounds(impulse_db=18, unlock_db=12, after_drop=None):
+    """The simulated lever's three sounds (tests/helpers/balance.js), with the impulse and the
+    unlock at other levels, and optionally a fourth sound a while after the drop, as a rebound
+    might make: (milliseconds after the drop, level)."""
+    beat = [{"after": "unlock", "db": unlock_db, "riseMs": 0.12, "decayMs": 0.5, "band": [7000, 22000]},
+            {"after": "unlock", "delayMs": 2.4, "delayJitterMs": 0.08, "db": impulse_db, "riseMs": 0.1, "decayMs": 0.5, "band": [5000, 22000]},
+            {"after": "lock", "db": 25, "riseMs": 0.08, "decayMs": 0.7, "band": [5000, 22000]}]
+    if after_drop:
+        beat.append({"after": "lock", "delayMs": after_drop[0], "delayJitterMs": 0.1, "db": after_drop[1], "riseMs": 0.12, "decayMs": 0.5, "band": [5000, 22000]})
+    return [beat, beat]
+
+
+def pairing(outdir, ways=("test",)):
+    """Levers whose impulse is as loud as the drop or louder, which the pairing once refused
+    (issue 24 of the investigation), and levers whose unlock is too faint to find."""
+    os.makedirs(outdir, exist_ok=True)
+    print("Simulated levers, 60 s, true beat error 0.50 ms. The drop is 25 dB over the background.")
+    print("The last two groups have the unlock at -10 dB, too faint to find: with a sound 4 ms after")
+    print("the drop they should give nothing, and at 220 degrees they read the amplitude about 80")
+    print("degrees high (issue 25 of the investigation).\n")
+    cases = []
+    for db, label in ((25, "as loud as the drop"), (28, "3 dB over the drop"), (34, "9 dB over the drop")):
+        for seed in (1, 2):
+            cases.append(("lever impulse %s" % label, seed, {"sounds": lever_sounds(db)}))
+    cases.append(("lever impulse 3 dB over, 18,000 vph", 1, {"sounds": lever_sounds(28), "bph": 18000}))
+    cases.append(("lever impulse 3 dB over, 220 degrees", 1, {"sounds": lever_sounds(28), "amplitude": 220}))
+    for seed in (1, 2):
+        cases.append(("lever unlock lost, sound after drop", seed, {"sounds": lever_sounds(unlock_db=-10, after_drop=(4.0, 15))}))
+    cases.append(("lever unlock lost, 220 degrees", 1, {"sounds": lever_sounds(unlock_db=-10), "amplitude": 220}))
+    groups = {}
+    for group, seed, over in cases:
+        over = dict(over, seconds=60, restOffsetDeg=1.7, seed=seed)
+        for way, result in zip(ways, simulate(outdir, "%s, seed %d" % (group, seed), "lever", over, 50, ways)):
             groups.setdefault((group, way), []).append(result)
     print()
     for (group, way), results in groups.items():
@@ -368,6 +415,8 @@ if __name__ == "__main__":
         kalman_sims(sys.argv[2])
     elif len(sys.argv) >= 3 and sys.argv[1] == "suite" and len(rest) <= 1:
         suite(sys.argv[2], rest[0] if rest else None, ways)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "pairing" and not rest:
+        pairing(sys.argv[2], ways)
     else:
         print(__doc__)
         sys.exit(1)
