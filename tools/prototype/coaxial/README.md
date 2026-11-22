@@ -98,8 +98,10 @@ low. `realign.py` reads the reference at 264.7° plain and 282.7° lined up agai
 283.4°, and the 11 blocks after it 29.3° and 1.2° rms off.
 
 The simulated watch is `tests/helpers/balance.js`: a balance swinging as a sine, with the unlock
-and the lock at set angles, so the beat error and the amplitude are known. `tests/balance.test.js`
-checks its truth.
+and the lock at set angles, so the beat error and the amplitude are known. It can also be made
+irregular: `beatJitterMs` moves each whole beat off the regular grid and `amplitudeJitterDeg`
+each beat's amplitude, drawn afresh for every beat on a random stream of their own, so that a
+watch without them is the same to the last sample. `tests/balance.test.js` checks its truth.
 
 ## What it measured
 
