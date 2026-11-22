@@ -7,6 +7,7 @@ usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.bea
        python3 -I tools/prototype/coaxial/checks.py kalman-sims <directory>
        python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [plain|lined|test|both|three]
        python3 -I tools/prototype/coaxial/checks.py pairing <directory> [plain|lined|test|both|three]
+       python3 -I tools/prototype/coaxial/checks.py rates <directory>
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -23,6 +24,11 @@ Every reading lines up again, before averaging, the sounds whose blocks show the
 `plain` they use the plain average, as before 18 November; with `both` they read every watch plain
 and lined and score each, and with `three` all three ways. `plain`, `lined` and `test` can also
 be given together.
+
+`rates` reads the two Safari captures and the no-watch capture at their own 48 kHz and converted
+to 44.1 kHz, where the band from 18 kHz is cut to fit: the app times each again, and the
+converted captures are read with the band cut and, as before 22 November, dropped. About ten
+minutes; the conversions and timestamps are kept in the directory and used again.
 
 `suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
@@ -401,6 +407,51 @@ def suite(outdir, match=None, ways=(True,)):
                 "" if not way else " | " + o.get("relined", "")))
 
 
+
+def rates(outdir):
+    """The Safari captures and the no-watch capture at 48 kHz and converted to 44.1 kHz, which
+    an iPhone may deliver with another microphone (issue 12 of the investigation). At 44.1 kHz
+    the band from 18 kHz, where most of the Omega's unlock lies, no longer fits whole; it is cut
+    to fit, and was dropped before 22 November, when the Omega gave nothing. The conversion is
+    through the Fourier transform, which keeps everything below 22.05 kHz; a microphone that
+    runs at 44.1 kHz may filter its top differently."""
+    from scipy import signal
+    from scipy.io import wavfile
+    os.makedirs(outdir, exist_ok=True)
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    print("Read by default with 100 resamples. At 44.1 kHz the top band is %d to %d Hz.\n" % (
+        ev.HF_BANDS[-1][0], ev.fitted_bands(ev.HF_BANDS, 44100)[-1][1]))
+    for file, args, lift, known in RECORDINGS:
+        if not file.endswith("-safari.wav"):
+            continue
+        fs, x = ev.load_wav(os.path.join(repo, "tests", "fixtures", file))
+        converted = os.path.join(outdir, file[:-4] + "-44k.wav")
+        if not os.path.exists(converted):
+            y = signal.resample(x, int(round(len(x) * 44100 / fs)))
+            wavfile.write(converted, 44100, y.astype(np.float32))
+        for path, rate in ((os.path.join(repo, "tests", "fixtures", file), "48 kHz"), (converted, "44.1 kHz")):
+            prefix = os.path.join(outdir, "rec_" + os.path.basename(path)[:-4])
+            head = "%-24s %-8s " % (file, rate)
+            if not os.path.exists(prefix + ".beats.json"):
+                subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "wav", path, prefix] + args, capture_output=True, text=True)
+            B = ev.load_beats(prefix + ".beats.json") if os.path.exists(prefix + ".beats.json") else None
+            if B is None or not B["beats"] or any(sum(b["ok"]) < 10 for b in B["beats"]):
+                print(head + "the app timed too few beats (%s)" % known)
+                continue
+            f, audio = ev.load_wav(path)
+            ways = [("", ev.HF_BANDS)]
+            if rate != "48 kHz":
+                ways = [("band cut to fit: ", ev.HF_BANDS), ("band dropped:    ", [b for b in ev.HF_BANDS if b[1] < ev.BAND_TOP * f])]
+            for label, bands in ways:
+                o = ev.measure(None, f, B, lift, 100, rows=ev.band_rows(audio, f, bands))
+                r = o["reading"]
+                if r is None or "sd" not in o:
+                    print(head + "%sno reading: %s" % (label, o["why"] if r is None else "the resamples found no sounds"))
+                    continue
+                print(head + "%sbeat error %.3f +- %.3f ms, amplitude %.1f +- %.1f at %d deg, %s" % (
+                    label, abs(r["first_gap"]), o["sd"]["first_gap"], o["amp"], o["amp_sd"], lift, "shown" if o["show_beat_error"] else "held back"))
+
+
 if __name__ == "__main__":
     words = sys.argv[3:]
     ways = tuple(dict.fromkeys(w for word in words for w in WAY_WORDS.get(word, ()))) or ("test",)
@@ -417,6 +468,8 @@ if __name__ == "__main__":
         suite(sys.argv[2], rest[0] if rest else None, ways)
     elif len(sys.argv) >= 3 and sys.argv[1] == "pairing" and not rest:
         pairing(sys.argv[2], ways)
+    elif len(sys.argv) == 3 and sys.argv[1] == "rates":
+        rates(sys.argv[2])
     else:
         print(__doc__)
         sys.exit(1)

@@ -50,6 +50,7 @@ python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about 4
 python3 -I tools/prototype/coaxial/checks.py pairing /tmp/pairing      # about fifteen minutes
 python3 -I tools/prototype/coaxial/track.py swings /tmp/swings both     # about an hour
 python3 -I tools/prototype/coaxial/track.py steady /tmp/steady both     # about half an hour
+python3 -I tools/prototype/coaxial/checks.py rates /tmp/rates           # about ten minutes
 ```
 
 `beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
@@ -747,6 +748,50 @@ plain, the run with a 2 s gap 0.11 ms off at ±0.06. Once the sound is pinned, a
 its edge in the whole average moves every resample alike, so the stated scatter can be too
 small; the fresh search in each resample is what held these back.
 
+## Audio at 44.1 kHz
+
+Since 22 November, a band that reaches above 0.47 times the sample rate, the limit of the app's
+filter bank, is cut to fit rather than dropped (`events.fitted_bands`). At 48 kHz every band fits
+and nothing changes. At 44.1 kHz the band from 18 kHz is kept as 18 to 20.7 kHz. Milestone 8's
+filter bank is to do the same, as decided on 22 November; today the app drops that band at
+44.1 kHz.
+
+Why. An iPhone may deliver 44.1 kHz with another microphone, and the Omega's unlock stands mostly
+above 18 kHz. With that band dropped, the Omega gave nothing.
+
+No capture made at 44.1 kHz exists, so `checks.py rates` converts the Safari captures through
+the Fourier transform, which keeps everything below 22.05 kHz, has the app time them again, and
+reads them by default with 100 resamples:
+
+| | 48 kHz | 44.1 kHz, band cut to fit | 44.1 kHz, band dropped |
+| --- | --- | --- | --- |
+| Omega 3861, 36° | 0.307 ± 0.028 ms, 284.1° | 0.302 ± 0.033 ms, 285.3° | nothing |
+| ETA 2836-2, 50° | 0.152 ± 0.013 ms, 263.4° | 0.141 ± 0.012 ms, 263.2° | 0.137 ± 0.011 ms, 262.7° |
+| No watch | nothing | nothing | nothing |
+
+Every reading in the table is shown. With a low-pass at 20 kHz as well, where many converters at
+44.1 kHz stop, the Omega read 0.283 ± 0.026 ms and 286.3°. The ETA's move comes with the band: at
+48 kHz with the whole band left out it reads 0.137 ms.
+
+The 46 watches of `checks.py sims`, made at 48 kHz, converted and read with their 48 kHz
+timestamps: the same 32 beat errors are shown as at 48 kHz, none more than 0.098 ms off, the
+amplitude within 2.9°; with the band dropped, 23 were shown. Made at 44.1 kHz, which draws other
+random sounds from the same seeds, 24 are shown (14 with the band dropped). Two of those are
+0.102 and 0.116 ms off; read at 48 kHz, the same two watches are 0.107 and 0.121 ms off, so it
+is the watches drawn, not the rate.
+
+Nothing else moved. At 48 kHz the band envelopes are the same to the last sample, so the six
+recordings read as before to the last digit, as do the simulated watches of every check.
+
+Its limits:
+
+- Only converted captures. A microphone that runs at 44.1 kHz may filter its top differently.
+- The app's timestamps here come from its filter bank as it is today, without the band. Timed
+  with the band as well, the Omega read 0.322 ± 0.027 ms, and 0.304 ± 0.026 ms with the 20 kHz
+  low-pass.
+- Fresh simulated watches can be shown a little more than 0.1 ms off, at 48 kHz as at 44.1 kHz;
+  issue 27 of the investigation.
+
 ## Limits
 
 - That the first sound is the unlock in both beats is a reading of the patents' sequence of
@@ -759,7 +804,8 @@ small; the fresh search in each resample is what held these back.
   284.6°, against the prototype's 284.2°. Read from one beat alone it would be 273° or 296°. No
   description was found of what Spe1 does.
 - The 3861's unlock stands only 3.5 to 5.5 dB over the background, mostly above 18 kHz. It took
-  30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it.
+  30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it. At
+  44.1 kHz it is found only because the band from 18 kHz is cut to fit (see "Audio at 44.1 kHz").
 - The ETA's beat error from the unlocks is not steady across its 30 s capture, and why is not
   yet known. Its 10 s stretches read 0.21, 0.16 and 0.10 ms (the first 12 s for the first), each
   ± 0.02, while the gap between the app's timestamps held at 0.41 to 0.42 ms. Either the unlock
