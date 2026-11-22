@@ -407,8 +407,10 @@ def pair_beats(s0, s1, bph, lift_deg=None, max_ratio=1.18):
     """Choose the unlock and the lock of each beat. The unlock is a beat's first sound. The lock
     is chosen for both beats together: among the later sounds, the pair whose times from the
     unlock agree between the two beats within `max_ratio` and whose quieter member, measured
-    against its own beat's loudest sound, is loudest. Returns None and the reason when that
-    pair's times are not believable for a watch, or when there is no such pair."""
+    against its own beat's loudest sound, is loudest. When that pair's times are not believable
+    for a watch, the loudest pair whose times are is taken instead, but only if both its sounds
+    are louder than their beat's first sound. Returns None and the reason when no pair is
+    taken."""
     if len(s0) < 2 or len(s1) < 2:
         return None, "fewer than two sounds in a beat"
     lo, hi = lift_limits(bph, lift_deg)
@@ -416,6 +418,7 @@ def pair_beats(s0, s1, bph, lift_deg=None, max_ratio=1.18):
     top0 = max(e["level"] for e in s0)
     top1 = max(e["level"] for e in s1)
     best = None
+    believable = None
     for a in s0[1:]:
         for b in s1[1:]:
             t0 = a["onset_ms"] - f0["onset_ms"]
@@ -425,11 +428,22 @@ def pair_beats(s0, s1, bph, lift_deg=None, max_ratio=1.18):
             score = min(a["level"] / top0, b["level"] / top1)
             if best is None or score > best[0]:
                 best = (score, a, b, t0, t1)
+            if lo <= t0 <= hi and lo <= t1 <= hi and (believable is None or score > believable[0]):
+                believable = (score, a, b, t0, t1)
     if best is None:
         return None, "no two sounds the same time after the first in both beats"
     _, a, b, t0, t1 = best
     if not (lo <= t0 <= hi and lo <= t1 <= hi):
-        return None, "time from first sound to lock (%.1f and %.1f ms) outside %.1f to %.1f ms" % (t0, t1, lo, hi)
+        # A lever whose impulse is louder than its drop in both beats pairs its impulses first,
+        # too soon after the unlock to be the lock; its drops are the believable pair. But when
+        # the unlock is lost, the first sound found is the impulse, the drop comes too soon after
+        # it, and a quieter sound after the drop can be believable: taken as the lock, it gave
+        # amplitudes 48 degrees low on simulated watches. A lock is louder than an unlock, by 12
+        # to 18 dB in both Safari captures, so a quieter pair is taken only when both its sounds
+        # are louder than their beat's first sound, which leaves those watches without a reading.
+        if believable is None or not (believable[1]["level"] > f0["level"] and believable[2]["level"] > f1["level"]):
+            return None, "time from first sound to lock (%.1f and %.1f ms) outside %.1f to %.1f ms" % (t0, t1, lo, hi)
+        _, a, b, t0, t1 = believable
     return {"f0": f0, "l0": a, "f1": f1, "l1": b, "lift0": t0, "lift1": t1}, ""
 
 
