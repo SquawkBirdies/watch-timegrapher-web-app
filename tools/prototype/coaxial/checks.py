@@ -29,8 +29,9 @@ then runs the prototype on them and on the six recordings in tests/fixtures, and
 reading against the truth. It takes about fifteen minutes. When the directory already holds
 the watches from an earlier run, they are used again.
 
-`pairing` reads simulated levers whose impulse is as loud as their drop or louder, and levers
-whose unlock is too faint to find, against the truth, in about fifteen minutes.
+`pairing` reads simulated levers whose impulse is as loud as their drop or louder, levers whose
+unlock is too faint to find and one whose impulse cannot be heard, against the truth, in about
+twenty minutes.
 """
 import json
 import os
@@ -181,12 +182,14 @@ def lever_sounds(impulse_db=18, unlock_db=12, after_drop=None):
 
 def pairing(outdir, ways=("test",)):
     """Levers whose impulse is as loud as the drop or louder, which the pairing once refused
-    (issue 24 of the investigation), and levers whose unlock is too faint to find."""
+    (issue 24 of the investigation), levers whose unlock is too faint to find, which were once
+    read from the impulse (issue 25), and a lever whose impulse cannot be heard."""
     os.makedirs(outdir, exist_ok=True)
     print("Simulated levers, 60 s, true beat error 0.50 ms. The drop is 25 dB over the background.")
-    print("The last two groups have the unlock at -10 dB, too faint to find: with a sound 4 ms after")
-    print("the drop they should give nothing, and at 220 degrees they read the amplitude about 80")
-    print("degrees high (issue 25 of the investigation).\n")
+    print("The lost-unlock groups have the unlock at -10 dB, too faint to find, and should give")
+    print("nothing; timed from the impulse, the amplitude read 63 to 79 degrees high (issues 24 and")
+    print("25 of the investigation). The last group has the impulse at -10 dB and gives nothing too,")
+    print("the cost of refusing a beat with nothing between its first sound and its lock.\n")
     cases = []
     for db, label in ((25, "as loud as the drop"), (28, "3 dB over the drop"), (34, "9 dB over the drop")):
         for seed in (1, 2):
@@ -196,6 +199,8 @@ def pairing(outdir, ways=("test",)):
     for seed in (1, 2):
         cases.append(("lever unlock lost, sound after drop", seed, {"sounds": lever_sounds(unlock_db=-10, after_drop=(4.0, 15))}))
     cases.append(("lever unlock lost, 220 degrees", 1, {"sounds": lever_sounds(unlock_db=-10), "amplitude": 220}))
+    cases.append(("lever unlock lost, 18,000 vph, 260 deg", 1, {"sounds": lever_sounds(unlock_db=-10), "bph": 18000, "amplitude": 260}))
+    cases.append(("lever impulse missing", 1, {"sounds": lever_sounds(impulse_db=-10)}))
     groups = {}
     for group, seed, over in cases:
         over = dict(over, seconds=60, restOffsetDeg=1.7, seed=seed)

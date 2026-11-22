@@ -409,8 +409,9 @@ def pair_beats(s0, s1, bph, lift_deg=None, max_ratio=1.18):
     unlock agree between the two beats within `max_ratio` and whose quieter member, measured
     against its own beat's loudest sound, is loudest. When that pair's times are not believable
     for a watch, the loudest pair whose times are is taken instead, but only if both its sounds
-    are louder than their beat's first sound. Returns None and the reason when no pair is
-    taken."""
+    are louder than their beat's first sound. A pair is refused when nothing lies between the
+    first sound and the lock in a beat, since the first sound may then be the impulse. Returns
+    None and the reason when no pair is taken."""
     if len(s0) < 2 or len(s1) < 2:
         return None, "fewer than two sounds in a beat"
     lo, hi = lift_limits(bph, lift_deg)
@@ -444,6 +445,16 @@ def pair_beats(s0, s1, bph, lift_deg=None, max_ratio=1.18):
         if believable is None or not (believable[1]["level"] > f0["level"] and believable[2]["level"] > f1["level"]):
             return None, "time from first sound to lock (%.1f and %.1f ms) outside %.1f to %.1f ms" % (t0, t1, lo, hi)
         _, a, b, t0, t1 = believable
+    # Both escapements make a sound between the unlock and the lock in each beat: the lever its
+    # impulse, the co-axial its impulse in one beat and a sound 4.2 ms after the unlock in the
+    # other. That sound is louder than the unlock, so when the unlock is heard it is heard too.
+    # When the unlock is lost, the first sound found is the impulse and nothing lies between it
+    # and the lock; timed from it, the lift comes out short, and simulated levers showed
+    # amplitudes 44 to 109 degrees high.
+    empty0 = not any(f0["onset_ms"] < e["onset_ms"] < a["onset_ms"] for e in s0)
+    empty1 = not any(f1["onset_ms"] < e["onset_ms"] < b["onset_ms"] for e in s1)
+    if empty0 or empty1:
+        return None, "nothing between the first sound and the lock in %s, so the first may be the impulse" % ("both beats" if empty0 and empty1 else "one beat")
     return {"f0": f0, "l0": a, "f1": f1, "l1": b, "lift0": t0, "lift1": t1}, ""
 
 
