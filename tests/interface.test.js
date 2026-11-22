@@ -370,6 +370,7 @@ test('stored settings are checked, and anything invalid falls back to the defaul
     averagingSeconds: 60,
     microphoneId: '',
     magnetNoticeSeen: false,
+    saveMinutes: 1,
   });
   assert.deepEqual(clean({ bph: 12345, escapement: 'tourbillon', liftAngle: 5, humHz: 55, averagingSeconds: 15 }), DEFAULTS);
 });

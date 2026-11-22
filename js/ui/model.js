@@ -423,3 +423,36 @@ export function describeInput(label, sampleRate) {
   if (bluetooth) text += '. Bluetooth inputs are experimental: their sound is coarser than a wired or built-in microphone.';
   return { text, bluetooth };
 }
+
+/**
+ * A length of audio in words: 45 s, 1 min, 1 min 37 s.
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function formatDuration(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  return rest ? `${m} min ${rest} s` : `${m} min`;
+}
+
+/**
+ * The save button's words for the length kept.
+ * @param {number} minutes
+ * @returns {string}
+ */
+export function saveLabel(minutes) {
+  return minutes === 1 ? 'Save the last minute' : `Save the last ${minutes} minutes`;
+}
+
+/**
+ * Size in megabytes of a saved recording: 32-bit floating-point samples, one channel, and the
+ * WAV header.
+ * @param {number} seconds
+ * @param {number} sampleRate
+ * @returns {number}
+ */
+export function recordingMegabytes(seconds, sampleRate) {
+  return (58 + Math.floor(seconds * sampleRate) * 4) / 1e6;
+}

@@ -249,10 +249,16 @@ as the interruption. A microphone closed while the app was in the background is 
 the app returns. Changing the input, the beat rate or the mains frequency while measuring
 starts the measurement again without closing the microphone.
 
-The last 60 s of what the microphone heard since the last interruption are kept in memory, about
-11 MB at 48 kHz. "Save the last minute" hands them over as a 32-bit float WAV file, through the
-share sheet where there is one (on the iPhone, Save to Files) or as a download. Replayed under
-Your file, the saved minute is the very audio that was analysed.
+The most recent audio since the last interruption is kept in memory for saving: the last
+minute, 2 minutes or 5 minutes, as chosen under "Keep for saving" in the Microphone panel and
+remembered on the device. At 48 kHz that is about 12 MB a minute, so 58 MB for 5 minutes. The
+choice takes effect at once; a shorter one drops the oldest audio kept, and a longer one fills
+up from then on. The save button names the length ("Save the last 2 minutes"), and the note
+under it gives the length and size of the file it would make. The file is a 32-bit float WAV,
+handed over through the share sheet where there is one (on the iPhone, Save to Files) or as a
+download. Replayed under Your file, it is the very audio that was analysed: in Chrome, an 80 s
+live run of the ETA recording, kept with "Last 2 minutes", saved 79.8 s and replayed to the same
++5.3 s/day and 0.44 ms as the live reading.
 
 In Chrome on a computer, with the ETA recording played in as a simulated microphone (Chrome
 delivers it at 44.1 kHz), the live reading after 50 s was +6.9 s/day and 0.40 ms. The recording
@@ -283,6 +289,9 @@ Known limits of the live microphone:
 - In the 0.3 s before digital silence counts as an interruption, the trace may show a dim dot or
   two where beats were due.
 - Saving keeps only the audio since the last interruption.
+- Saving copies the kept audio, writes the file and hands it to the browser, so for a moment it
+  can take up to four times the memory of the audio: about 230 MB for 5 minutes at 48 kHz.
+  Writing a 5-minute file took 0.14 s on a computer and has not been timed on the iPhone.
 - The microphone cannot wait for the analysis. If the analysis falls more than 8 s behind, the
   measurement stops with a message. The iPhone ran the pipeline 22.6 times faster than real time.
 
@@ -349,7 +358,7 @@ js/dsp/session.js      the pipeline plus a record of its computing time; the spe
 js/dsp/worker.js       runs a session in a background worker
 js/audio/capture.js    microphone choice, raw-audio request, interruptions
 js/audio/capture-worklet.js  audio-thread chunker
-js/audio/live.js       the microphone as a source: interruptions, resuming, the last minute
+js/audio/live.js       the microphone as a source: interruptions, resuming, the audio kept for saving
 js/audio/ring.js       the most recent stretch of audio, in fixed memory
 js/audio/wav.js        WAV reader for recordings, writer for saved captures
 js/audio/simulator.js  synthetic watch, as whole recordings or endless and adjustable

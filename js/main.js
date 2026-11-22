@@ -3,7 +3,7 @@
 // in real time for the simulator and recordings; the worker's events update the measurement
 // model, and the screen is redrawn from the model.
 
-import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput } from './ui/model.js';
+import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
 import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
 import { ScreenWake } from './ui/wake.js';
@@ -14,7 +14,7 @@ import { Player } from './audio/player.js';
 import { LiveInput } from './audio/live.js';
 import { listMicrophones } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
-import { loadSettings, saveSettings, clean, BEAT_RATES, AVERAGING_CHOICES } from './store.js';
+import { loadSettings, saveSettings, clean, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES } from './store.js';
 
 /**
  * @typedef {import('./audio/file-source.js').Recording} Recording
@@ -78,6 +78,7 @@ const ui = {
   micInput: /** @type {HTMLSelectElement} */ ($('mic-input')),
   micInfo: $('mic-info'),
   micWake: $('mic-wake'),
+  micKeep: /** @type {HTMLSelectElement} */ ($('mic-keep')),
   micSave: /** @type {HTMLButtonElement} */ ($('mic-save')),
   micSaveInfo: $('mic-save-info'),
   magnet: /** @type {HTMLDialogElement} */ ($('magnet')),
@@ -384,6 +385,7 @@ async function startMicrophone(id) {
   loading = 'Waiting for the microphone';
   schedule();
   try {
+    input.keep(settings.saveMinutes * 60);
     await input.open(settings.microphoneId);
   } catch (error) {
     if (id !== sessionId) return;
@@ -606,12 +608,15 @@ function render() {
   ui.micInfo.textContent = listening && live ? describeInput(live.label, live.inputSampleRate || live.sampleRate).text : 'Start asks for the microphone. The sound stays on this device.';
   ui.micWake.hidden = wake.supported;
   const kept = live ? live.recordedSeconds : 0;
+  const minutes = settings.saveMinutes;
   ui.micSave.disabled = kept < 1;
+  ui.micSave.textContent = saveLabel(minutes);
+  const since = micRun && micRun.interrupted && micRun.running ? ' before the interruption' : micRun && micRun.interruptions ? ' since the last interruption' : '';
   ui.micSaveInfo.textContent =
     saveMessage ||
-    (kept >= 1
-      ? `Saves the last ${Math.min(60, Math.floor(kept))} s${micRun && micRun.interrupted && micRun.running ? ' before the interruption' : micRun && micRun.interruptions ? ' since the last interruption' : ''} as a WAV file, which you can replay under Your file.`
-      : 'Saves up to 60 s of what the microphone heard as a WAV file, which you can replay under Your file.');
+    (kept >= 1 && live
+      ? `Saves the last ${formatDuration(kept)}${since} (${recordingMegabytes(kept, live.sampleRate).toFixed(0)} MB) as a WAV file, which you can replay under Your file.`
+      : `Keeps the last ${minutes === 1 ? 'minute' : `${minutes} minutes`} of what the microphone hears, about ${recordingMegabytes(minutes * 60, 48000).toFixed(0)} MB, to save as a WAV file you can replay under Your file.`);
   ui.progress.hidden = ui.progressText.hidden = !(recordingRun && run && (run.running || run.finished) && run.kind === tab);
   if (recordingRun && run && run.duration) {
     const seconds = run.fed / run.sampleRate;
@@ -786,6 +791,17 @@ ui.micInput.addEventListener('change', async () => {
     }
     if (live === input) restartMicrophone();
   }
+  schedule();
+});
+
+fill(ui.micKeep, SAVE_MINUTES.map((m) => /** @type {[string, string]} */ ([String(m), m === 1 ? 'Last minute' : `Last ${m} minutes`])));
+ui.micKeep.value = String(settings.saveMinutes);
+ui.micKeep.addEventListener('change', () => {
+  settings = clean({ ...settings, saveMinutes: Number(ui.micKeep.value) });
+  saveSettings(settings);
+  // Takes effect at once, also on what a stopped run kept: a shorter length drops the oldest.
+  if (live) live.keep(settings.saveMinutes * 60);
+  saveMessage = '';
   schedule();
 });
 

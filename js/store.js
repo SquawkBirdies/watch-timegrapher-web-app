@@ -11,6 +11,7 @@
  * @property {number} averagingSeconds window of the rate and beat-error readings
  * @property {string} microphoneId the input chosen in the microphone picker; '' for the default
  * @property {boolean} magnetNoticeSeen the magnetism notice has been read once
+ * @property {number} saveMinutes how many minutes of microphone audio are kept for saving
  */
 
 /** @type {Readonly<Settings>} */
@@ -22,10 +23,13 @@ export const DEFAULTS = Object.freeze({
   averagingSeconds: 20,
   microphoneId: '',
   magnetNoticeSeen: false,
+  saveMinutes: 1,
 });
 
 export const BEAT_RATES = [18000, 19800, 21600, 25200, 28800, 36000];
 export const AVERAGING_CHOICES = [10, 20, 40, 60];
+/** Minutes of microphone audio that can be kept for saving. About 12 MB of memory a minute. */
+export const SAVE_MINUTES = [1, 2, 5];
 export const LIFT_RANGE = [30, 70];
 
 const KEY = 'timegrapher.settings.v1';
@@ -48,6 +52,8 @@ export function clean(raw) {
   if (AVERAGING_CHOICES.includes(avg)) s.averagingSeconds = avg;
   if (typeof raw.microphoneId === 'string' && raw.microphoneId.length <= 256) s.microphoneId = raw.microphoneId;
   if (raw.magnetNoticeSeen === true) s.magnetNoticeSeen = true;
+  const minutes = Number(raw.saveMinutes);
+  if (SAVE_MINUTES.includes(minutes)) s.saveMinutes = minutes;
   return s;
 }
 

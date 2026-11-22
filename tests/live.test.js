@@ -11,8 +11,8 @@ import { AudioRing } from '../js/audio/ring.js';
 import { LiveInput, KEEP_SECONDS, SILENCE_SECONDS } from '../js/audio/live.js';
 import { synthesizeWatch } from '../js/audio/simulator.js';
 import { Pipeline } from '../js/dsp/pipeline.js';
-import { Measurement, shiftEvent, guidance, stateText, microphoneProblem, describeInput } from '../js/ui/model.js';
-import { clean, DEFAULTS } from '../js/store.js';
+import { Measurement, shiftEvent, guidance, stateText, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from '../js/ui/model.js';
+import { clean, DEFAULTS, SAVE_MINUTES } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 
 /**
@@ -117,6 +117,20 @@ test('the audio ring keeps the most recent samples in order, across wrap-arounds
   assert.equal(ring.length, 0);
   ring.push(Float32Array.from([1]));
   assert.deepEqual(Array.from(ring.read()), [1]);
+
+  // A longer length keeps everything held and fills up from there; a shorter one keeps the
+  // most recent part.
+  const longer = new AudioRing(1, 4);
+  longer.push(Float32Array.from([1, 2, 3, 4, 5, 6]));
+  longer.resize(2);
+  assert.equal(longer.capacity, 8);
+  assert.deepEqual(Array.from(longer.read()), [3, 4, 5, 6]);
+  longer.push(Float32Array.from([7, 8, 9, 10, 11]));
+  assert.deepEqual(Array.from(longer.read()), [4, 5, 6, 7, 8, 9, 10, 11]);
+  longer.resize(0.75);
+  assert.deepEqual(Array.from(longer.read()), [9, 10, 11]);
+  longer.push(Float32Array.from([12]));
+  assert.deepEqual(Array.from(longer.read()), [10, 11, 12]);
 });
 
 // ---- Interruptions ---------------------------------------------------------------------------
@@ -234,6 +248,44 @@ test('a muted microphone, suspended audio and a closed or lost microphone are ha
   input3.close();
   mic3.drive.change('audio closed');
   assert.deepEqual(r3.log, []);
+});
+
+test('the length kept for saving can be set before the microphone opens and changed while it runs', async () => {
+  const fs = 1000;
+  const mic = fakeMicrophone(fs);
+  const input = new LiveInput(recorder().handlers, { open: mic.open, now: () => 0 });
+  input.keep(120);
+  await input.open();
+  for (let i = 0; i < 150; i++) mic.drive.chunk(noise(fs, i + 1));
+  assert.equal(input.recordedSeconds, 120, 'two minutes kept of two and a half heard');
+  const before = /** @type {{channels: Float32Array[]}} */ (input.recording()).channels[0];
+  input.keep(300);
+  assert.equal(input.recordedSeconds, 120, 'a longer length cannot bring back what was dropped');
+  for (let i = 0; i < 30; i++) mic.drive.chunk(noise(fs, 200 + i));
+  assert.equal(input.recordedSeconds, 150, 'and fills up from there');
+  input.keep(60);
+  const after = /** @type {{channels: Float32Array[]}} */ (input.recording()).channels[0];
+  assert.equal(after.length, 60 * fs);
+  // 180 one-second chunks were heard; the minute kept starts with the 121st, made with seed 121.
+  assert.deepEqual(after.subarray(0, fs), noise(fs, 121), 'the most recent minute is kept');
+  assert.ok(before.length === 120 * fs);
+  // Closing keeps what was held, and the length can still change.
+  input.close();
+  input.keep(300);
+  assert.equal(input.recordedSeconds, 60);
+});
+
+test('the save button and its note describe the length kept', () => {
+  assert.deepEqual(SAVE_MINUTES, [1, 2, 5]);
+  assert.equal(saveLabel(1), 'Save the last minute');
+  assert.equal(saveLabel(5), 'Save the last 5 minutes');
+  assert.equal(formatDuration(45.9), '45 s');
+  assert.equal(formatDuration(60), '1 min');
+  assert.equal(formatDuration(97), '1 min 37 s');
+  assert.equal(formatDuration(300), '5 min');
+  // The file is the samples, four bytes each at 48 kHz, and a 58-byte header.
+  assert.ok(Math.abs(recordingMegabytes(60, 48000) - 11.520058) < 1e-9);
+  assert.ok(Math.abs(recordingMegabytes(300, 48000) - 57.600058) < 1e-9);
 });
 
 test('switching input or restarting starts the timeline and the kept audio again', async () => {
@@ -400,4 +452,7 @@ test('the chosen microphone and the magnetism notice are remembered, and invalid
   assert.equal(clean({ microphoneId: 7, magnetNoticeSeen: 'yes' }).microphoneId, '');
   assert.equal(clean({ microphoneId: 'x'.repeat(300) }).microphoneId, '');
   assert.equal(clean({ magnetNoticeSeen: 'yes' }).magnetNoticeSeen, false);
+  assert.equal(DEFAULTS.saveMinutes, 1);
+  assert.equal(clean({ saveMinutes: '5' }).saveMinutes, 5);
+  assert.equal(clean({ saveMinutes: 3 }).saveMinutes, 1);
 });
