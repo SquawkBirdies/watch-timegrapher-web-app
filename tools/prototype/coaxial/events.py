@@ -24,6 +24,15 @@ HF_BANDS = [(5000, 7000), (7000, 9000), (9000, 11500), (11500, 14500), (14500, 1
 # where most of the Omega's unlock lies, is kept as 18 to 20.7 kHz (issue 12 of the
 # investigation). At 48 kHz every band fits.
 BAND_TOP = 0.47
+# How the bands are added into one averaged beat. "energy", the default since 22 November (issue
+# 26 of the investigation): each band by its own energy, so the portrait is the sounds' excess
+# energy summed over the bands, as a fixed filter would hear it, and noise added to some bands
+# cannot reshape the mixture. "noise", as before: each band by how far the beats stand over its
+# own noise, which is the most precise mixture but lets the noise choose it. A real watch's
+# sounds do not start at one moment in every band (the ETA's top band starts its tock's unlock
+# 0.33 ms after the middle ones), so a mixture that follows the noise moved the ETA's beat error
+# by up to 0.18 ms, shown, when noise unlike the capture's own background was added.
+WEIGHTING = "energy"
 
 # A reading is shown only when resampling the beats supports it.
 MAX_SD_MS = 0.1      # largest scatter of the beat error over the resamples, as the app's gate
@@ -84,16 +93,27 @@ def fitted_bands(bands, fs):
     return [(lo, min(hi, top)) for lo, hi in bands if lo < top]
 
 
+class Rows(list):
+    """Band envelopes, each divided by its median, which carry those medians as `levels`: each
+    band's energy, which weighting the bands by energy needs. A plain list of envelopes, as
+    older scripts may pass, has none and is weighted by noise."""
+
+    def __init__(self, rows, levels):
+        super().__init__(rows)
+        self.levels = np.asarray(levels, dtype=float)
+
+
 def band_rows(x, fs, bands=HF_BANDS, smooth_ms=0.10):
     """Energy envelope of each band at the audio's own rate, divided by the band's median.
     Zero-phase filters."""
-    rows = []
+    rows, levels = [], []
     for lo, hi in fitted_bands(bands, fs):
         sos = signal.butter(4, [lo, hi], btype="band", fs=fs, output="sos")
         y = signal.sosfiltfilt(sos, x)
         e = smooth(y * y, max(1, int(round(smooth_ms * 1e-3 * fs))))
-        rows.append(e / np.median(e))
-    return rows
+        levels.append(np.median(e))
+        rows.append(e / levels[-1])
+    return Rows(rows, levels)
 
 
 def app_rows(x, fs, bands=HF_BANDS, envelope_rate=12000):
@@ -103,14 +123,15 @@ def app_rows(x, fs, bands=HF_BANDS, envelope_rate=12000):
     limit is cut to fit, as milestone 8's filter bank will do; today's drops it. Returns the rows
     and their rate."""
     dec = max(1, round(fs / envelope_rate))
-    rows = []
+    rows, levels = [], []
     for lo, hi in fitted_bands(bands, fs):
         y = signal.sosfilt(signal.butter(4, lo, btype="highpass", fs=fs, output="sos"), x)
         y = signal.sosfilt(signal.butter(4, hi, btype="lowpass", fs=fs, output="sos"), y)
         n = len(y) // dec
         e = (y[: n * dec] ** 2).reshape(n, dec).mean(axis=1)
-        rows.append(e / np.median(e))
-    return rows, fs / dec
+        levels.append(np.median(e))
+        rows.append(e / levels[-1])
+    return Rows(rows, levels), fs / dec
 
 
 def beat_times(beats, j):
@@ -164,16 +185,17 @@ def robust_sd(v):
     return 1.4826 * np.median(np.abs(v - np.median(v)))
 
 
-def band_means(S, tms, idx=None, base_until=-14.0):
+def band_means(S, tms, idx=None, base_until=-14.0, with_base=False):
     """Mean over beats of each band with the highest and lowest 5% of beats left out at each
     instant, as an excess over the band's level before the beat. One loud click in a single
-    beat therefore does not show."""
-    out = []
+    beat therefore does not show. With `with_base`, each band's level before the beat too."""
+    out, bases = [], []
     for M in S:
         m = stats.trim_mean(M if idx is None else M[idx], 0.05, axis=0)
         base = np.median(m[tms < base_until])
         out.append(m / base - 1.0)
-    return np.array(out)
+        bases.append(base)
+    return (np.array(out), np.array(bases)) if with_base else np.array(out)
 
 
 def shared_weights(means0, means1, tms, base_until=-14.0):
@@ -184,6 +206,23 @@ def shared_weights(means0, means1, tms, base_until=-14.0):
         sd = np.array([robust_sd(m[tms < base_until]) for m in means])
         w += np.maximum(means.max(axis=1), 0) / (sd * sd + 1e-30)
     return w / w.sum()
+
+
+def energy_weights(levels, bases):
+    """Weights that add the bands by their own energy. Each band's envelope is divided by its
+    noise twice over, by its median over the recording (`levels`) and by its level before the
+    beat (`bases`, one row per beat type); multiplying that noise back undoes it, so the
+    portrait becomes the excess energy summed over the bands, whatever noise each band holds."""
+    w = np.asarray(levels, dtype=float) * np.mean(bases, axis=0)
+    return w / w.sum()
+
+
+def mix_weights(m0, m1, b0, b1, tms, base_until, levels, weighting=None):
+    """The band weights for both beats: by energy (`WEIGHTING`, or `weighting` when given), or
+    by noise as before, which is also what rows without levels get."""
+    if (weighting or WEIGHTING) == "energy" and levels is not None:
+        return energy_weights(levels, [b0, b1])
+    return shared_weights(m0, m1, tms, base_until)
 
 
 def portrait(means, weights):
@@ -473,7 +512,7 @@ def amplitude(lift_deg, bph, t_ms):
     return lift_deg / (2 * np.sin(np.pi * f * t_ms * 1e-3))
 
 
-def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline="test"):
+def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline="test", weighting=None):
     """Portraits, sounds and paired readings for one recording.
 
     x, fs    audio and its sample rate; or pass `rows` (band envelopes) with fs as their rate
@@ -482,6 +521,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     nboot    resamples of the beats for the uncertainty; 0 for none
     t_from, t_to   use only the beats between these times, in seconds
     weights  band weights to use instead of working them out
+    weighting  "energy" or "noise", how the weights are worked out; WEIGHTING when absent
     find     keyword arguments for find_sounds; use_peak times sounds at their maxima
     reline   True lines the beats up again before averaging (False gives the plain
              average, as before 18 November), so that a sound whose place moves with
@@ -542,12 +582,14 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         resid.append((T[j][0][kept] - slope * T[j][1][kept]) * 1e3)
     n0, n1 = len(S[0][0]), len(S[1][0])
 
+    levels = getattr(rows, "levels", None)
+
     def readings(idx0=None, idx1=None, w=None):
         g = gap if idx0 is None else float(np.median(resid[1][idx1]) - np.median(resid[0][idx0]))
-        m0 = band_means(S[0], tms, idx0, base_until)
-        m1 = band_means(S[1], tms, idx1, base_until)
+        m0, b0 = band_means(S[0], tms, idx0, base_until, with_base=True)
+        m1, b1 = band_means(S[1], tms, idx1, base_until, with_base=True)
         if w is None:
-            w = shared_weights(m0, m1, tms, base_until)
+            w = mix_weights(m0, m1, b0, b1, tms, base_until, levels, weighting)
         ports = []
         for m in (m0, m1):
             c = portrait(m, w)
@@ -575,7 +617,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
 
     r, why, ports, W = readings(w=weights)
     out = {"bph": bph, "lift": lift, "gap": gap, "n0": n0, "n1": n1, "reading": r, "why": why, "ports": ports, "tms": tms, "weights": W, "limits": (lo, hi),
-           "stacks": S, "times": times, "base_until": base_until}
+           "stacks": S, "times": times, "base_until": base_until, "levels": levels,
+           "weighting": "given" if weights is not None else ((weighting or WEIGHTING) if levels is not None else "noise")}
     if r is None:
         return out
     if reline:

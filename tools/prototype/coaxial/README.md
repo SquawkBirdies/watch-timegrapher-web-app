@@ -18,6 +18,11 @@ the lock. The prototype finds the sounds inside each averaged beat and pairs tho
 - amplitude: from the mean time between unlock and lock and a lift angle, with Witschi's
   formula.
 
+The sounds are found in six bands from 5 to 22.5 kHz, added into one averaged beat by their own
+energy, as a fixed filter would hear them (since 22 November; see "Adding the bands by energy").
+A real watch's sounds do not start at the same moment in every band, so the mixture decides
+where a sound starts, and it must not move with the room's noise.
+
 Witschi's two documents used here are its training document, "Testing methods for mechanical
 watches" (2025), and the ChronoCube operating instructions (version 2.0, 2020). Both say the
 first sound of a lever beat, the unlock, is timed for the rate and the beat error, and the time
@@ -51,6 +56,7 @@ python3 -I tools/prototype/coaxial/checks.py pairing /tmp/pairing      # about t
 python3 -I tools/prototype/coaxial/track.py swings /tmp/swings both     # about an hour
 python3 -I tools/prototype/coaxial/track.py steady /tmp/steady both     # about half an hour
 python3 -I tools/prototype/coaxial/checks.py rates /tmp/rates           # about ten minutes
+python3 -I tools/prototype/coaxial/checks.py noise /tmp/noise           # about twenty minutes
 ```
 
 `beats.mjs wav` runs the app's whole-recording analysis for the timestamps, and `beats.mjs
@@ -103,7 +109,10 @@ The simulated watch is `tests/helpers/balance.js`: a balance swinging as a sine,
 and the lock at set angles, so the beat error and the amplitude are known. It can also be made
 irregular: `beatJitterMs` moves each whole beat off the regular grid and `amplitudeJitterDeg`
 each beat's amplitude, drawn afresh for every beat on a random stream of their own, so that a
-watch without them is the same to the last sample. `tests/balance.test.js` checks its truth.
+watch without them is the same to the last sample. A sound's `arrival` makes it start at its own
+time and level in each band, as a real watch's sounds do; its parts come early or late and loud
+or quiet together, and a watch without it is the same to the last sample. `tests/balance.test.js`
+checks its truth.
 
 ## What it measured
 
@@ -111,28 +120,31 @@ All on a computer. Nothing has been compared with a timing machine.
 
 | Recording | Beat error from the first sounds | Amplitude |
 | --- | --- | --- |
-| Omega 3861, Safari capture, 60 s | 0.31 ± 0.03 ms | 284° at a 36° lift angle |
-| ETA 2836-2, Safari capture, 30 s | 0.15 ± 0.01 ms | 263° at a 50° lift angle |
+| Omega 3861, Safari capture, 60 s | 0.35 ± 0.02 ms | 287° at a 36° lift angle |
+| ETA 2836-2, Safari capture, 30 s | 0.30 ± 0.02 ms | 267° at a 50° lift angle |
 | The three Voice Memos recordings | nothing shown | nothing shown |
 
-These line up only the sounds that move, the default since 18 November: on the Omega the two
-locks, on the ETA nothing. The plain average read both the same; with every sound lined up the
-Omega read 0.30 ± 0.03 ms and 285°. Most of the figures below that are not about lining up came
-from the plain average. The ± is the scatter under resampling only. Across the analysis choices
-the Omega's beat error runs from 0.26 to 0.38 ms (plain average). The ETA's last sounds are
-0.31 ms apart, which is the app's own Swiss-lever reading: the app's timestamps sit at the
-loudest part of each beat, which in a lever watch is the drop, while Witschi's instruments time
-the unlock.
+These add the bands by energy, the default since 22 November, and line up only the sounds that
+move, the default since 18 November: on the Omega the two locks, on the ETA nothing. Added by
+noise, as before 22 November, the Omega read 0.31 ± 0.03 ms and 284° and the ETA 0.15 ± 0.01 ms
+and 263°; the figures below that are dated before 22 November were measured that way, and most
+of those not about lining up came from the plain average. The ± is the scatter under resampling
+only. Across the analysis choices the Omega's beat error ran from 0.26 to 0.38 ms (by noise,
+plain average). The ETA's last sounds are 0.31 ms apart, which is the app's own Swiss-lever
+reading: the app's timestamps sit at the loudest part of each beat, which in a lever watch is the
+drop, while Witschi's instruments time the unlock. By energy the ETA's unlocks now read 0.30 ms
+apart too; by noise they read 0.15.
 
 On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background) with a true
-beat error of 0, 0.5, 1 and 2 ms, sixteen runs all read within 0.09 ms, and amplitudes of 200° to
-310° within 2°. With the unlock 2 dB over the background or less, or with only 20 s of audio,
-nothing was shown. Of all 46 simulated runs, 32 were shown and none of those was more than
-0.09 ms or 2° out, and lining up only the sounds that move, the default, gave the same. With
-every sound lined up the same 46 showed beat error in 31 and amplitude in 33, none more than
-0.10 ms or 2° out (22 and 30 before block shifts that took another sound were left out): the
-co-axial's faint unlock gives noisy shifts to line the beats up on, which widens the stated
-uncertainty (see "Lining the beats up again").
+beat error of 0, 0.5, 1 and 2 ms, sixteen runs read within 0.11 ms, the worst one in beat at
+±0.04 ms and the rest within 0.07 ms, and amplitudes of 200° to 310° within 1°. With the unlock
+2 dB over the background or less, or with only 20 s of audio, nothing was shown. Of all 46
+simulated runs, 33 were shown, one 0.11 ms off and the rest within 0.09 ms, and the amplitude
+within 2°. By noise, as before 22 November, 32 were shown, within 0.09 ms and 2°; with every
+sound lined up the same 46 showed beat error in 31 and amplitude in 33, none more than 0.10 ms or
+2° out (22 and 30 before block shifts that took another sound were left out): the co-axial's
+faint unlock gives noisy shifts to line the beats up on, which widens the stated uncertainty
+(see "Lining the beats up again").
 
 Until 19 November the simulated watches read low, the co-axial by about 2.8° and the lever by
 about 0.9°, for two reasons in `balance.js`, not in the method. Each lock was delayed by the size
@@ -694,7 +706,8 @@ true beat error. No balance is behind them, so the time from the first sound to 
 one, 7 ms for the default sounds, is checked instead of an amplitude. The lift angle is chosen
 per beat rate to make that time read 280°, so that the gate on believable amplitudes passes.
 
-Louder and 60 s long, lined up as by default; the plain average gave the same verdicts:
+Louder and 60 s long, by default; the plain average gave the same verdicts, as did adding the
+bands by noise before 22 November:
 
 | Outcome on the 36 watches | Watches |
 | --- | --- |
@@ -710,16 +723,19 @@ the gap between them is not the beat error, and the true tocks are never timed. 
 Swiss-lever reading had the same fault until 18 November (see Limits). A beat halfway between
 the app's beats gives it away, and the app now looks for one.
 
-As the tests make them (`--as-tested`), with the plain average:
+As the tests make them (`--as-tested`), by default:
 
 | Outcome on the 36 watches | Watches |
 | --- | --- |
 | shown and wrong by more than 0.1 ms | 0 |
 | shown and right | 0; the two-sound watch whose tock changes its loudest sound read 0.01 ms against 0 until 22 November, and now gives nothing, with nothing between its tock's first sound and its lock |
 | refused, rightly | 1: the two-sound co-axial, whose beats share no first sound |
-| held back, would have been right | 7, off by 0.01 to 0.07 ms |
-| held back, would have been wrong | 6: 3 basket cases, 1 and 5 ms jitter, a run with a 2 s gap |
-| nothing to measure | 21, and the two-sound watch above |
+| held back, would have been right | 4, off by 0.02 to 0.08 ms |
+| held back, would have been wrong | 1: 5 ms jitter |
+| nothing to measure | 30 |
+
+Added by noise, before 22 November, 7 were held back that would have been right and 6 that would
+have been wrong, and 22 gave nothing: adding by energy finds a faint unlock less often.
 
 The two Safari captures read as above. The three Voice Memos recordings and the capture with no
 watch give nothing.
@@ -812,7 +828,8 @@ reads them by default with 100 resamples:
 | ETA 2836-2, 50° | 0.152 ± 0.013 ms, 263.4° | 0.141 ± 0.012 ms, 263.2° | 0.137 ± 0.011 ms, 262.7° |
 | No watch | nothing | nothing | nothing |
 
-Every reading in the table is shown. With a low-pass at 20 kHz as well, where many converters at
+Every reading in the table is shown; the bands were added by noise, as before 22 November (by
+energy, see "Adding the bands by energy"). With a low-pass at 20 kHz as well, where many converters at
 44.1 kHz stop, the Omega read 0.283 ± 0.026 ms and 286.3°. The ETA's move comes with the band: at
 48 kHz with the whole band left out it reads 0.137 ms.
 
@@ -836,6 +853,87 @@ Its limits:
   (see Limits). Those the simulator makes at 44.1 kHz err more, 1.3 to 1.4 times their stated
   scatter (rms), whichever rate they are read at; why is not known.
 
+## Adding the bands by energy
+
+Since 22 November the bands are added by their own energy (`events.WEIGHTING`, "energy"): each
+band's envelope, which is scaled to its own noise, is weighted by that noise, so that the averaged
+beat is the sounds' excess energy summed from 5 to 22.5 kHz, as a fixed filter would hear it.
+Before, each band counted by how far the beats stood over its noise ("noise", still there as
+`measure(..., weighting="noise")`), the most precise mixture but one that the noise chooses.
+
+Why. A real watch's sounds do not start at the same moment in every band. Read band by band, the
+ETA's top band, 18 to 22.5 kHz, starts its tick's unlock 0.14 ms after the middle bands and its
+tock's 0.33 ms after; every sound of the ETA, the loud drop as well, starts earlier in the low
+bands. A phone, a browser or a room delays both beats alike, so the difference between the tick
+and the tock is in the watch. When noise with another spectrum than the capture's background was
+added, the weights by noise shifted and the ETA's beat error moved by up to 0.18 ms, shown.
+
+`checks.py noise` reads the two Safari captures, and a simulated lever built to sound like the
+ETA (below), in quiet and altered, one draw of each, with the app's timestamps on the quiet audio
+(timing the altered audio again moved no reading by more than 0.01 ms). Levels are against the
+audio's own background above 5 kHz; pink noise falls 3 dB per octave, as most room noise does
+above 5 kHz; the room is the no-watch Safari capture; the echo is a 0.4 s room response.
+
+| ETA 2836-2, 50° | By energy | By noise, as before |
+| --- | --- | --- |
+| Quiet | 0.302 ± 0.022 ms, 266.8° | 0.152 ± 0.013 ms, 263.4° |
+| Pink noise, 0 dB | 0.322 ± 0.027 ms, 266.8° | 0.270 ± 0.024 ms, 266.2° |
+| Pink noise, +5 dB | 0.296 ± 0.036 ms, 266.7° | 0.297 ± 0.033 ms, 267.0° |
+| White noise, +5 dB | 0.330 ± 0.034 ms, 267.3° | 0.246 ± 0.040 ms, 265.3° |
+| Room, +5 dB | 0.328 ± 0.045 ms, 266.4° | 0.166 ± 0.014 ms, 263.7° |
+| Echo, −5 dB | 0.308 ± 0.022 ms, 266.9° | 0.148 ± 0.012 ms, 263.7° |
+
+| Omega 3861, 36° | By energy | By noise, as before |
+| --- | --- | --- |
+| Quiet | 0.347 ± 0.024 ms, 286.8° | 0.307 ± 0.028 ms, 284.1° |
+| Pink noise, 0 dB | held back (0.385 ± 0.090 ms) | 0.262 ± 0.049 ms, 284.7° |
+| Pink noise, +5 dB | nothing | held back |
+| White noise, +5 dB | nothing | held back |
+| Room, +5 dB | nothing | held back |
+| Echo, −5 dB | 0.317 ± 0.034 ms, 286.9° | 0.270 ± 0.036 ms, 284.1° |
+
+Every reading not marked was shown. By energy the ETA stays within 0.03 ms of its quiet reading,
+about one stated scatter, under every change; by noise it moved by up to 0.15 ms here. The Omega
+is read almost from its top band either way; by energy that band counts for about a fifth, so
+noise elsewhere buries its faint unlock sooner and it gives nothing where by noise it was held
+back. Neither way shows a wrong number for it.
+
+The simulated lever is `ETA_LIKE` in `checks.py`: each sound made of one part per band through the
+simulator's `arrival`, at the level and the delay the ETA's averaged beats show in that band, with
+the tock's further sound 5.1 ms after its unlock and the no-watch capture as its background. Its
+14.5 to 18 kHz parts start 0.35 ms after their events in both beats, so its truth is what that
+band would read: 0.182 ms and 263°. Band by band it arrives like the ETA.
+
+| ETA-like simulated lever | By energy | By noise, as before |
+| --- | --- | --- |
+| Quiet | 0.430 ± 0.027 ms, 270.0° | 0.211 ± 0.022 ms, 265.1° |
+| Pink noise, 0 dB | 0.432 ± 0.033 ms, 269.9° | 0.405 ± 0.017 ms, 269.6° |
+| Pink noise, +5 dB | 0.436 ± 0.038 ms, 270.4° | 0.427 ± 0.019 ms, 270.8° |
+| White noise, +5 dB | 0.439 ± 0.038 ms, 270.2° | 0.397 ± 0.070 ms, 268.7° |
+| Room, +5 dB | 0.431 ± 0.058 ms, 269.1° | 0.222 ± 0.024 ms, 265.6° |
+| Echo, −5 dB | 0.425 ± 0.028 ms, 270.0° | 0.240 ± 0.027 ms, 265.6° |
+
+The simulator reproduces the shift, and by energy the reading holds still in it. Holding still is
+not being right: against this model's truth it reads 0.25 ms and 7° high, an offset set by the
+watch's own delays and loudness in each band, which a real watch does not tell.
+
+Elsewhere:
+
+- The 46 simulated watches of `checks.py sims`, whose sounds start at once in every band: 33
+  beat errors shown, one 0.11 ms off (in beat, at ±0.04 ms), the rest within 0.09 ms, and the
+  amplitude within 2°, against 32 within 0.09 ms by noise.
+- The unit tests' watches, made louder: the same verdicts, 22 shown and right within 0.05 ms. As
+  the tests make them: 4 held back that would have been right and 1 that would have been wrong,
+  against 7 and 6 by noise; 30 give nothing against 22.
+- `checks.py pairing`: the same verdicts on every lever, the shown ones within 0.02 ms.
+- At 44.1 kHz (`checks.py rates`): the Omega 0.327 ± 0.027 ms and 287.6° with the band cut to
+  fit, the ETA 0.268 ± 0.024 ms and 266.4°; with the band dropped the Omega gives nothing and
+  the ETA reads 0.165 ms.
+- The amplitude filter on the Omega's capture (`track.py recording`) reads blocks of 284° to 291°
+  against 280° to 289° by noise, at ±2° to ±5° against ±1° to ±2°.
+- The stated scatter is wider: the ETA ±0.022 ms against ±0.013, the Omega ±0.024 ms against
+  ±0.028.
+
 ## Limits
 
 - That the first sound is the unlock in both beats is a reading of the patents' sequence of
@@ -850,11 +948,18 @@ Its limits:
 - The 3861's unlock stands only 3.5 to 5.5 dB over the background, mostly above 18 kHz. It took
   30 to 60 s of beats to find reliably, and the Voice Memos recordings do not show it. At
   44.1 kHz it is found only because the band from 18 kHz is cut to fit (see "Audio at 44.1 kHz").
-- The ETA's beat error from the unlocks is not steady across its 30 s capture, and why is not
-  yet known. Its 10 s stretches read 0.21, 0.16 and 0.10 ms (the first 12 s for the first), each
-  ± 0.02, while the gap between the app's timestamps held at 0.41 to 0.42 ms. Either the unlock
-  moves against the rest of the beat or the stated uncertainty is too small; the whole capture's
-  0.15 ± 0.01 ms hides it, and a longer capture would tell. Its unlock itself is found from
+  Added by energy, the top band counts for about a fifth, so noise in the other bands buries it
+  sooner: with pink noise at the capture's own background above 5 kHz it was held back, and with
+  more it gave nothing (see "Adding the bands by energy").
+- A real watch's beat error from the unlocks depends on which frequencies are heard, since its
+  sounds start at different moments in different bands. Added by energy, the reading does not
+  move with the room's noise, but whether it agrees with a timing machine is not known: no maker
+  publishes the band its pickup hears.
+- The ETA's beat error from the unlocks was not steady across its 30 s capture when the bands
+  were added by noise, and why is not yet known. Its 10 s stretches read 0.21, 0.16 and 0.10 ms
+  (the first 12 s for the first), each ± 0.02, while the gap between the app's timestamps held at
+  0.41 to 0.42 ms. By energy they read 0.36 ± 0.03, 0.31 ± 0.04 and 0.30 ± 0.08 ms, within their
+  scatter of each other but wider. A longer capture would tell. Its unlock itself is found from
   4 s of beats on. With every sound lined up, the first 20 s were held back, with 18% of
   resamples failing to find the sounds, where the plain average read 0.16 ± 0.01 ms; lining up
   only what moves keeps them plain.

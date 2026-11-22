@@ -8,6 +8,7 @@ usage: python3 -I tools/prototype/coaxial/checks.py vary <file.wav> <prefix>.bea
        python3 -I tools/prototype/coaxial/checks.py suite <directory> [part of a watch name] [plain|lined|test|both|three]
        python3 -I tools/prototype/coaxial/checks.py pairing <directory> [plain|lined|test|both|three]
        python3 -I tools/prototype/coaxial/checks.py rates <directory>
+       python3 -I tools/prototype/coaxial/checks.py noise <directory>
 
 `kalman` compares where the beats are lined up before averaging: on the whole-recording
 timestamps (<prefix>.beats.json), or on what the real-time pipeline and a Kalman beat tracker
@@ -29,6 +30,10 @@ be given together.
 to 44.1 kHz, where the band from 18 kHz is cut to fit: the app times each again, and the
 converted captures are read with the band cut and, as before 22 November, dropped. About ten
 minutes; the conversions and timestamps are kept in the directory and used again.
+
+`noise` reads the two Safari captures, and a simulated lever built to sound like the ETA, in
+quiet, with pink and white noise, with a real background added and with echo, the bands added by
+energy and, as before 22 November, by noise. About twenty minutes.
 
 `suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
@@ -457,6 +462,128 @@ def rates(outdir):
                     label, abs(r["first_gap"]), o["sd"]["first_gap"], o["amp"], o["amp_sd"], lift, "shown" if o["show_beat_error"] else "held back"))
 
 
+# A simulated lever that sounds like the ETA 2836-2's Safari capture (issue 26 of the
+# investigation): each sound is made of one part per band of the prototype, at the level and the
+# delay the ETA's averaged beats show in that band, through the simulator's `arrival`. Delays
+# are from the event; the 14.5 to 18 kHz parts start 0.35 ms after it in both beats, so read from
+# that band the beat error and the lift are the truth's. Levels are over the simulator's own
+# noise, set so that over the no-watch capture added as the background (ETA_LIKE_OVER_DB above
+# that noise) each band's peaks stand as the ETA's do, to 2.6 dB rms. The tock has the ETA's
+# further sound 5.1 ms after its unlock.
+ETA_LIKE_BANDS = [[5000, 7000], [7000, 9000], [9000, 11500], [11500, 14500], [14500, 18000], [18000, 22000]]
+ETA_LIKE = [
+    [("unlock", 0.0, 0.12, 0.5, [44.46, 39.8, 44.05, 21.74, 42.75, 47.2], [0.184, 0.207, 0.341, 0.35, 0.35, 0.489]),
+     ("unlock", 2.48, 0.1, 0.5, [55.23, 46.08, 50.96, 41.4, 46.85, 58.49], [0.021, 0.099, 0.13, 0.24, 0.35, 0.418]),
+     ("lock", 0.0, 0.08, 0.7, [46.3, 62.44, 60.17, 56.85, 45.92, 62.79], [0.022, 0.188, 0.379, 0.248, 0.35, 0.379])],
+    [("unlock", 0.0, 0.12, 0.5, [40.13, 35.65, 42.34, 37.08, 41.21, 51.6], [0.28, 0.293, 0.272, 0.35, 0.35, 0.675]),
+     ("unlock", 2.40, 0.1, 0.5, [40.0, 48.65, 55.55, 22.1, 38.89, 55.89], [0.262, 0.318, 0.414, 0.383, 0.35, 0.646]),
+     ("unlock", 5.13, 0.12, 0.5, [44.46, 43.88, 47.23, 21.15, 26.87, 35.1], [0.35] * 6),
+     ("lock", 0.0, 0.08, 0.7, [65.6, 43.17, 51.51, 51.4, 58.5, 61.3], [0.234, 0.303, 0.409, 0.396, 0.35, 0.561])],
+]
+ETA_LIKE_OVER_DB = 25.0
+
+
+def eta_like_sounds():
+    """The ETA-like lever's sounds, in the simulator's terms."""
+    out = []
+    for beat in ETA_LIKE:
+        sounds = []
+        for after, delay, rise, decay, dbs, delays in beat:
+            s = {"after": after, "delayMs": delay, "db": max(dbs), "riseMs": rise, "decayMs": decay, "band": [5000, 22000],
+                 "arrival": [{"band": b, "delayMs": d, "db": v} for b, d, v in zip(ETA_LIKE_BANDS, delays, dbs)]}
+            if after == "unlock" and delay > 0:
+                s["delayJitterMs"] = 0.08
+            sounds.append(s)
+        out.append(sounds)
+    return out
+
+
+def band_level_db(v, fs):
+    """Each band's median energy in decibels, as band_rows scales the bands."""
+    return 10 * np.log10(np.asarray(ev.band_rows(v, fs).levels))
+
+
+def altered(x, fs, room, kind):
+    """The audio with noise or echo added, each against the audio's own background above
+    5 kHz (1.4826 times the median absolute high-passed sample): pink noise falling 3 dB per
+    octave, as most room noise does above 5 kHz, or white; the no-watch capture, a real
+    background; or the audio through a room's response, white noise decaying by 60 dB in
+    0.4 s, its echo's energy the given decibels against the direct sound."""
+    from scipy import signal
+    hp = signal.butter(6, 5000, "highpass", fs=fs, output="sos")
+    above5 = lambda v: 1.4826 * np.median(np.abs(signal.sosfiltfilt(hp, v)))
+    name, db = kind
+    rng = np.random.default_rng(2600 + db + {"pink": 0, "white": 100, "room": 200, "echo": 300}[name])
+    if name in ("pink", "white"):
+        n = rng.standard_normal(len(x))
+        if name == "pink":
+            f = np.fft.rfftfreq(len(x), 1 / fs)
+            spec = np.fft.rfft(n)
+            spec[1:] /= np.sqrt(f[1:] / 5000.0)
+            spec[0] = 0
+            n = np.fft.irfft(spec, len(x))
+        return x + above5(x) * 10 ** (db / 20) * n / above5(n)
+    if name == "room":
+        seg = np.roll(room, -len(room) // 2)[: len(x)]
+        return x + seg * above5(x) / above5(room) * 10 ** (db / 20)
+    t = np.arange(int(0.4 * fs)) / fs
+    h = rng.standard_normal(len(t)) * np.exp(-6.91 * t / 0.4)
+    h[: int(0.0005 * fs)] = 0
+    h /= np.sqrt(np.sum(h ** 2))
+    return x + 10 ** (db / 20) * signal.fftconvolve(x, h)[: len(x)]
+
+
+def noise(outdir):
+    """The Safari captures and an ETA-like simulated lever (ETA_LIKE) in quiet and with noise or
+    echo added, read with the bands added by energy, the default since 22 November, and by noise,
+    as before (issue 26 of the investigation). One draw of each; the timestamps are the app's on
+    the quiet audio, since timing the altered audio again moved no reading by more than 0.01 ms."""
+    from scipy.io import wavfile
+    os.makedirs(outdir, exist_ok=True)
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+    fs, room = ev.load_wav(os.path.join(repo, "tests", "fixtures", "no-watch-safari.wav"))
+    kinds = [None, ("pink", 0), ("pink", 5), ("white", 5), ("room", 5), ("echo", -5)]
+    print("Read by default with 100 resamples, by energy | by noise.\n")
+    cases = []
+    for file, args, lift, known in RECORDINGS:
+        if file.endswith("-safari.wav") and not file.startswith("no-watch"):
+            path = os.path.join(repo, "tests", "fixtures", file)
+            prefix = os.path.join(outdir, "rec_" + file[:-4])
+            if not os.path.exists(prefix + ".beats.json"):
+                subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "wav", path, prefix] + args, capture_output=True, text=True)
+            cases.append((file[:-4], path, prefix, lift, None))
+    # The ETA-like lever, with the no-watch capture as its background.
+    prefix = os.path.join(outdir, "eta-like_seed_1")
+    over = {"seed": 1, "seconds": 60, "amplitude": 263, "restOffsetDeg": 0.6, "sounds": eta_like_sounds()}
+    if not os.path.exists(prefix + ".beats.json"):
+        subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "synth", "lever", prefix, json.dumps(over)], capture_output=True, text=True, check=True)
+        f, x = ev.load_wav(prefix + ".wav")
+        own = band_level_db(0.25e-3 * np.random.default_rng(1).standard_normal(f * 10), f)
+        gain_db = float(np.max(own + ETA_LIKE_OVER_DB - band_level_db(room, f)))
+        wavfile.write(prefix + ".wav", f, (x + room[: len(x)] * 10 ** (gain_db / 20)).astype(np.float32))
+        subprocess.run(["node", os.path.join(HERE, "beats.mjs"), "wav", prefix + ".wav", prefix], capture_output=True, text=True)
+    truth = json.load(open(prefix + ".truth.json"))
+    cases.append(("ETA-like simulated lever (truth %.3f ms, %.0f deg)" % (abs(truth["unlockGapMs"]), truth["meanAmplitude"]), prefix + ".wav", prefix, 50, truth))
+    for name, path, prefix, lift, truth in cases:
+        print(name)
+        f, x = ev.load_wav(path)
+        B = ev.load_beats(prefix + ".beats.json")
+        for kind in kinds:
+            y = x if kind is None else altered(x, f, room, kind)
+            rows = ev.band_rows(y, f)
+            cells = []
+            for weighting in ("energy", "noise"):
+                o = ev.measure(None, f, B, lift, 100, rows=rows, weighting=weighting)
+                r = o["reading"]
+                if r is None or "sd" not in o:
+                    cells.append("nothing")
+                    continue
+                cells.append("%.3f +- %.3f ms %s, %.1f deg %s" % (abs(r["first_gap"]), o["sd"]["first_gap"], "shown" if o["show_beat_error"] else "held",
+                                                                   o["amp"], "shown" if o["show_amplitude"] else "held"))
+            label = "quiet" if kind is None else "%s %+d dB" % kind
+            print("  %-12s %s | %s" % (label, cells[0], cells[1]), flush=True)
+
+
 if __name__ == "__main__":
     words = sys.argv[3:]
     ways = tuple(dict.fromkeys(w for word in words for w in WAY_WORDS.get(word, ()))) or ("test",)
@@ -475,6 +602,8 @@ if __name__ == "__main__":
         pairing(sys.argv[2], ways)
     elif len(sys.argv) == 3 and sys.argv[1] == "rates":
         rates(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "noise":
+        noise(sys.argv[2])
     else:
         print(__doc__)
         sys.exit(1)
