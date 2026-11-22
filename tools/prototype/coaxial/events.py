@@ -19,6 +19,11 @@ from scipy.io import wavfile
 
 # The app's filter-bank bands from 5 kHz up, in hertz.
 HF_BANDS = [(5000, 7000), (7000, 9000), (9000, 11500), (11500, 14500), (14500, 18000), (18000, 22500)]
+# Highest band edge, as a share of the sample rate: the app's filter bank's limit. A band that
+# reaches above it is cut to fit rather than dropped, so that at 44.1 kHz the band from 18 kHz,
+# where most of the Omega's unlock lies, is kept as 18 to 20.7 kHz (issue 12 of the
+# investigation). At 48 kHz every band fits.
+BAND_TOP = 0.47
 
 # A reading is shown only when resampling the beats supports it.
 MAX_SD_MS = 0.1      # largest scatter of the beat error over the resamples, as the app's gate
@@ -72,13 +77,18 @@ def smooth(e, k):
     return np.convolve(e, w / w.sum(), mode="same")
 
 
+def fitted_bands(bands, fs):
+    """The bands that fit below BAND_TOP times the sample rate, a band reaching above it cut to
+    fit. A band whose lower edge lies above it is dropped."""
+    top = BAND_TOP * fs
+    return [(lo, min(hi, top)) for lo, hi in bands if lo < top]
+
+
 def band_rows(x, fs, bands=HF_BANDS, smooth_ms=0.10):
     """Energy envelope of each band at the audio's own rate, divided by the band's median.
     Zero-phase filters."""
     rows = []
-    for lo, hi in bands:
-        if hi >= 0.49 * fs:
-            continue
+    for lo, hi in fitted_bands(bands, fs):
         sos = signal.butter(4, [lo, hi], btype="band", fs=fs, output="sos")
         y = signal.sosfiltfilt(sos, x)
         e = smooth(y * y, max(1, int(round(smooth_ms * 1e-3 * fs))))
@@ -89,12 +99,12 @@ def band_rows(x, fs, bands=HF_BANDS, smooth_ms=0.10):
 def app_rows(x, fs, bands=HF_BANDS, envelope_rate=12000):
     """Envelopes made the way the app's filter bank makes them: a causal fourth-order
     high-pass and low-pass per band, then the mean square of every few samples, which gives
-    12 kHz from 48 kHz audio. No clipping and no mains comb. Returns the rows and their rate."""
+    12 kHz from 48 kHz audio. No clipping and no mains comb. A band that reaches above the
+    limit is cut to fit, as milestone 8's filter bank will do; today's drops it. Returns the rows
+    and their rate."""
     dec = max(1, round(fs / envelope_rate))
     rows = []
-    for lo, hi in bands:
-        if hi >= 0.47 * fs:
-            continue
+    for lo, hi in fitted_bands(bands, fs):
         y = signal.sosfilt(signal.butter(4, lo, btype="highpass", fs=fs, output="sos"), x)
         y = signal.sosfilt(signal.butter(4, hi, btype="lowpass", fs=fs, output="sos"), y)
         n = len(y) // dec
