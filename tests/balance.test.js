@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { synthesizeBalanceWatch, coaxialWatch, leverWatch } from './helpers/balance.js';
 import { analyze } from '../js/dsp/offline.js';
+import { Cascade, bandpassSections } from '../js/dsp/biquad.js';
 
 test('the simulated balance unlocks and locks when the geometry says it should', () => {
   const amplitude = 270;
@@ -76,6 +77,51 @@ test('amplitude jitter scatters each beat\'s amplitude by about the asked amount
   assert.ok(Math.abs(mean - 270) < 2, `mean amplitude ${mean}`);
   assert.ok(Math.abs(truth.meanAmplitude - mean) < 1e-6, 'the truth gives the amplitude the beats had');
   assert.ok(truth.unlock.every((t, k) => Math.abs((t + truth.lock[k]) / 2 - (0.137 + k * halfPeriod)) < 1e-12), 'each beat stays on the grid');
+});
+
+test('a sound given its own start in each band starts later in a band given a later delay, and the truth is unchanged', () => {
+  // A loud sound in two bands; in one watch the upper band starts with the lower one, in the
+  // other half a millisecond after it. Everything else, the noise included, is drawn the same.
+  /**
+   * @param {number} late
+   * @returns {import('./helpers/balance.js').BeatSound[]}
+   */
+  const beat = (late) => [{ after: 'unlock', db: 40, riseMs: 0.12, decayMs: 0.5, band: [6000, 20000], arrival: [{ band: [6000, 10000] }, { band: [15000, 20000], delayMs: late }] }];
+  const base = leverWatch({ seconds: 1, seed: 5, lockJitterMs: 0 });
+  const together = synthesizeBalanceWatch({ ...base, sounds: [beat(0), beat(0)] });
+  const apart = synthesizeBalanceWatch({ ...base, sounds: [beat(0.5), beat(0.5)] });
+  assert.deepStrictEqual(apart.truth, together.truth, 'the events are where they were');
+  const fs = together.sampleRate;
+  const first = together.truth.unlock[0];
+  /** @param {Float32Array} x @param {number} lo @param {number} hi */
+  const filtered = (x, lo, hi) => {
+    const y = new Float64Array(x.length);
+    new Cascade(bandpassSections(fs, lo, hi)).process(x, y);
+    return y;
+  };
+  /**
+   * How much later a band's sound comes in the second watch than in the first, near the first
+   * unlock: the lag at which the two, through the same filter, line up best. The filter's own
+   * delay is the same for both and cancels.
+   * @param {number} lo
+   * @param {number} hi
+   */
+  const shiftMs = (lo, hi) => {
+    const a = filtered(together.channels[0], lo, hi);
+    const b = filtered(apart.channels[0], lo, hi);
+    const from = Math.floor((first - 1e-3) * fs);
+    const to = Math.floor((first + 4e-3) * fs);
+    let best = 0;
+    let bestSum = -Infinity;
+    for (let lag = -48; lag <= 48; lag++) {
+      let sum = 0;
+      for (let i = from; i < to; i++) sum += a[i] * b[i + lag];
+      if (sum > bestSum) [best, bestSum] = [lag, sum];
+    }
+    return (1e3 * best) / fs;
+  };
+  assert.ok(Math.abs(shiftMs(6500, 9500)) < 0.03, `lower band moved ${shiftMs(6500, 9500)} ms`);
+  assert.ok(Math.abs(shiftMs(15500, 19500) - 0.5) < 0.03, `upper band moved ${shiftMs(15500, 19500)} ms`);
 });
 
 test('Swiss-lever mode reads a large beat error on a simulated co-axial watch that is exactly in beat', () => {

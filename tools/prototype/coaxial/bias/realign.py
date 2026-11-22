@@ -75,7 +75,7 @@ def main(argv):
             amp(0.5 * sum(v.mean() for v in before)), np.mean(np.concatenate([amp(v) for v in before]))))
     readings = {}
     for label, reline in (("plain", False), ("lined up again", True)):
-        ref = tk.Reference(o["stacks"], times, tms, base_until, bph, lift, ref_s, nearest=True, reline=reline)
+        ref = tk.Reference(o["stacks"], times, tms, base_until, bph, lift, ref_s, nearest=True, reline=reline, levels=o["levels"])
         if ref.pair is None:
             print("%s: no reference: %s" % (label, ref.why))
             continue

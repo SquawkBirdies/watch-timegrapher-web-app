@@ -67,24 +67,26 @@ shift_of = ev.shift_of
 MAX_SHIFT_MS, STRONG = ev.MAX_SHIFT_MS, ev.STRONG
 
 
-def portraits(S, tms, idx, base_until, weights=None):
-    """The averaged tick and tock of the chosen beats, and the band weights used."""
-    means = [ev.band_means(S[j], tms, idx[j], base_until) for j in (0, 1)]
+def portraits(S, tms, idx, base_until, weights=None, levels=None):
+    """The averaged tick and tock of the chosen beats, and the band weights used: by energy
+    when the bands' levels are given (events.WEIGHTING), otherwise by noise."""
+    got = [ev.band_means(S[j], tms, idx[j], base_until, with_base=True) for j in (0, 1)]
+    means = [m for m, _ in got]
     if weights is None:
-        weights = ev.shared_weights(means[0], means[1], tms, base_until)
+        weights = ev.mix_weights(means[0], means[1], got[0][1], got[1][1], tms, base_until, levels)
     return [ev.portrait(m, weights) for m in means], weights
 
 
 class Reference:
     """Where the unlock and the lock are in the averaged beat of a reference stretch."""
 
-    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline="test"):
+    def __init__(self, S, times, tms, base_until, bph, lift, until, nearest=True, reline="test", levels=None):
         self.S, self.times, self.tms, self.base_until = S, times, tms, base_until
         # Take the strong match nearest each sound's place (True) or the strongest (False, the
         # earlier search).
         self.nearest = nearest
         idx = [np.flatnonzero(t < until) for t in times]
-        raw, self.weights = portraits(S, tms, idx, base_until)
+        raw, self.weights = portraits(S, tms, idx, base_until, levels=levels)
         sounds = [ev.find_sounds(c, tms, base_until)[0] for c in raw]
         self.pair, self.why = ev.pair_beats(sounds[0], sounds[1], bph, lift)
         self.beats = [len(i) for i in idx]
@@ -249,7 +251,7 @@ def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline="tes
     B = ev.load_beats(stream_json)
     # Only the stacked beats are wanted here; the reference does its own lining up.
     o = ev.measure(x, fs, B, lift, 0, reline=False)
-    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest, reline), o
+    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest, reline, o["levels"]), o
 
 
 def filter_sd_deg(row, amp):
@@ -325,7 +327,7 @@ def simulate(outdir, kind, name, over, seed, seconds):
 
 def reference(sim, reference_seconds, nearest=True, reline="test"):
     o = sim["o"]
-    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], sim["lift"], reference_seconds, nearest, reline)
+    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], sim["lift"], reference_seconds, nearest, reline, o["levels"])
 
 
 # The two ways of averaging that `sims`, `swings` and `steady` compare when given `both`.

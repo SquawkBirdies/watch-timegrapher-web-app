@@ -23,6 +23,20 @@ import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
  * @property {number} riseMs time constant of the sound's rise
  * @property {number} decayMs time constant of its decay
  * @property {[number, number]} band lowest and highest frequency of the sound, in hertz
+ * @property {BandArrival[]} [arrival] when given, the sound is made of these parts, one per
+ *   band, each starting at its own time and level, instead of starting at once in its whole band.
+ *   A real watch's sounds do not start at the same moment at every frequency: in the ETA 2836-2's
+ *   capture the top band starts the unlock 0.14 ms (tick) and 0.33 ms (tock) after the middle ones
+ */
+
+/**
+ * One band of a sound that starts at different moments in different bands.
+ * @typedef {Object} BandArrival
+ * @property {[number, number]} band lowest and highest frequency of this part, in hertz; it keeps
+ *   only what lies within the sound's own band
+ * @property {number} [delayMs] how much later than the sound this part starts; 0 when absent
+ * @property {number} [db] this part's level over the background in its band; the sound's when
+ *   absent
  */
 
 /**
@@ -109,8 +123,9 @@ export function synthesizeBalanceWatch(options) {
    * Add one sound: band-limited noise under a rise-and-decay envelope.
    * @param {number} time start of the sound in seconds
    * @param {BeatSound} s
+   * @param {number} [jitterDb] how far this sound's level is off its set one; drawn here when absent
    */
-  const addSound = (time, s) => {
+  const addSound = (time, s, jitterDb) => {
     const length = Math.floor((4 * s.riseMs + 7 * s.decayMs) * 1e-3 * fs);
     const raw = new Float32Array(preRoll + length);
     const shaped = new Float64Array(preRoll + length);
@@ -121,7 +136,7 @@ export function synthesizeBalanceWatch(options) {
     // The envelope's highest point, to scale it to 1.
     const iTop = rise * Math.log(1 + decay / rise);
     const top = (1 - Math.exp(-iTop / rise)) * Math.exp(-iTop / decay);
-    const level = white * Math.pow(10, (s.db + levelJitterDb * vary()) / 20) / top;
+    const level = white * Math.pow(10, (s.db + (jitterDb ?? levelJitterDb * vary())) / 20) / top;
     const pos = time * fs;
     const i0 = Math.floor(pos);
     const frac = pos - i0;
@@ -151,7 +166,15 @@ export function synthesizeBalanceWatch(options) {
     amplitudeSum += A;
     for (const s of sounds[j]) {
       const base = s.after === 'unlock' ? tUnlock : tLock;
-      addSound(base + ((s.delayMs || 0) + (s.delayJitterMs || 0) * vary()) * 1e-3, s);
+      const start = base + ((s.delayMs || 0) + (s.delayJitterMs || 0) * vary()) * 1e-3;
+      if (!s.arrival) {
+        addSound(start, s);
+        continue;
+      }
+      // The parts are one sound: they come early or late together and are louder or quieter
+      // together, by one draw of each.
+      const jitterDb = levelJitterDb * vary();
+      for (const part of arrivalParts(s)) addSound(start + (part.delayMs || 0) * 1e-3, part, jitterDb);
     }
   }
 
@@ -230,6 +253,25 @@ export function coaxialWatch(overrides = {}) {
     ],
     ...rest,
   };
+}
+
+/**
+ * The parts of a sound that starts at different moments in different bands, each a sound of its
+ * own: its band cut to the sound's, its delay its own relative to the sound's, and its level its
+ * own or the sound's. A part that lies outside the sound's band is left out.
+ * @param {BeatSound} s
+ * @returns {BeatSound[]}
+ */
+export function arrivalParts(s) {
+  /** @type {BeatSound[]} */
+  const parts = [];
+  for (const a of s.arrival || []) {
+    const lo = Math.max(a.band[0], s.band[0]);
+    const hi = Math.min(a.band[1], s.band[1]);
+    if (hi <= lo) continue;
+    parts.push({ after: s.after, delayMs: a.delayMs || 0, db: a.db ?? s.db, riseMs: s.riseMs, decayMs: s.decayMs, band: [lo, hi] });
+  }
+  return parts;
 }
 
 /**
