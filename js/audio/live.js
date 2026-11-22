@@ -10,7 +10,7 @@
 import { openMicrophone } from './capture.js';
 import { AudioRing } from './ring.js';
 
-/** Seconds of the most recent audio kept for saving. */
+/** Seconds of the most recent audio kept for saving, unless told otherwise. */
 export const KEEP_SECONDS = 60;
 /** Exact digital silence lasting this long means the microphone has been cut off: a real
  *  microphone always hears some noise. */
@@ -71,6 +71,18 @@ export class LiveInput {
     /** The current segment has had sound; silence before the first sound is not an interruption. */
     this.heard = false;
     this.deviceId = '';
+    /** Seconds of the most recent audio kept for saving. */
+    this.keepSeconds = KEEP_SECONDS;
+  }
+
+  /**
+   * How much of the most recent audio to keep for saving. It can change at any time; shortening
+   * it drops the oldest audio held.
+   * @param {number} seconds
+   */
+  keep(seconds) {
+    this.keepSeconds = seconds;
+    if (this.ring) this.ring.resize(seconds);
   }
 
   /**
@@ -92,7 +104,7 @@ export class LiveInput {
     }
     this.capture = capture;
     this.sampleRate = capture.context.sampleRate;
-    this.ring = new AudioRing(KEEP_SECONDS, this.sampleRate);
+    this.ring = new AudioRing(this.keepSeconds, this.sampleRate);
   }
 
   /** @returns {string} the input's name as the browser gives it */
@@ -117,8 +129,8 @@ export class LiveInput {
   }
 
   /**
-   * The audio since the last interruption or restart, up to the last minute of it, exactly as
-   * it was passed on.
+   * The audio since the last interruption or restart, up to `keepSeconds` of it, exactly as it
+   * was passed on.
    * @returns {{sampleRate: number, channels: Float32Array[]}|null}
    */
   recording() {

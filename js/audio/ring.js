@@ -45,6 +45,22 @@ export class AudioRing {
     this.written = 0;
   }
 
+  /**
+   * Keep a different length of audio from now on. Growing keeps everything held; shrinking keeps
+   * the most recent part.
+   * @param {number} seconds
+   */
+  resize(seconds) {
+    const capacity = Math.max(1, Math.round(seconds * this.sampleRate));
+    if (capacity === this.capacity) return;
+    const held = this.read();
+    const keep = held.subarray(Math.max(0, held.length - capacity));
+    this.capacity = capacity;
+    this.data = new Float32Array(capacity);
+    this.data.set(keep, 0);
+    this.written = keep.length;
+  }
+
   /** @returns {Float32Array} a copy of the audio held, oldest first */
   read() {
     const n = this.length;
