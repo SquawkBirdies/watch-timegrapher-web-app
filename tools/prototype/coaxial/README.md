@@ -832,8 +832,9 @@ Its limits:
 - The app's timestamps here come from its filter bank as it is today, without the band. Timed
   with the band as well, the Omega read 0.322 ± 0.027 ms, and 0.304 ± 0.026 ms with the 20 kHz
   low-pass.
-- Fresh simulated watches can be shown a little more than 0.1 ms off, at 48 kHz as at 44.1 kHz;
-  issue 27 of the investigation.
+- Fresh simulated watches can be shown a little more than 0.1 ms off, at 48 kHz as at 44.1 kHz
+  (see Limits). Those the simulator makes at 44.1 kHz err more, 1.3 to 1.4 times their stated
+  scatter (rms), whichever rate they are read at; why is not known.
 
 ## Limits
 
@@ -867,7 +868,15 @@ Its limits:
   keep its error under 0.1 ms: a reading shown at ±0.09 ms can be about 0.18 ms off at twice its
   scatter. On the 46 simulated watches the default's errors came to 1.0 times its stated scatter
   (rms). The two readings shown 0.13 and 0.14 ms off on ±30° swings came from block shifts that
-  had taken another sound, now left out (see "Block shifts that took another sound").
+  had taken another sound, now left out (see "Block shifts that took another sound"). Over five
+  draws of the 46 watches at 48 kHz, every seed raised by 0, 100, 200, 300 and 400, 3 of the 135
+  co-axial beat errors shown were more than 0.1 ms off, by 0.101 to 0.118 ms, at a stated
+  ±0.034 to ±0.098 ms. Their errors came to 1.06 times their stated scatter (rms), none beyond
+  three times; the 20 levers shown were within 0.017 ms. The co-axial's errors lean 0.016 ms one
+  way, which the stated scatter does not include: the simulated co-axial's two unlocks differ in
+  shape, and the half-rise the method times lags them 0.046 and 0.062 ms behind their true start.
+  The lever's two unlocks are alike and lag alike. Whether a real co-axial leans so, only a
+  reference instrument could tell.
 - Most readings that are held back are held by failing resamples: 26 of 36 of the 108 readings
   in "Resamples that find another sound", at 8% to 93% failing against the 5% limit. A resample
   carries the noise twice over, so it loses a faint sound that all the beats together find.
