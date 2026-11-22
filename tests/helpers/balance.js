@@ -44,6 +44,11 @@ import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
  *   the amplitude and the angles give, and a method that times the lock reads the true amplitude
  * @property {number} [levelJitterDb] standard deviation of each sound's loudness from beat to
  *   beat, in decibels; 1.5 when absent
+ * @property {number} [beatJitterMs] standard deviation of each beat's time from the regular
+ *   grid, in milliseconds, drawn afresh for every beat: the whole beat, its events and its
+ *   sounds, comes early or late together, as in an irregular watch; 0 when absent
+ * @property {number} [amplitudeJitterDeg] standard deviation of each beat's amplitude from the
+ *   set one, in degrees, drawn afresh for every beat; 0 when absent
  * @property {number} [sampleRate]
  * @property {number} [seed]
  */
@@ -64,11 +69,14 @@ import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
  * @returns {{sampleRate: number, channels: Float32Array[], truth: BalanceTruth}}
  */
 export function synthesizeBalanceWatch(options) {
-  const { bph, seconds, rate = 0, amplitude, restOffsetDeg = 0, unlockDeg, lockDeg, sounds, lockJitterMs = 0, levelJitterDb = 1.5, sampleRate = 48000, seed = 1 } = options;
+  const { bph, seconds, rate = 0, amplitude, restOffsetDeg = 0, unlockDeg, lockDeg, sounds, lockJitterMs = 0, levelJitterDb = 1.5, beatJitterMs = 0, amplitudeJitterDeg = 0, sampleRate = 48000, seed = 1 } = options;
   const fs = sampleRate;
   const n = Math.floor(seconds * fs);
   const randn = gaussianFrom(seededRandom(seed));
   const vary = gaussianFrom(seededRandom(seed + 0x3c6ef372));
+  // The irregularity has a random stream of its own, so that a watch without it is the same to
+  // the last sample as before, and the same watch with it differs only by the irregularity.
+  const irregular = gaussianFrom(seededRandom(seed + 0x5bd1e995));
   const out = new Float32Array(n);
 
   // The same background as the other simulator: low-frequency-heavy noise plus white noise.
@@ -128,10 +136,13 @@ export function synthesizeBalanceWatch(options) {
     // The balance passes its rest position at tCentre, in alternating directions. Measured from
     // the line of centres its angle is rest + A sin(phase) on even beats and rest - A sin(phase)
     // on odd ones.
-    const tCentre = 0.137 + k * halfPeriod;
-    if (tCentre >= seconds - 0.06) break;
+    const tGrid = 0.137 + k * halfPeriod;
+    if (tGrid >= seconds - 0.06) break;
+    // An irregular beat moves off the grid, and its amplitude off the set one, by itself: the
+    // next beat is drawn afresh, so the irregularity does not build up into a rate change.
+    const tCentre = beatJitterMs > 0 ? tGrid + beatJitterMs * irregular() * 1e-3 : tGrid;
     const j = k % 2;
-    const A = amplitudeAt(tCentre);
+    const A = amplitudeAt(tGrid) + (amplitudeJitterDeg > 0 ? amplitudeJitterDeg * irregular() : 0);
     const rest = j === 0 ? restOffsetDeg : -restOffsetDeg;
     const tUnlock = tCentre + Math.asin((-unlockDeg[j] - rest) / A) / omega;
     const tLock = tCentre + Math.asin((lockDeg[j] - rest) / A) / omega + lockJitterMs * vary() * 1e-3;

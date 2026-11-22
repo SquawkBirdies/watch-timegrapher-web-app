@@ -15,7 +15,9 @@
 //     <prefix>.wav, <prefix>.truth.json, <prefix>.beats.json and <prefix>.stream.json. In the
 //     overrides, "amplitudeSwing": {"base": 285, "swing": 10, "period": 23} makes the amplitude
 //     wander, and "amplitudeRamp": {"from": 290, "to": 250, "t0": 60, "t1": 180} moves it from
-//     one value to another between two times.
+//     one value to another between two times. "beatJitterMs": 0.7 moves each whole beat off the
+//     regular grid by that standard deviation, and "amplitudeJitterDeg": 6 each beat's amplitude,
+//     as in an irregular watch.
 //
 //   node tools/prototype/coaxial/beats.mjs synth <coaxial|lever> <prefix> ['<json overrides>']
 //     makes the same watch as `sim` but writes only <prefix>.wav and <prefix>.truth.json, in
