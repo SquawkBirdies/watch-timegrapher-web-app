@@ -308,6 +308,18 @@ download. Replayed under Your file, it is the very audio that was analysed: in C
 live run of the ETA recording, kept with "Last 2 minutes", saved 79.8 s and replayed to the same
 +5.3 s/day and 0.44 ms as the live reading.
 
+When Stop is pressed, the microphone closes at once, but the audio already handed to the analysis
+is still analysed and shown before the run ends; the dock says "Finishing the last audio" while it
+is. That audio is in the saved file, so a run that fits in the length kept now reads exactly as a
+replay of its saved file. Until 22 November the answers still on their way at Stop were ignored. In
+Chrome, with the ETA's Safari capture played in as the microphone and Stop pressed while 2 chunks
+of audio (0.19 s at the 44.1 kHz Chrome delivers) were still waiting, the live screen read +1.7 ±
+0.07 s/day over 17 s, against +1.6 ± 0.06 over 18 s for the replay of its saved file, and the
+traces differed. Now, stopped with 2 and with 3 chunks waiting, the live screen and the replay show
+the same numbers and the same trace, pixel for pixel. A stop for a problem (an error, or the
+analysis falling 8 s behind) still ends the run at once. Stopping a replay or the simulator works
+the same way.
+
 In Chrome on a computer, with the ETA recording played in as a simulated microphone (Chrome
 delivers it at 44.1 kHz), the live reading after 50 s was +6.9 s/day and 0.40 ms. The recording
 itself, streamed through the pipeline, reads +6.88 s/day and 0.38 ms at the same point, and the

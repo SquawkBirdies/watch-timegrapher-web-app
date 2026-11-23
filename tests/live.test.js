@@ -392,6 +392,71 @@ test('a live run blanks its readings when the microphone is cut off, locks again
   assert.ok(Math.abs(again.rate - live.rate) < 0.1, `replay ${again.rate.toFixed(3)} against live ${live.rate.toFixed(3)}`);
 });
 
+test('a run stopped while its last audio is still being analysed, once that audio is finished, shows exactly what a replay of its saved file shows', async () => {
+  // The screen hands each chunk to the pipeline in a background worker and applies the answers
+  // as they come back, so when Stop is pressed some audio is still waiting to be analysed. It is
+  // already in the audio kept for saving. Here the worker is a queue that lags 8 chunks, about
+  // 0.7 s, behind the microphone. Until 22 November 2026 the answers still on their way at Stop
+  // were ignored; now they are applied before the run ends.
+  const fs = 48000;
+  const w = synthesizeWatch({ bph: 21600, rate: 4, beatOffsetMs: 0.6, gain: 1.6, seconds: 24.9, sampleRate: fs, seed: 62 });
+  const audio = w.channels[0];
+  const mic = fakeMicrophone(fs);
+  const pipeline = new Pipeline(fs, 1, {});
+  /** @type {Float32Array[][]} */
+  const queue = [];
+  const live = new Measurement();
+  /** @type {ReadingsEvent|null} */
+  let liveLast = null;
+  const answer = () => {
+    for (const e of pipeline.push(/** @type {Float32Array[]} */ (queue.shift()))) {
+      live.apply(e);
+      if (e.type === 'readings') liveLast = e;
+    }
+  };
+  const input = new LiveInput(
+    {
+      // The worker empties the arrays it is handed, so the queue holds copies.
+      onAudio: (channels) => {
+        queue.push(channels.map((c) => c.slice()));
+        if (queue.length > 8) answer();
+      },
+      onInterrupt: () => assert.fail('no interruption'),
+      onResume: () => {},
+      onEnd: () => assert.fail('the run should not end'),
+    },
+    { open: mic.open, now: () => 0 },
+  );
+  live.start();
+  await input.open();
+  for (let i = 0; i < audio.length; i += 4096) mic.drive.chunk(audio.slice(i, Math.min(audio.length, i + 4096)));
+  input.close();
+  assert.equal(queue.length, 8, 'audio still waiting at Stop');
+  const dropped = live.points().length;
+  const droppedLast = liveLast;
+  while (queue.length) answer();
+
+  const saved = /** @type {{sampleRate: number, channels: Float32Array[]}} */ (input.recording());
+  assert.equal(saved.channels[0].length, audio.length, 'the whole run is kept');
+  const replayed = new Measurement();
+  replayed.start();
+  /** @type {ReadingsEvent|null} */
+  let replayLast = null;
+  const again = new Pipeline(fs, 1, {});
+  for (let i = 0; i < saved.channels[0].length; i += 1000) {
+    for (const e of again.push([saved.channels[0].subarray(i, i + 1000)])) {
+      replayed.apply(e);
+      if (e.type === 'readings') replayLast = e;
+    }
+  }
+  assert.ok(replayLast && replayLast.rate !== null, 'the replay reads');
+  assert.deepEqual(live.points(), replayed.points(), 'the same trace');
+  assert.deepEqual(liveLast, replayLast, 'the same last reading');
+  // Ignoring the answers on their way left out the last beats and the last reading.
+  assert.ok(dropped < replayed.points().length, `${dropped} dots against ${replayed.points().length}`);
+  assert.ok(droppedLast && replayLast && droppedLast.t < replayLast.t, `last reading at ${droppedLast && droppedLast.t.toFixed(1)} s against ${replayLast.t.toFixed(1)} s`);
+});
+
 // ---- What the screen says --------------------------------------------------------------------
 
 test('events move to the run timeline, and an interruption blanks the readings but keeps the trace', () => {

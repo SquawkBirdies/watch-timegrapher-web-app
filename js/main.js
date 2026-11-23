@@ -113,6 +113,8 @@ let speed = 1;
  * @property {boolean} running
  * @property {boolean} ended the source has no more audio
  * @property {boolean} finished the recording reached its end and the pipeline has heard all of it
+ * @property {boolean} stopping Stop was pressed and the pipeline is still analysing audio handed
+ *   to it before then; the run ends when it has answered every chunk
  * @property {number} fed frames sent to the pipeline
  * @property {number} posted chunks sent to the pipeline
  * @property {number} answered chunks the pipeline has finished with
@@ -155,6 +157,7 @@ worker.onmessage = (event) => {
     load = m.load;
     run.answered++;
     finishIfDone(run);
+    finishStopping(run);
     schedule();
   } else if (m.type === 'error') {
     problem = `The measurement stopped with an error: ${m.message}`;
@@ -319,7 +322,7 @@ async function start() {
  * @returns {Run}
  */
 function newRun(kind, name, duration, sampleRate, escapement) {
-  return { kind, name, duration, sampleRate, escapement, running: false, ended: false, finished: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0 };
+  return { kind, name, duration, sampleRate, escapement, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0 };
 }
 
 /**
@@ -481,6 +484,18 @@ function finishIfDone(r) {
   wake.want(false);
 }
 
+/**
+ * A run stopped with Stop ends once the pipeline has answered every chunk handed to it before
+ * then.
+ * @param {Run} r
+ */
+function finishStopping(r) {
+  if (!r.stopping || r.answered < r.posted) return;
+  r.stopping = false;
+  sessionId++;
+  worker.postMessage({ type: 'stop' });
+}
+
 function stopPlayer() {
   if (player) player.stop();
   player = null;
@@ -491,15 +506,31 @@ function stopLive() {
   if (live) live.close();
 }
 
-function stop() {
+/**
+ * End the run: the source stops at once. With `finish`, as when Stop is pressed, the audio
+ * already handed to the pipeline is still analysed and shown, so that the trace and the last
+ * reading cover all the audio heard, which is all that a saved recording holds; a run that fits
+ * in the length kept then reads exactly as a replay of its saved file. Until 22 November 2026 the
+ * answers still on their way were ignored, up to a second of audio or more while an analysis
+ * ran. Without `finish`, as after an error or when the analysis cannot keep up, they still are.
+ * @param {boolean} [finish]
+ */
+function stop(finish = false) {
   stopPlayer();
   stopLive();
-  sessionId++;
   loading = '';
-  worker.postMessage({ type: 'stop' });
-  if (run) {
-    run.running = false;
-    run.interrupted = false;
+  const r = run;
+  // An interrupted microphone has no session whose answers count: they were set aside when the
+  // interruption began.
+  if (finish && r && r.running && !r.interrupted && r.answered < r.posted) {
+    r.stopping = true;
+  } else {
+    sessionId++;
+    worker.postMessage({ type: 'stop' });
+  }
+  if (r) {
+    r.running = false;
+    r.interrupted = false;
   }
   wake.want(false);
   schedule();
@@ -630,23 +661,25 @@ function render() {
   ui.dockSource.textContent = run && (run.running || loading) ? run.name : selectedName();
   ui.dockDetail.textContent = loading
     ? loading
-    : src.running && run
-      ? run.kind === 'simulator'
-        ? 'Running'
-        : run.kind === 'microphone'
-          ? run.interrupted
-            ? 'Interrupted · waiting for sound'
-            : `Listening · ${(live && live.label) || 'microphone'}`
-          : run.ended
-          ? 'Finishing'
-          : speed > 16
-            ? 'Replaying as fast as this device allows'
-            : `Replaying at ${speed}×`
-      : src.finished && run && run.kind === tab
-        ? 'Replay finished'
-        : tab === 'file' && !userFile
-          ? 'No file chosen'
-          : 'Ready';
+    : run && run.stopping
+      ? 'Finishing the last audio'
+      : src.running && run
+        ? run.kind === 'simulator'
+          ? 'Running'
+          : run.kind === 'microphone'
+            ? run.interrupted
+              ? 'Interrupted · waiting for sound'
+              : `Listening · ${(live && live.label) || 'microphone'}`
+            : run.ended
+              ? 'Finishing'
+              : speed > 16
+                ? 'Replaying as fast as this device allows'
+                : `Replaying at ${speed}×`
+        : src.finished && run && run.kind === tab
+          ? 'Replay finished'
+          : tab === 'file' && !userFile
+            ? 'No file chosen'
+            : 'Ready';
 }
 
 function selectedName() {
@@ -762,7 +795,7 @@ for (const button of speedButtons) {
 }
 
 ui.start.addEventListener('click', () => {
-  if (loading || (run && run.running)) stop();
+  if (loading || (run && run.running)) stop(true);
   // The magnetism notice comes once, before the first microphone measurement.
   else if (tab === 'microphone' && !settings.magnetNoticeSeen) ui.magnet.showModal();
   else start();
