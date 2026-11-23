@@ -143,11 +143,14 @@ A watch's rate can change quickly. An old 18,000 vph Swiss-lever watch, recorded
 five minutes on 22 November 2026, ran at about +40 s/day for its first 45 s and about -25 s/day
 after three and a half minutes, and swung by 17 s/day (standard deviation) within seconds, once by
 27 s/day in about 7 s, with no cycle of one minute. The tracker lets the rate wander only slowly,
-and every repeat analysis started it again from a straight line through the last 40 s of beats: on
-a one-minute capture of the same watch, at +77 s/day and sure of it to ±0.24 s/day, while the watch
-was running about +50 s/day and slowing. Its clear beats, 30 to 40 dB above the background, were
-then refused, and after 5 s the lock was dropped, three times in the five minutes. Each new lock
-numbered its beats afresh, so the tick and the tock could swap, and the trace stepped by 1 to 6 ms.
+so it fell behind: before each of the three times the lock was lost, it was already 0.6 to 4 ms
+behind the beats, 4 ms being the edge of its search. Its gate is set by how much its misses vary,
+not by how large they are, so a steady lag narrowed it until every beat was refused, though each
+stood 30 to 40 dB above the background, and after 5 s the lock was dropped. A repeat analysis,
+which starts the tracker again from a straight line through the last 40 s of beats, did not catch
+it up: on a one-minute capture of the same watch it set the tracker to +77 s/day, sure of it to
+±0.24 s/day, while the watch was running about +50 s/day and slowing. Each new lock numbered its
+beats afresh, so the tick and the tock could swap, and the trace stepped by 1 to 6 ms.
 Since 22 November:
 
 - The tracker is started again from the beats when it refuses three confident timestamps of each
