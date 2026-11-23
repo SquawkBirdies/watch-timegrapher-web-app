@@ -307,6 +307,32 @@ test('re-timed beats replace the old ones, and a new lock continues where the tr
   assert.equal(m.lockedAt, 8);
 });
 
+test('a lock that carries on a lost one keeps its stretch of the trace, so the drift over the gap shows', () => {
+  const m = new Measurement();
+  m.start();
+  const period = 3600 / 18000;
+  const gain = 30 / 86400; // +30 s/day
+  const at = (/** @type {number} */ n) => 1 + n * period * (1 - gain) + (n % 2 ? 0.0015 : 0);
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 18000, cyclesAveraged: [1, 1], t: 8 });
+  m.apply({ type: 'beats', beats: Array.from({ length: 40 }, (_, n) => beat(n, at(n), /** @type {0|1} */ (n % 2))), replaceFrom: 1 });
+  m.apply({ type: 'status', state: 'listening', reason: 'lost', bph: null, cyclesAveraged: null, t: 14 });
+  // Found again 10 s later, numbering its beats on from the lost lock's.
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 18000, cyclesAveraged: [1, 1], t: 26, continues: true });
+  m.apply({ type: 'beats', beats: Array.from({ length: 20 }, (_, i) => beat(90 + i, at(90 + i), /** @type {0|1} */ (i % 2))), replaceFrom: 18 });
+  assert.equal(m.episodes.length, 1, 'one stretch');
+  const pts = m.points();
+  assert.equal(pts.length, 60);
+  for (const p of pts) {
+    const n = Math.round((p.t - 1) / period);
+    const expected = n * period * gain * 1000 - (p.type === 1 ? 1.5 : 0);
+    assert.ok(Math.abs(p.y - expected) < 1e-6, `beat ${n} at ${p.y.toFixed(3)} ms, expected ${expected.toFixed(3)}`);
+  }
+  // A lock at another beat rate starts a stretch of its own even when it says it carries on.
+  m.apply({ type: 'status', state: 'listening', reason: 'lost', bph: null, cyclesAveraged: null, t: 40 });
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 36000, cyclesAveraged: [1, 1], t: 50, continues: true });
+  assert.equal(m.episodes.length, 2);
+});
+
 test('the vertical range ignores stray points and never shrinks below 1 ms', () => {
   const pts = Array.from({ length: 200 }, (_, i) => ({ t: i, y: 0.001 * i, type: /** @type {0|1} */ (0), ok: true, cycles: 1 }));
   pts.push({ t: 300, y: 50, type: 0, ok: true, cycles: 1 });
