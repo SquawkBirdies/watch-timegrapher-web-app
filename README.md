@@ -139,6 +139,45 @@ On simulated watches heard clearly whose beats are displaced at random by 0.5 ms
 timestamps still follow each beat's true displacement, by a factor of 0.88 to 1.01. They are as
 close to it as before at 0.5 ms, and closer at 1 ms: 0.38 to 0.41 ms rms instead of 0.45 to 0.52.
 
+A watch's rate can change quickly. An old 18,000 vph Swiss-lever watch, recorded through Safari for
+five minutes on 22 November 2026, ran at about +40 s/day for its first 45 s and about -25 s/day
+after three and a half minutes, and swung by 17 s/day (standard deviation) within seconds, once by
+27 s/day in about 7 s, with no cycle of one minute. The tracker lets the rate wander only slowly,
+and every repeat analysis started it again from a straight line through the last 40 s of beats: on
+a one-minute capture of the same watch, at +77 s/day and sure of it to ±0.24 s/day, while the watch
+was running about +50 s/day and slowing. Its clear beats, 30 to 40 dB above the background, were
+then refused, and after 5 s the lock was dropped, three times in the five minutes. Each new lock
+numbered its beats afresh, so the tick and the tock could swap, and the trace stepped by 1 to 6 ms.
+Since 22 November:
+
+- The tracker is started again from the beats when it refuses three confident timestamps of each
+  timed beat type in a row, or when its last six misses of each all fall the same way with a
+  median beyond 0.5 ms. It starts from a line through the latest eight confident timestamps of
+  each type, and only when they lie within three times its usual scatter of that line.
+- A repeat analysis folds its audio at one beat period and looks for each beat no more than 4 ms
+  from where that period puts it. It starts its search for the period from the period of the
+  beats already timed in its audio when the tracker's period is beyond the search's reach, and
+  folds only as much of the latest audio as keeps those beats within 1 ms of a straight line,
+  down to 8 s. Irregular watches and watches timed over several cycles keep the whole history.
+- A lock found within 20 s of a lost one, at the same beat rate, carries on its beat numbers and
+  its reference points, so a tick stays a tick and the trace carries on.
+
+On that recording the lock now holds for all five minutes, the tracker is started again 23 times,
+and no step in the trace exceeds 1 ms. Against each beat's loudest moment above 1 kHz, a timing
+that shares no code with the pipeline, 3 of 746 tick timestamps lie more than 0.5 ms from their
+median distance, against 40 before. The recording is not published, so the tests use simulated
+watches instead. Of six simulated 18,000 vph watches whose rate swings by 40 s/day either way
+every 70 s, at most 3.6 s/day each second, all six keep their lock, with timestamps 0.08 to
+0.12 ms rms from the true beat times. The tracker as it was lost the lock on one of them and
+swapped its tick and tock, and lagged another's beats so far that about a hundred timestamps of
+each type were more than 0.5 ms out. On a simulated watch whose ticking pauses for 6.8 s, the lock
+found again carries on within 0.1 ms rms, where one that numbered its beats afresh swapped the
+tick and the tock. The regular recordings read as before, apart from the Omega's Safari capture:
+its repeat analysis at 40 s used to stop at the edge of its search for the period and now
+settles inside it, and its 20 s readings moved by up to 0.035 s/day, its Swiss-lever beat error
+by up to 0.011 ms. On the five-minute recording the lock analyses took 11.9 s of computing
+instead of 16.0 s, because no lock has to be found again and the repeat analyses fold less audio.
+
 A watch that runs badly does not keep its beats on a regular grid: each beat falls a little
 early or late, by an amount that changes from beat to beat. The pipeline used to take such a
 watch for a faint one, because scattered beats match an averaged beat poorly, and it averaged
@@ -221,8 +260,14 @@ Known limits of the real-time pipeline:
   shorter matching window and single frequency bands both timed them worse.
 - A quartz clock ticking once a second can be taken for a watch. With its clicks peaking at
   −46 dBFS in a quiet room, a simulated one locked at 21,600 vph.
-- A beat type that stops being timed and is found again later starts from a fresh reference
-  point, so its trace line can resume a few milliseconds from where it stopped.
+- A beat type that stops being timed and is found again later can start from a fresh reference
+  point, so its trace line can resume a few milliseconds from where it stopped. A lock found
+  again within 20 s of a lost one keeps the old reference points only if it times some of the
+  same beats; after a silence it starts afresh, though its beat numbers carry on.
+- After a lost lock the readings start again from the new lock's beats, even when the trace
+  carries on.
+- The changes of 22 November for fast changes of rate were measured on one real watch and on
+  simulated ones. A faint watch timed over several cycles whose rate changes as fast is untested.
 
 ## Live microphone
 

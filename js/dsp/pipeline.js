@@ -4,13 +4,17 @@
 //   listening  audio is arriving and the pipeline is looking for a beat rate
 //   tracking   a beat rate is locked; beats are timestamped and readings update
 //
-// When the lock is lost the readings are blanked and the pipeline listens again.
+// When the lock is lost the readings are blanked and the pipeline listens again. A lock found
+// again soon after, at the same beat rate, carries on the lost one's beat numbers and reference
+// points, so a tick stays a tick.
 //
 // A lock is found by analysing a stretch of the history buffer with the same stages as the
 // offline analysis, then confirmed on beats the analysis has not seen. While tracking, each new
 // beat is timed against the template from the last analysis, at the position the Kalman
 // tracker predicts. The analysis is repeated on the sliding history window from time to time,
-// which refreshes the template, the averaging and the noise thresholds.
+// which refreshes the template, the averaging and the noise thresholds. The tracker expects the
+// rate to wander slowly; when a watch's rate changes faster, the tracker is started again from
+// the latest beats, and a repeat analysis folds only as much audio as one beat period describes.
 //
 // A beat's timestamp is the moment a reference point of its sound arrives. Each analysis picks
 // that point afresh, as the loudest part of the averaged beat, and a beat made of several sounds
@@ -50,6 +54,13 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {import('./estimate.js').Escapement} [escapement] 'coaxial' hides the beat error, as in `summarize`
  * @property {import('./timing.js').TimingOptions} [timing] switches for the measures against
  *   scattered timestamps, as in `trackBeats`
+ * @property {boolean} [followRate] false keeps the tracker's prediction when it refuses confident
+ *   timestamps that agree with one another, and gives a repeat analysis the tracker's period to
+ *   start from, as before 22 November 2026: a watch whose rate changes faster than the tracker
+ *   allows then loses its lock
+ * @property {boolean} [resumeLock] false gives a lock found soon after a lost one beat numbers and
+ *   a reference point of its own, as before 22 November 2026, so the tick and the tock can swap
+ *   and the trace steps
  */
 
 /**
@@ -78,7 +89,9 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  */
 
 /**
- * @typedef {{type: 'status', state: 'listening'|'tracking', reason: string, bph: number|null, cyclesAveraged: (number|null)[]|null, t: number}} StatusEvent
+ * @typedef {{type: 'status', state: 'listening'|'tracking', reason: string, bph: number|null, cyclesAveraged: (number|null)[]|null, t: number, continues?: boolean}} StatusEvent
+ *   `continues` is true when a lock carries on from one lost moments before: its beats keep the
+ *   numbers and the reference points they had, so a tick stays a tick and the trace carries on
  * @typedef {{type: 'beats', beats: Beat[], replaceFrom: number|null}} BeatsEvent
  *   replaceFrom: when set, beats from that time on are superseded by this list
  * @typedef {{type: 'readings', t: number, window: [number, number]|null, signal: Signal|null, irregular: boolean} & import('./estimate.js').Readings} ReadingsEvent
@@ -110,6 +123,7 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {number} p0 predicted position of that beat
  * @property {number} step predicted beat period for the current block
  * @property {number} failed consecutive timestamps that were not confident or not trusted
+ * @property {number} refused consecutive confident timestamps that the tracker refused
  */
 
 /**
@@ -195,6 +209,49 @@ const CHANGE_RETRY_SECONDS = 4;
  * not flip between the two.
  */
 const SETTLED_MS = 0.3;
+/**
+ * Confident timestamps of every timed beat type that the tracker must refuse in a row before it
+ * is started again from the beats themselves.
+ */
+const RESYNC_REFUSED = 3;
+/**
+ * The tracker is also started again when its latest `RESYNC_RECENT` misses of every timed beat
+ * type all fall the same way, with a median more than this many milliseconds: it is falling
+ * behind a watch whose rate is changing. A beat is preferred within `NEAR_MS` of where the
+ * tracker expects it, so a prediction this far out can start to take another of the beat's
+ * sounds. Misses that scatter both ways are the timestamps' own scatter, however large.
+ */
+const RESYNC_LAG_MS = 0.5;
+/** Latest misses of each beat type that are judged for falling behind. */
+const RESYNC_RECENT = 6;
+/** Latest confident timestamps of each beat type that a restarted tracker is fitted to. */
+const RESYNC_TIMESTAMPS = 8;
+/**
+ * How far those timestamps may scatter about their line, as a multiple of the scatter the
+ * tracker has been seeing, for them to count as agreeing with one another.
+ */
+const RESYNC_SCATTER = 3;
+/**
+ * Longest time from the last trusted beat of a lost lock to the first beat of a new one for the
+ * new lock to carry on the old one's beat numbers, in seconds. Over 20 s, a tracker 1,000 ppm
+ * (86 s/day) off predicts a beat 20 ms out, a fifth of a beat at 36,000 vph.
+ */
+const RESUME_SECONDS = 20;
+/** Farthest a new lock's first beat may lie from a beat the lost lock predicts, in beats. */
+const RESUME_FRACTION = 0.25;
+/**
+ * Farthest the beats already timed in a repeat analysis's audio may bend away from a straight
+ * line, in milliseconds. The analysis folds its audio at one beat period and looks for each beat
+ * no more than `LAG_MS` from where that period puts it, so a watch whose rate changed within the
+ * audio has its beats at the ends looked for in the wrong place, where another of the beat's
+ * sounds can be taken for it.
+ */
+const FOLD_BEND_MS = 1;
+/**
+ * Length of the stretches of a repeat analysis's audio whose median distances from the line
+ * measure its bend, and the step by which the audio is shortened, in seconds.
+ */
+const FOLD_STEP_SECONDS = 4;
 
 export class Pipeline {
   /**
@@ -257,8 +314,14 @@ export class Pipeline {
     this.nextAttempt = Math.round(this.options.windows[0] * fe);
     /** Start of the audio the current lock was first found in. */
     this.lockedFrom = 0;
-    /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number, irregular: boolean}} */
+    /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number, irregular: boolean, continues: boolean}} */
     this.lock = null;
+    /**
+     * The last lock lost, kept so that a new lock found soon after can carry on its beat numbers
+     * and reference points.
+     * @type {null | {bph: number, tracker: BeatTracker, dots: Dot[], lastTrusted: number}}
+     */
+    this.lost = null;
     /** @type {BeatTracker|null} */
     this.tracker = null;
     /** @type {Dot[]} */
@@ -282,6 +345,8 @@ export class Pipeline {
     /** Early analyses made because the regularity seemed to change, and how many changed it. */
     this.changeChecks = 0;
     this.changesFound = 0;
+    /** Times the tracker was started again from the beats because it refused or lagged them. */
+    this.resyncs = 0;
     /** @type {PipelineEvent[]} */
     this.events = [];
     /** Seconds spent in the lock analyses, for the speed check. */
@@ -493,12 +558,13 @@ export class Pipeline {
     const start = Math.max(this.lockedFrom, this.base, this.count - Math.round(CHANGE_WINDOW_SECONDS * fe));
     const length = this.count - start;
     const rows = this.view(start, this.count);
-    const ppm = (tracker.period / (lock.nominalPeriod * fe) - 1) * 1e6;
+    const span = (600 * fe) / length;
+    const ppm = this.periodHint(start, span);
     const t0 = performance.now();
     const analysis = analyzeRows(rows, fe, (p) => this.toSeconds(p + start), {
       bph: lock.bph,
       periodPpm: ppm,
-      refineSpan: (600 * fe) / length,
+      refineSpan: span,
       escapement: this.options.escapement,
       timing: this.options.timing,
     });
@@ -524,15 +590,16 @@ export class Pipeline {
     const tracker = this.tracker;
     if (!lock || !tracker) return;
     const fe = this.fe;
-    const start = Math.max(this.lockedFrom, this.count - this.historyLength, this.base);
+    const start = this.foldStart(Math.max(this.lockedFrom, this.count - this.historyLength, this.base));
     const length = this.count - start;
     const rows = this.view(start, this.count);
-    const ppm = (tracker.period / (lock.nominalPeriod * fe) - 1) * 1e6;
+    const span = (600 * fe) / length;
+    const ppm = this.periodHint(start, span);
     const t0 = performance.now();
     const analysis = analyzeRows(rows, fe, (p) => this.toSeconds(p + start), {
       bph: lock.bph,
       periodPpm: ppm,
-      refineSpan: (600 * fe) / length,
+      refineSpan: span,
       irregular: lock.irregular ? { lagMs: (1000 * this.maxLag) / fe, beats: this.dots.filter((d) => d.ok && d.K === 1 && d.p >= start).map((d) => ({ q: d.p - lock.types[d.j].adjust - start, n: d.n })) } : null,
       escapement: this.options.escapement,
       timing: this.options.timing,
@@ -566,8 +633,14 @@ export class Pipeline {
     // Beat numbers continue from the previous lock when there is one, so that a tick stays a
     // tick. Local beat 0 is the first cluster of the first analysed cycle.
     let shift = 0;
+    /** Beats already reported, whose reference points the new timestamps keep. */
+    let earlier = this.dots;
+    const resumed = confirmed ? null : this.resume(analysis, start);
     if (previous && confirmed) {
       shift = previous.n + Math.round((start + analysis.clusters[0] - previous.phase) / previous.period);
+    } else if (resumed !== null && this.lost) {
+      shift = resumed;
+      earlier = this.lost.dots;
     }
     /** @type {Dot[]} */
     const dots = [];
@@ -594,7 +667,7 @@ export class Pipeline {
         }
       }
       // Keep the reference point this beat type has had since the lock began.
-      const adjust = previous && confirmed ? this.carryReference(own, type, beatPeriod) : 0;
+      const adjust = (previous && confirmed) || resumed !== null ? this.carryReference(own, type, beatPeriod, earlier) : 0;
       adjusts.push(adjust);
       /** @type {number[]} */
       const ns = [];
@@ -645,41 +718,19 @@ export class Pipeline {
         p0: 0,
         step: beatPeriod,
         failed: 0,
+        refused: 0,
       });
     }
-    const usable = /** @type {Line[]} */ (lines.filter((l) => l !== null));
-    if (usable.length === 0) return false;
-    // Start the tracker at the last timed beat, from the better-determined of the two lines.
+    if (!lines.some((l) => l !== null)) return false;
     // Which cluster is the tick depends on how the beat numbers continue from the previous lock.
-    const n = Math.max(...usable.map((l) => l.last));
     const parity = Math.abs(shift % 2);
-    const tick = lines[parity];
-    const tock = lines[1 - parity];
-    const main = usable.reduce((best, l) => (l.periodVar < best.periodVar ? l : best));
     const geometry = (analysis.clusters[1] + adjusts[1] - analysis.clusters[0] - adjusts[0] - beatPeriod) * (parity === 0 ? 1 : -1);
-    const offset = tick && tock ? tock.at(n) - tick.at(n) : geometry;
-    const seconds = beatPeriod / fe;
-    this.tracker = new BeatTracker({
-      n,
-      phase: main.at(n) - (main === tock ? offset : 0),
-      period: main.b,
-      offset,
-      phaseSd: Math.sqrt(main.varAt(n)),
-      periodSd: Math.sqrt(main.periodVar),
-      phasePeriodCov: main.covAt(n),
-      offsetSd: tick && tock ? Math.sqrt(tick.varAt(n) + tock.varAt(n)) : 0,
-      periodDrift: o.driftPpm * 1e-6 * beatPeriod * Math.sqrt(seconds),
-      offsetDrift: tick && tock ? 1e-6 * fe * Math.sqrt(seconds) : 0,
-      // The scatter about a line fitted to a few points is an optimistic guide to how far the
-      // next timestamps will fall from it, so the tracker starts with twice that.
-      scatter: [2 * (tick ? tick.sd : main.sd), 2 * (tock ? tock.sd : main.sd)],
-      minScatter: 2e-5 * fe,
-    });
+    this.tracker = this.startTracker(lines[parity], lines[1 - parity], geometry, beatPeriod);
     // Beats inside the analysed window are superseded by the ones just computed.
     this.dots = this.dots.filter((d) => d.p < start).concat(dots).sort((a, b) => a.p - b.p);
     // What was heard under another verdict says nothing about a change from this one.
     if (!this.lock || this.lock.irregular !== analysis.irregular) this.recentLag = [[], []];
-    this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0, irregular: analysis.irregular };
+    this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0, irregular: analysis.irregular, continues: resumed !== null };
     this.shift = shift;
     this.lastTrusted = start + length;
     this.trackingSince = this.count;
@@ -692,18 +743,216 @@ export class Pipeline {
   }
 
   /**
-   * How far a repeat analysis must move its timestamps of one beat type for them to agree with
-   * the timestamps already reported for the same beats. Every new confident timestamp is
-   * compared with the nearest old one of its type; the median difference is the distance
-   * between the new analysis's reference point and the one in use.
+   * Where a repeat analysis of a regular watch starts: as far back as the history allows, unless
+   * the beats timed since then bend away from one beat period by more than `FOLD_BEND_MS`, as
+   * when the watch's rate changed within it. The audio is then shortened from its start until they
+   * do not, but not below the shortest window a lock is first found in. Irregular watches are
+   * analysed from the beats already timed, not folded, and keep the whole history; so do faint
+   * ones whose beats are averaged over several cycles, which need all of it to be heard.
+   * @param {number} start the earliest start the history allows
+   * @returns {number}
+   */
+  foldStart(start) {
+    const lock = /** @type {NonNullable<Pipeline['lock']>} */ (this.lock);
+    if (this.options.followRate === false || lock.irregular || lock.types.some((ty) => ty.tracked && ty.K > 1)) return start;
+    const fe = this.fe;
+    const shortest = Math.round(this.options.windows[0] * fe);
+    const step = Math.round(FOLD_STEP_SECONDS * fe);
+    let from = start;
+    while (this.count - from > shortest && this.bend(from) > FOLD_BEND_MS * 1e-3 * fe) from = Math.min(from + step, this.count - shortest);
+    return from;
+  }
+
+  /**
+   * How far the confident beats timed since `from` bend away from a straight line: for each beat
+   * type, the median distance from its line over each `FOLD_STEP_SECONDS` of audio, and the
+   * largest of these, in envelope samples. Medians, so that a beat taken on the wrong sound now
+   * and then does not count as a bend.
+   * @param {number} from absolute position
+   * @returns {number}
+   */
+  bend(from) {
+    const step = FOLD_STEP_SECONDS * this.fe;
+    let largest = 0;
+    for (const type of [0, 1]) {
+      const inside = this.dots.filter((d) => d.type === type && d.ok && d.p >= from);
+      if (inside.length < MIN_TIMESTAMPS) continue;
+      const line = lineThrough(inside.map((d) => d.n), inside.map((d) => d.p));
+      if (!line) continue;
+      /** @type {Map<number, number[]>} */
+      const pieces = new Map();
+      for (const d of inside) {
+        const k = Math.floor((d.p - from) / step);
+        const list = pieces.get(k) || [];
+        list.push(d.p - line.at(d.n));
+        pieces.set(k, list);
+      }
+      for (const list of pieces.values()) largest = Math.max(largest, Math.abs(median(list)));
+    }
+    return largest;
+  }
+
+  /**
+   * The beat period a repeat analysis starts its search from, in parts per million from the
+   * nominal period. The analysis searches only a narrow span around where it starts: 15 ppm,
+   * about 1.3 s/day, either way over a 40 s window. It starts from the tracker's period, unless
+   * the beats already timed in the window run at a period beyond that reach from it. The
+   * tracker's period is the watch's latest rate, and when the rate changes quickly it can lie
+   * tens of seconds a day from the average over the window; folded at such a period, the beats
+   * at the ends of the window smear and their timestamps hop between the sounds of the beat.
+   * @param {number} start absolute position of the first sample to be analysed
+   * @param {number} span how far either way the analysis searches, in parts per million
+   * @returns {number}
+   */
+  periodHint(start, span) {
+    const lock = /** @type {NonNullable<Pipeline['lock']>} */ (this.lock);
+    const tracker = /** @type {BeatTracker} */ (this.tracker);
+    const ppmOf = (/** @type {number} */ period) => (period / (lock.nominalPeriod * this.fe) - 1) * 1e6;
+    const own = ppmOf(tracker.period);
+    if (this.options.followRate === false) return own;
+    let sum = 0;
+    let weight = 0;
+    for (const type of [0, 1]) {
+      const inside = this.dots.filter((d) => d.type === type && d.ok && d.p >= start);
+      const line = inside.length >= MIN_TIMESTAMPS ? lineThrough(inside.map((d) => d.n), inside.map((d) => d.p)) : null;
+      if (!line) continue;
+      sum += line.b / line.periodVar;
+      weight += 1 / line.periodVar;
+    }
+    if (weight === 0) return own;
+    const timed = ppmOf(sum / weight);
+    return Math.abs(timed - own) > span ? timed : own;
+  }
+
+  /**
+   * The beat number a new lock's first beat carries on from the last lock, when that lock was
+   * lost moments before at the same beat rate: the lost tracker predicts a beat there. Without
+   * it, a new lock numbers its beats afresh, its first cluster becomes the tick whichever beat it
+   * is, and half the time the tick and the tock swap.
+   * @param {NonNullable<ReturnType<typeof analyzeRows>>} analysis
+   * @param {number} start absolute position of the first analysed sample
+   * @returns {number|null} the beat number, or null when the new lock starts afresh
+   */
+  resume(analysis, start) {
+    const lost = this.lost;
+    if (!lost || this.options.resumeLock === false || analysis.bph !== lost.bph) return null;
+    const first = start + analysis.clusters[0];
+    if (first - lost.lastTrusted > RESUME_SECONDS * this.fe) return null;
+    const t = lost.tracker;
+    const beats = (first - t.phase) / t.period;
+    const k = Math.round(beats);
+    return Math.abs(beats - k) <= RESUME_FRACTION ? t.n + k : null;
+  }
+
+  /**
+   * A tracker started at the last timed beat, from the better-determined of the tick and tock
+   * lines.
+   * @param {Line|null} tick
+   * @param {Line|null} tock
+   * @param {number} geometry tock minus tick, less one beat, for when only one line is known
+   * @param {number} beatPeriod in envelope samples
+   * @returns {BeatTracker}
+   */
+  startTracker(tick, tock, geometry, beatPeriod) {
+    const fe = this.fe;
+    const usable = /** @type {Line[]} */ ([tick, tock].filter((l) => l !== null));
+    const n = Math.max(...usable.map((l) => l.last));
+    const main = usable.reduce((best, l) => (l.periodVar < best.periodVar ? l : best));
+    const offset = tick && tock ? tock.at(n) - tick.at(n) : geometry;
+    const seconds = beatPeriod / fe;
+    return new BeatTracker({
+      n,
+      phase: main.at(n) - (main === tock ? offset : 0),
+      period: main.b,
+      offset,
+      phaseSd: Math.sqrt(main.varAt(n)),
+      periodSd: Math.sqrt(main.periodVar),
+      phasePeriodCov: main.covAt(n),
+      offsetSd: tick && tock ? Math.sqrt(tick.varAt(n) + tock.varAt(n)) : 0,
+      periodDrift: this.options.driftPpm * 1e-6 * beatPeriod * Math.sqrt(seconds),
+      offsetDrift: tick && tock ? 1e-6 * fe * Math.sqrt(seconds) : 0,
+      // The scatter about a line fitted to a few points is an optimistic guide to how far the
+      // next timestamps will fall from it, so the tracker starts with twice that.
+      scatter: [2 * (tick ? tick.sd : main.sd), 2 * (tock ? tock.sd : main.sd)],
+      minScatter: 2e-5 * fe,
+    });
+  }
+
+  /**
+   * Start the tracker again from the beats themselves, when it keeps refusing confident
+   * timestamps or its predictions keep missing them the same way, and the latest timestamps
+   * agree with one another. The tracker allows the rate to wander only slowly, which suits most
+   * watches; a watch whose rate changes faster than that pulls its beats away from the
+   * prediction. Until 22 November 2026 every beat was then refused and the lock dropped although
+   * the beats were clear, or, where the tracker's spread widened to let them through, its
+   * prediction lagged them by up to 4 ms. Seen on an old 18,000 vph watch whose rate fell by
+   * 25 s/day within 10 s.
+   */
+  resync() {
+    const lock = this.lock;
+    const tracker = this.tracker;
+    if (!lock || !tracker || !lock.confirmed || this.options.followRate === false) return;
+    const tracked = lock.types.filter((ty) => ty.tracked);
+    if (tracked.length === 0) return;
+    if (!tracked.every((ty) => ty.refused >= RESYNC_REFUSED) && !this.fallingBehind()) return;
+    // Lines through the latest confident timestamps of each beat type, which must lie close to
+    // them: beats that jump between sounds or between noise and watch are not followed.
+    const lines = /** @type {(Line|null)[]} */ ([null, null]);
+    for (let j = 0; j < 2; j++) {
+      if (!lock.types[j].tracked) continue;
+      const type = /** @type {0|1} */ (Math.abs((j + this.shift) % 2));
+      const recent = this.dots.filter((d) => d.type === type && d.ok).slice(-RESYNC_TIMESTAMPS);
+      const line = lineThrough(recent.map((d) => d.n), recent.map((d) => d.p));
+      if (!line || line.sd > RESYNC_SCATTER * Math.max(tracker.scatter(type), tracker.minScatter)) return;
+      lines[type] = line;
+    }
+    this.tracker = this.startTracker(lines[0], lines[1], tracker.offset, tracker.period);
+    for (const ty of lock.types) {
+      ty.failed = 0;
+      ty.refused = 0;
+    }
+    const latest = this.dots.filter((d) => d.ok).pop();
+    if (latest) this.lastTrusted = Math.max(this.lastTrusted, latest.p);
+    this.resyncs++;
+  }
+
+  /**
+   * Whether the tracker's latest predictions miss every timed beat type the same way: the last
+   * `RESYNC_RECENT` misses of each all on one side, with a median beyond `RESYNC_LAG_MS`.
+   * @returns {boolean}
+   */
+  fallingBehind() {
+    const lock = /** @type {NonNullable<Pipeline['lock']>} */ (this.lock);
+    const tracker = /** @type {BeatTracker} */ (this.tracker);
+    const limit = RESYNC_LAG_MS * 1e-3 * this.fe;
+    let sign = 0;
+    for (let j = 0; j < 2; j++) {
+      if (!lock.types[j].tracked) continue;
+      const misses = tracker.recent[Math.abs((j + this.shift) % 2)];
+      if (misses.length < RESYNC_RECENT) return false;
+      const latest = misses.slice(-RESYNC_RECENT);
+      const m = median(latest);
+      if (Math.abs(m) <= limit || (sign !== 0 && Math.sign(m) !== sign)) return false;
+      if (!latest.every((x) => Math.sign(x) === Math.sign(m))) return false;
+      sign = Math.sign(m);
+    }
+    return sign !== 0;
+  }
+
+  /**
+   * How far a repeat analysis, or a lock that carries on a lost one, must move its timestamps of
+   * one beat type for them to agree with the timestamps already reported for the same beats.
+   * Every new confident timestamp is compared with the nearest old one of its type; the median
+   * difference is the distance between the new analysis's reference point and the one in use.
    * @param {Dot[]} fresh the new analysis's timestamps of one beat type, in time order
    * @param {0|1} type
    * @param {number} beatPeriod samples per beat
+   * @param {Dot[]} earlier the timestamps already reported
    * @returns {number} samples to add to the new timestamps; 0 when too few beats are common to
    *   both, as when this beat type was not timed before
    */
-  carryReference(fresh, type, beatPeriod) {
-    const old = this.dots.filter((d) => d.type === type && d.ok);
+  carryReference(fresh, type, beatPeriod, earlier) {
+    const old = earlier.filter((d) => d.type === type && d.ok);
     if (old.length === 0) return 0;
     /** @type {number[]} */
     const moved = [];
@@ -727,7 +976,7 @@ export class Pipeline {
   announce(dots, start) {
     const lock = this.lock;
     if (!lock) return;
-    this.events.push({ type: 'status', state: 'tracking', reason: 'locked', bph: lock.bph, cyclesAveraged: lock.types.map((ty) => (ty.tracked ? ty.K : null)), t: this.toSeconds(this.count) });
+    this.events.push({ type: 'status', state: 'tracking', reason: 'locked', bph: lock.bph, cyclesAveraged: lock.types.map((ty) => (ty.tracked ? ty.K : null)), t: this.toSeconds(this.count), continues: lock.continues });
     this.events.push({ type: 'beats', beats: dots.map((d) => this.beat(d)), replaceFrom: this.toSeconds(start) });
     this.events.push(this.waveform());
   }
@@ -767,8 +1016,7 @@ export class Pipeline {
   /** Time every beat for which the audio has arrived. */
   stream() {
     const lock = this.lock;
-    const tracker = this.tracker;
-    if (!lock || !tracker) return;
+    if (!lock || !this.tracker) return;
     const filled = this.count - this.base;
     /** @type {Dot[]} */
     const fresh = [];
@@ -783,6 +1031,7 @@ export class Pipeline {
         if (ty.filled === 0) {
           // A new block: the cycles in it lie on a straight grid predicted by the tracker.
           ty.n0 = n;
+          const tracker = /** @type {BeatTracker} */ (this.tracker);
           ty.p0 = tracker.expect(n, type).arrival;
           ty.step = tracker.period;
           ty.acc.fill(0);
@@ -824,14 +1073,17 @@ export class Pipeline {
           ty.recentZ.push(z);
           if (ty.recentZ.length > 16) ty.recentZ.shift();
           if (ty.recentZ.length >= 4) ty.typical = median(ty.recentZ);
-          trusted = tracker.update(centreN, type, p, ty.typical > 0 ? z / ty.typical : 1).accepted;
+          trusted = /** @type {BeatTracker} */ (this.tracker).update(centreN, type, p, ty.typical > 0 ? z / ty.typical : 1).accepted;
         }
         if (trusted) {
           ty.failed = 0;
+          ty.refused = 0;
           this.lastTrusted = p;
         } else {
           ty.failed++;
+          if (ok) ty.refused++;
         }
+        if (ok) this.resync();
         if (!lock.confirmed) {
           lock.blocks++;
           if (trusted) lock.blocksOk++;
@@ -853,6 +1105,7 @@ export class Pipeline {
     // them, must be confident and land where the tracker expects them.
     if (lock.blocksOk >= Math.max(2, 0.5 * lock.blocks)) {
       lock.confirmed = true;
+      this.lost = null;
       this.trackingSince = this.count;
       this.state = 'tracking';
       this.nextReading = this.count;
@@ -869,6 +1122,7 @@ export class Pipeline {
    * @param {string} reason
    */
   lose(reason) {
+    if (this.lock && this.lock.confirmed && this.tracker) this.lost = { bph: this.lock.bph, tracker: this.tracker, dots: this.dots, lastTrusted: this.lastTrusted };
     this.state = 'listening';
     this.lock = null;
     this.tracker = null;

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
-import { stream, join } from './helpers/stream.js';
+import { stream, join, againstTruth } from './helpers/stream.js';
 
 /**
  * @param {number|null} actual @param {number} expected @param {number} tolerance @param {string} what
@@ -130,6 +130,99 @@ test('when the ticking stops the readings are blanked, and the lock returns with
   assert.ok(back.t < 52, `locked again at ${back.t.toFixed(1)} s`);
   assert.ok(r.last);
   near(r.last.rate, 5, 0.5, 'rate after the watch returned');
+});
+
+/**
+ * An 18,000 vph watch whose rate swings as a sine, by 40 s/day either way every 70 s: at its
+ * fastest the rate changes by 3.6 s/day each second, as an old watch recorded through Safari on
+ * 22 November 2026 did at its fastest (25 s/day in about 7 s). Its beats fall behind a watch kept
+ * at the mean rate by the integral of the difference.
+ * @param {number} seed
+ */
+function swingingWatch(seed) {
+  const swing = 40;
+  const w = (2 * Math.PI) / 70;
+  const behind = (/** @type {number} */ t) => ((swing / w) * (Math.cos(w * t) - 1)) / 86400;
+  return synthesizeWatch({ bph: 18000, rate: 0, beatOffsetMs: 1.5, gain: 1.6, seconds: 90, seed, displacement: (k, t) => behind(t) });
+}
+
+/**
+ * Two of the swinging watches, each synthesized once and streamed once with the tracker
+ * following the rate and once as it was before. Seed 2 is one on which the tracker as it was
+ * lost its lock; seed 6, one on which it kept it but its prediction fell behind.
+ * @type {Map<number, {watch: ReturnType<typeof swingingWatch>, follow: ReturnType<typeof stream>, before: ReturnType<typeof stream>}>}
+ */
+const swingRuns = new Map();
+const swinging = (/** @type {number} */ seed) => {
+  let run = swingRuns.get(seed);
+  if (!run) {
+    const watch = swingingWatch(seed);
+    run = {
+      watch,
+      follow: stream(watch.channels, watch.sampleRate),
+      before: stream(watch.channels, watch.sampleRate, { options: { followRate: false, resumeLock: false } }),
+    };
+    swingRuns.set(seed, run);
+  }
+  return run;
+};
+
+test('a watch whose rate swings by 40 s/day either way every 70 s keeps its lock, and its timestamps follow every beat', () => {
+  for (const seed of [2, 6]) {
+    const { watch, follow } = swinging(seed);
+    assert.ok(follow.status.length > 0 && follow.status.every((s) => s.state === 'tracking'), `seed ${seed}: locked and never lost`);
+    assert.ok(follow.pipeline.resyncs > 0, `seed ${seed}: the tracker was started again from the beats`);
+    for (const type of /** @type {(0|1)[]} */ ([0, 1])) {
+      const truth = againstTruth(follow.beats, watch.beatTimes, watch.truePeriod, type);
+      assert.ok(truth.count > 200, `seed ${seed}, type ${type}: ${truth.count} beats timed`);
+      assert.ok(truth.errorMs < 0.15, `seed ${seed}, type ${type}: ${truth.errorMs.toFixed(3)} ms rms from the true beat times`);
+      assert.ok(truth.wrong <= 2, `seed ${seed}, type ${type}: ${truth.wrong} timestamps more than 0.5 ms off`);
+    }
+    assert.ok(follow.last && follow.last.rate !== null, `seed ${seed}: still reading at the end`);
+  }
+});
+
+test('the tracker as it was lost the lock on one of those watches and swapped tick and tock, and timed the other\'s beats milliseconds out', () => {
+  // Before 22 November 2026 the tracker kept its prediction, and a lock found after a lost one
+  // numbered its beats afresh.
+  const lost = swinging(2);
+  assert.ok(lost.before.status.some((s) => s.state === 'listening'), 'seed 2: the lock was lost');
+  const lagged = swinging(6);
+  for (const [run, seed] of /** @type {[typeof lost, number][]} */ ([[lost, 2], [lagged, 6]])) {
+    for (const type of /** @type {(0|1)[]} */ ([0, 1])) {
+      const truth = againstTruth(run.before.beats, run.watch.beatTimes, run.watch.truePeriod, type);
+      assert.ok(truth.wrong > 10, `seed ${seed}, type ${type}: ${truth.wrong} timestamps more than 0.5 ms off`);
+    }
+  }
+});
+
+test('a lock found again soon after the ticking pauses carries on the beat numbers, so ticks stay ticks and the trace carries on', () => {
+  // The ticking pauses for 6.8 s. The lock is dropped and found again 11 s after the last beat
+  // heard; the new lock's first beat is a tock, which a lock that numbered its beats afresh would
+  // take for a tick.
+  const w = synthesizeWatch({ bph: 18000, rate: 20, beatOffsetMs: 1.5, gain: 1.6, seconds: 60, seed: 1, loudness: (k, t) => (t >= 30.2 && t < 37 ? 0 : 1) });
+  const carried = stream(w.channels, w.sampleRate);
+  const afresh = stream(w.channels, w.sampleRate, { options: { resumeLock: false } });
+  for (const r of [carried, afresh]) {
+    const lost = r.status.find((s) => s.state === 'listening');
+    assert.ok(lost && lost.t > 30 && lost.t < 37, 'the lock was dropped during the pause');
+    assert.ok(r.status.some((s) => s.state === 'tracking' && s.t > lost.t), 'and found again');
+  }
+  const back = carried.status.find((s) => s.state === 'tracking' && s.t > 37);
+  assert.ok(back && back.continues === true, 'the new lock says it carries on the old one');
+  const before = carried.beats.filter((b) => b.t < 30.2);
+  const after = carried.beats.filter((b) => b.t >= 37);
+  assert.ok(Math.min(...after.map((b) => b.n)) > Math.max(...before.map((b) => b.n)), 'the beat numbers carry on');
+  for (const type of /** @type {(0|1)[]} */ ([0, 1])) {
+    // One line through the true beats of one parity fits all the timestamps of this type, before
+    // and after the pause.
+    const truth = againstTruth(carried.beats, w.beatTimes, w.truePeriod, type);
+    assert.ok(truth.count > 100, `type ${type}: ${truth.count} beats timed`);
+    assert.ok(truth.errorMs < 0.15 && truth.wrong <= 1, `type ${type}: ${truth.errorMs.toFixed(3)} ms rms, ${truth.wrong} more than 0.5 ms off`);
+    // Numbered afresh, the beats after the pause were the other type's.
+    const swapped = againstTruth(afresh.beats, w.beatTimes, w.truePeriod, type);
+    assert.ok(swapped.wrong > 20, `numbered afresh, type ${type}: ${swapped.wrong} more than 0.5 ms off`);
+  }
 });
 
 test('a beat rate given by the user is used without searching the others', () => {

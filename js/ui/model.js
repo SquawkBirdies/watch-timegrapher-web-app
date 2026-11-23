@@ -83,8 +83,13 @@ export class Measurement {
   apply(e) {
     if (e.type === 'status') {
       if (e.state === 'tracking' && this.state !== 'tracking') {
-        const last = this.lastPoint();
-        this.episodes.push({ bph: /** @type {number} */ (e.bph), n0: null, t0: null, base: last ? last.y : 0, beats: [] });
+        // A lock that carries on from one lost moments before keeps its beat numbers, so its
+        // beats stay on the same stretch of the trace, measured from the same reference beat.
+        const ep = this.episodes[this.episodes.length - 1];
+        if (!(e.continues && ep && ep.bph === e.bph && ep.n0 !== null)) {
+          const last = this.lastPoint();
+          this.episodes.push({ bph: /** @type {number} */ (e.bph), n0: null, t0: null, base: last ? last.y : 0, beats: [] });
+        }
         if (this.lockedAt === null) this.lockedAt = e.t;
       }
       if (e.state === 'listening') {
