@@ -316,9 +316,11 @@ Chrome, with the ETA's Safari capture played in as the microphone and Stop press
 of audio (0.19 s at the 44.1 kHz Chrome delivers) were still waiting, the live screen read +1.7 ±
 0.07 s/day over 17 s, against +1.6 ± 0.06 over 18 s for the replay of its saved file, and the
 traces differed. Now, stopped with 2 and with 3 chunks waiting, the live screen and the replay show
-the same numbers and the same trace, pixel for pixel. A stop for a problem (an error, or the
-analysis falling 8 s behind) still ends the run at once. Stopping a replay or the simulator works
-the same way.
+the same numbers and the same trace, pixel for pixel. On the iPhone on 23 November, a 40 s live run
+of the Omega, measured as co-axial and kept whole in the saved file, read −1.4 ± 0.07 s/day over 20
+s, and the replay of its saved file read the same, with no dot of the trace added, missing or
+moved. A stop for a problem (an error, or the analysis falling 8 s behind) still ends the run at
+once. Stopping a replay or the simulator works the same way.
 
 In Chrome on a computer, with the ETA recording played in as a simulated microphone (Chrome
 delivers it at 44.1 kHz), the live reading after 50 s was +6.9 s/day and 0.40 ms. The recording
