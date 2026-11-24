@@ -1003,5 +1003,33 @@ Elsewhere:
   sound, the impulse, and its lock (see "A lever whose unlock is lost"). So is a lever whose
   impulse cannot be heard. One with a further sound between its impulse and its drop in both
   beats would still be timed from its impulse, its amplitude high.
-- One watch and one capture. The averaging itself runs on a whole recording, in Python, even
-  when the beat times come from the real-time pipeline.
+- The amplitude has been checked against a change of wind on one watch only, with no reference
+  instrument. Lawrence's Omega, dial-up with the phone's USB-C port against the crown and the
+  chronograph stopped, read 284.8° and 289.4° in two minutes fully wound, 268.1° over five
+  minutes 23 hours later and 239.3° over five minutes 36 hours later; every minute read lower
+  than every minute of the capture before. These captures, made on 23 and 24 November, are kept
+  off the repository; the investigation doc has the results (issues 2 and 29). The absolute
+  figure still rests on the lift angle and on how the two beats are combined, above.
+- A reading's stated scatter is a floor. It counts how the beats differ within the reading, not
+  how the swing wanders from one stretch to the next: 23 and 36 hours down, the Omega's single
+  minutes spread over 13° and 11° while each stated ±0.3° to ±1.0°, and its 20 s windows over
+  19° and 17°. The rate, timed from the beats alone, moved with the amplitude (correlation −0.84
+  and −0.57 over blocks of 10 s), so the wander is the watch's: mostly a slow swing of about ±10°
+  over minutes, with a cycle of ±2° to ±3° once a minute, highest as the seconds hand passes 12.
+- A co-axial's beat error from the unlocks moves with its state of wind. The Omega read 0.206
+  and 0.199 ms fully wound, 0.280 ms 23 hours down and 0.285 ms 36 hours down; inside the
+  23-hour capture it went with the swing, 0.25 ms where widest and 0.33 ms where narrowest, and
+  inside the 36-hour one by no more than its scatter. Simulated co-axials read the change a
+  slower balance gives within 0.004 ± 0.003 ms per 10°, so it is the watch, not the method:
+  between full wind and a day down every interval between the Omega's sounds grew in proportion
+  as the balance slowed except the longer-lift beat's unlock and lock, which both came about
+  0.06 ms early, and the beat error is the small difference of two intervals of about 3 ms.
+  Decided on 24 November (issue 30): a co-axial's beat error belongs with its state of wind, and
+  the app's README will say so with milestone 8.
+- The app's names for the two beats can swap between runs (issue 32), and with them the sign of
+  the beat error from the unlocks, the tick-alone and tock-alone amplitudes and the lift ratio.
+  In the 36-hour capture the tick was the beat with the shorter lift; in the earlier ones, the
+  longer.
+- One co-axial watch: the published capture, and the four above kept off the repository. The
+  averaging itself runs on a whole recording, in Python, even when the beat times come from the
+  real-time pipeline.
