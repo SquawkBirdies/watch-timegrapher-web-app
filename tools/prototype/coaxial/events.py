@@ -40,6 +40,7 @@ MAX_AMP_SD = 5.0     # largest scatter of the amplitude over the resamples, in d
 MAX_FAIL = 0.05      # largest share of resamples in which the sounds are not found
 OTHER_SOUND_MS = 0.5 # a resample placing a sound further than this from where all the beats put it
                      # has found another sound, and counts as failing
+MIN_BEATS = 10       # fewest confident timestamps, and fewest beats, of each beat type to average
 
 # Matching a sound in a short stretch of beats against a template of it.
 MATCH_SMOOTH_MS = 0.15  # as find_sounds smooths a portrait
@@ -562,7 +563,9 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
              once, on all the beats; each resample then lines up the same sounds. `moved` in
              the result says what the test found.
 
-    Returns a dict. `reading` is None, with `why`, when the sounds could not be paired.
+    Returns a dict. `reading` is None, with `why`, when the sounds could not be paired, or when
+    the app timed fewer than MIN_BEATS confident timestamps or beats of a type; the dict then
+    holds only `bph`, `lift`, `n0`, `n1` and `limits` besides.
     Otherwise it holds, in milliseconds, `first_gap` (the tock's unlock later than midway between
     the ticks' unlocks; its size is the beat error), `last_gap` (the same for the locks) and
     `lift0`, `lift1` (unlock to lock in the ticks and in the tocks). With resamples, `fail` is the
@@ -574,6 +577,24 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     bph = B["bph"]
     lo, hi = lift_limits(bph, lift)
     base_until = -(hi + 1.5)
+
+    # A beat type the app hardly timed leaves nothing to average. On the dial-down Voice Memos
+    # recording of the Omega the app's whole-recording analysis has one confident timestamp of
+    # its tocks, averaged over 32 cycles, and until 25 November measure failed with an IndexError
+    # instead of saying so.
+    def too_few(counts, what):
+        return {"bph": bph, "lift": lift, "n0": counts[0], "n1": counts[1], "limits": (lo, hi), "reading": None,
+                "why": "the app timed too few beats: %d %s of its ticks and %d of its tocks, against at least %d of each" % (counts[0], what, counts[1], MIN_BEATS)}
+
+    confident = []
+    for j in (0, 1):
+        b = B["beats"][j] if j < len(B["beats"]) else {"t": [], "ok": []}
+        t, ok = np.array(b["t"], dtype=float), np.array(b["ok"], dtype=bool)
+        if t_from is not None:
+            ok &= (t >= t_from) & (t < t_to)
+        confident.append(int(ok.sum()))
+    if min(confident) < MIN_BEATS:
+        return too_few(confident, "confident timestamps")
     rows = band_rows(x, fs) if rows is None else rows
     T = []
     for j in (0, 1):
@@ -582,6 +603,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
             keep = (t >= t_from) & (t < t_to)
             t, n = t[keep], n[keep]
         T.append((t, n))
+    if min(len(T[0][0]), len(T[1][0])) < MIN_BEATS:
+        return too_few([len(T[0][0]), len(T[1][0])], "beats")
     # The gap between the app's tick and tock timestamps beyond half a period.
     slope = np.polyfit(np.concatenate([T[0][1], T[1][1]]), np.concatenate([T[0][0], T[1][0]]), 1)[0]
     gap = (np.median(T[1][0] - slope * T[1][1]) - np.median(T[0][0] - slope * T[0][1])) * 1e3
@@ -600,6 +623,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         kept = np.isin(T[j][0], tj)
         resid.append((T[j][0][kept] - slope * T[j][1][kept]) * 1e3)
     n0, n1 = len(S[0][0]), len(S[1][0])
+    if min(n0, n1) < MIN_BEATS:
+        return too_few([n0, n1], "beats inside the recording")
 
     levels = getattr(rows, "levels", None)
 
@@ -759,6 +784,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
 
 def describe(o):
     """The result of `measure` as lines of text."""
+    if "ports" not in o:
+        return ["no reading: " + o["why"]]
     lines = ["beats: %d ticks, %d tocks; gap between the app's timestamps %+.3f ms; believable unlock-to-lock time %.1f to %.1f ms" % (o["n0"], o["n1"], o["gap"], o["limits"][0], o["limits"][1])]
     lines.append("band weights: " + " ".join("%.2f" % v for v in o["weights"]))
     if "relined" in o:

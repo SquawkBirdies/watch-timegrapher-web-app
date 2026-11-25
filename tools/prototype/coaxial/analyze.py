@@ -41,7 +41,7 @@ else:
     o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=reline)
 print("\n".join(ev.describe(o)))
 
-if a.plot:
+if a.plot and "ports" in o:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
