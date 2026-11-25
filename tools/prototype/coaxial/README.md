@@ -129,8 +129,10 @@ These add the bands by energy, the default since 22 November, and line up only t
 move, the default since 18 November: on the Omega the two locks, on the ETA nothing. Added by
 noise, as before 22 November, the Omega read 0.31 ± 0.03 ms and 284° and the ETA 0.15 ± 0.01 ms
 and 263°; the figures below that are dated before 22 November were measured that way, and most
-of those not about lining up came from the plain average. The ± is the scatter under resampling
-only. Across the analysis choices the Omega's beat error ran from 0.26 to 0.38 ms (by noise,
+of those not about lining up came from the plain average. The ± is the scatter under resampling,
+widened since 25 November by the beat error's check with the beats on the trend (see "The beat
+error checked with the beats on the trend"), which moved neither capture's by more than 0.001 ms.
+Across the analysis choices the Omega's beat error ran from 0.26 to 0.38 ms (by noise,
 plain average). The ETA's last sounds are 0.31 ms apart, which is the app's own Swiss-lever
 reading: the app's timestamps sit at the loudest part of each beat, which in a lever watch is the
 drop, while Witschi's instruments time the unlock. By energy the ETA's unlocks now read 0.30 ms
@@ -140,8 +142,9 @@ On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background
 beat error of 0, 0.5, 1 and 2 ms, sixteen runs read within 0.11 ms, the worst one in beat at
 ±0.04 ms and the rest within 0.07 ms, and amplitudes of 200° to 310° within 1°. With the unlock
 2 dB over the background or less, or with only 20 s of audio, nothing was shown. Of all 46
-simulated runs, 33 were shown, one 0.11 ms off and the rest within 0.09 ms, and the amplitude
-within 2°. By noise, as before 22 November, 32 were shown, within 0.09 ms and 2°; with every
+simulated runs, 32 were shown, one 0.11 ms off and the rest within 0.08 ms, and the amplitude
+within 2° (33 before the beat error's check of 25 November, the rest within 0.09 ms). By noise,
+as before 22 November, 32 were shown, within 0.09 ms and 2°; with every
 sound lined up the same 46 showed beat error in 31 and amplitude in 33, none more than 0.10 ms or
 2° out (22 and 30 before block shifts that took another sound were left out): the co-axial's
 faint unlock gives noisy shifts to line the beats up on, which widens the stated uncertainty
@@ -1052,6 +1055,65 @@ Its limits:
 - `checks.py`, `track.py` and `figure.py` keep the app's names. They compare readings with the
   truth by size, which the names do not change.
 
+## The beat error checked with the beats on the trend
+
+Since 25 November (issue 33), when the app timed every beat of both types alone, `measure` reads
+the beat error a second time with every beat placed on the trend of its timestamps, as it already
+places them when the app averages cycles, without resamples. The difference between the two
+readings is added to the beat error's scatter (root sum of squares), and the 0.1 ms gate applies
+to the widened scatter. The reading itself, the amplitude and its scatter are unchanged. When the
+second reading finds no sounds, the beat error cannot be checked and is held back. `analyze.py`
+prints the second reading under the beat error; `PLACEMENT_CHECK` sets the check, and
+`--no-placement-check` (or `measure(..., placement_check=False)`) leaves it out.
+
+Why. A noisy timestamp smears the averaged sounds, and when the unlock helps the app time the
+beat it also lines up the unlock's noise. The beat error then moves one way, set by the two
+beats' sounds, not upward. On simulated co-axials whose unlock is as loud as their lock (20 dB
+over the background), made 5 and 10 dB quieter, the tock's unlock read 0.067 ms late on average
+at true beat errors of −0.5, 0 and +0.5 ms: 4.0 times the stated scatter (rms), 14 of 16 beyond
+three times. The resamples draw the beats with their timestamps, so they count the scatter and
+not the shift. Watches like the recorded ones, the co-axial with its unlock 5 dB over the
+background as the Omega's and the lever, showed no shift. Placing the beats on the trend for the
+reading itself took the shift away but smeared a watch whose beats really scatter: with 0.3 ms of
+beat jitter the lever read 0.065 ms low and the co-axials 0.090 and 0.124 ms high. A limit on the
+timestamps' scatter could not tell the shifted watches (0.055 to 0.087 ms about the trend) from
+the co-axial like the Omega (0.075 to 0.092 ms) or the Omega's capture (0.105 ms for its tocks).
+The investigation doc has the results.
+
+Checked on a computer, against main:
+
+- The recordings, read by `analyze.py` with its 200 resamples. Omega Safari: 0.347 ms, 0.346 ms
+  with the beats on the trend, scatter 0.030 ms either way. ETA Safari as a lever: 0.302 and
+  0.301 ms, scatter 0.023 to 0.024 ms. The three Voice Memos recordings and the no-watch capture
+  give no reading, as before. The Omega's captures of 23 November, kept off the repository: 0.206
+  and 0.218 ms, scatter 0.010 to 0.015 ms; 0.199 and 0.205 ms, 0.012 to 0.013 ms. Every other line
+  of the output was the same.
+- The 46 simulated watches of `checks.py sims`: the same readings to the printed digit, with the
+  co-axials' stated scatter wider (0.042 to 0.048 ms on average where shown; the levers' 0.010 ms
+  unchanged). One beat error fewer was shown, 32 instead of 33: the co-axial with its unlock 3 dB
+  over the background, seed 41, 0.09 ms against a true 0, whose scatter went from 0.09 to 0.11 ms.
+  The worst shown, the co-axial in beat with seed 3, is still 0.11 ms off, now at ±0.06 ms
+  instead of ±0.04. The amplitudes are unchanged.
+- The issue's 58 simulated watches, 60 s, 100 resamples. The 16 shifted ones: error ÷ scatter
+  3.8 to 1.3 (rms), beyond three times 14 to 0, scatter 0.017 to 0.050 ms on average, all 16
+  still shown; the 6 others with that unlock, 2.8 to 1.3. The lever's and the Omega-like
+  co-axial's scatter went from 0.020 to 0.022 ms and 0.041 to 0.049 ms, with no change in what is
+  shown. Of 24 watches with 0.05 to 0.3 ms of beat jitter, one was held back, the Omega-like
+  co-axial with 0.3 ms. The second reading found the sounds in all 58.
+- Cost: `analyze.py` with 100 resamples took 60.2 s against 53.2 s on the Omega's Safari capture
+  (60 s, lined up) and 15.3 s against 11.8 s on the ETA's (30 s, plain), 13% and 30% longer.
+
+Its limits:
+
+- It widens the scatter by one difference between two readings, each with its own error. It can
+  miss a shift both placements share, and holds back a watch whose beats scatter by 0.3 ms more
+  often.
+- Only the beat error is checked. On the same watches the amplitude moved by 2.8° at most.
+- The shift was found on simulated watches with one co-axial shape at two unlock levels, and one
+  lever. Whether any real co-axial has an unlock as loud as its lock is not known.
+- `checks.py` and `track.py`, which call `measure` with resamples, run the check too and take
+  longer by the same share.
+
 ## Limits
 
 - That the first sound is the unlock in both beats is a reading of the patents' sequence of
@@ -1094,7 +1156,8 @@ Its limits:
 - The gate shows a beat error whose scatter under resampling is 0.1 ms or less, which does not
   keep its error under 0.1 ms: a reading shown at ±0.09 ms can be about 0.18 ms off at twice its
   scatter. On the 46 simulated watches the default's errors came to 1.0 times its stated scatter
-  (rms). The two readings shown 0.13 and 0.14 ms off on ±30° swings came from block shifts that
+  (rms), about 0.8 since the beat error's check of 25 November widened the co-axials' scatter.
+  The two readings shown 0.13 and 0.14 ms off on ±30° swings came from block shifts that
   had taken another sound, now left out (see "Block shifts that took another sound"). Over five
   draws of the 46 watches at 48 kHz, every seed raised by 0, 100, 200, 300 and 400, 3 of the 135
   co-axial beat errors shown were more than 0.1 ms off, by 0.101 to 0.118 ms, at a stated

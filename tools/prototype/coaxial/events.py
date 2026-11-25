@@ -72,6 +72,18 @@ TEST_MIN_SD_MS = 0.01   # floor on a block shift's scatter, so that a loud sound
 NAME_SD = 3.0           # the difference that names the beats must exceed this many times its
                         # scatter over the resamples
 
+# Checking the beat error against the beats placed on the trend of their timestamps (issue 33 of
+# the investigation, decided 25 November). A noisy timestamp smears the averaged sounds, and when
+# the unlock helps the app time the beat it also lines the unlock's noise up. The beat error then
+# moves one way, set by the two beats' sounds: by 0.04 to 0.11 ms on simulated faint co-axials
+# whose unlock is as loud as their lock, four times the scatter the resamples gave, since they
+# draw the beats with their timestamps and see the scatter but not the shift. When the app timed
+# every beat alone, the beat error is therefore read a second time with every beat on the trend,
+# as when the app averages cycles, without resamples, and the difference between the two readings
+# is added to the beat error's scatter. The trend is not used for the reading itself: it smears a
+# watch whose beats really scatter, by 0.12 ms with 0.3 ms of beat jitter.
+PLACEMENT_CHECK = True
+
 
 def load_wav(path, channel=0):
     fs, x = wavfile.read(path)
@@ -142,15 +154,15 @@ def app_rows(x, fs, bands=HF_BANDS, envelope_rate=12000):
     return Rows(rows, levels), fs / dec
 
 
-def beat_times(beats, j):
+def beat_times(beats, j, on_trend=False):
     """Times and beat numbers of the beats of type j. When the app timed every beat on its
-    own, those timestamps are used. When it averaged several cycles per timestamp, every beat
-    is placed on the trend of the confident timestamps instead."""
+    own, those timestamps are used. When it averaged several cycles per timestamp, or with
+    `on_trend`, every beat is placed on the trend of the confident timestamps instead."""
     b = beats["beats"][j]
     t = np.array(b["t"])
     n = np.array(b["n"])
     ok = np.array(b["ok"]).astype(bool)
-    if b["K"] == 1:
+    if b["K"] == 1 and not on_trend:
         return t[ok], n[ok]
     slope, icpt = np.polyfit(n[ok], t[ok], 1)
     r = signal.medfilt(t[ok] - (icpt + slope * n[ok]), 15)
@@ -538,7 +550,8 @@ def amplitude(lift_deg, bph, t_ms):
     return lift_deg / (2 * np.sin(np.pi * f * t_ms * 1e-3))
 
 
-def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline="test", weighting=None):
+def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=None, rows=None, find=None, use_peak=False, reline="test", weighting=None,
+            placement_check=None, on_trend=False):
     """Portraits, sounds and paired readings for one recording.
 
     x, fs    audio and its sample rate; or pass `rows` (band envelopes) with fs as their rate
@@ -569,6 +582,11 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
              moves the reading is the plain average's, resamples and all. The choice is made
              once, on all the beats; each resample then lines up the same sounds. `moved` in
              the result says what the test found.
+    placement_check  read the beat error a second time with every beat on the trend of its
+             timestamps, and add the difference to its scatter (PLACEMENT_CHECK when None). Only
+             when the app timed every beat of both types alone and there are resamples.
+    on_trend place every beat on the trend of its timestamps even when the app timed it alone,
+             as that second reading does
 
     Returns a dict. `reading` is None, with `why`, when the sounds could not be paired, or when
     the app timed fewer than MIN_BEATS confident timestamps or beats of a type; the dict then
@@ -578,7 +596,10 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     `lift0`, `lift1` (unlock to lock in the ticks and in the tocks). With resamples, `fail` is the
     share of them that did not find the sounds: nothing believable, or another sound
     (`other_sound`, a sound placed more than OTHER_SOUND_MS from where all the beats put it).
-    The scatter in `sd` and `amp_sd` comes from the rest.
+    The scatter in `sd` and `amp_sd` comes from the rest. After the placement check, `sd`'s
+    `first_gap` is widened by the difference, `sd_resampled` keeps the resamples' own scatter,
+    and `placement` holds the second reading's `first_gap` and its `difference` from this one,
+    or `why` it found no sounds, in which case the beat error is held back.
     """
     find = find or {}
     bph = B["bph"]
@@ -605,7 +626,7 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     rows = band_rows(x, fs) if rows is None else rows
     T = []
     for j in (0, 1):
-        t, n = beat_times(B, j)
+        t, n = beat_times(B, j, on_trend)
         if t_from is not None:
             keep = (t >= t_from) & (t < t_to)
             t, n = t[keep], n[keep]
@@ -786,6 +807,24 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         out["show_amplitude"] = bool(out["fail"] <= MAX_FAIL and out["amp_sd"] <= MAX_AMP_SD)
     else:
         out["show_beat_error"] = out["show_amplitude"] = False
+    check = PLACEMENT_CHECK if placement_check is None else placement_check
+    if check and not on_trend and "sd" in out and all(b["K"] == 1 for b in B["beats"][:2]):
+        # The same reading with every beat on the trend of its timestamps (see PLACEMENT_CHECK).
+        # It reuses the band envelopes and draws no resamples, which costs about a third of the
+        # reading with 100 resamples. When it finds no sounds the beat error cannot be checked,
+        # and is held back (decided 25 November); in 62 readings that never happened.
+        o2 = measure(x, fs, B, lift, 0, t_from, t_to, seed, weights, rows, find, use_peak, reline, weighting,
+                     placement_check=False, on_trend=True)
+        r2 = o2["reading"]
+        out["sd_resampled"] = dict(out["sd"])
+        if r2 is None:
+            out["placement"] = {"why": o2["why"]}
+            out["show_beat_error"] = False
+        else:
+            d = float(r["first_gap"] - r2["first_gap"])
+            out["placement"] = {"first_gap": float(r2["first_gap"]), "difference": d}
+            out["sd"]["first_gap"] = float(np.hypot(out["sd"]["first_gap"], d))
+            out["show_beat_error"] = bool(out["fail"] <= MAX_FAIL and out["sd"]["first_gap"] <= MAX_SD_MS)
     return out
 
 
@@ -803,8 +842,11 @@ def swap_names(o):
     s["gap"] = -o["gap"]
     if "moved" in o and "relined" in o:
         s["relined"] = o["relined"].replace(describe_moved(o["moved"]), describe_moved(s["moved"]))
-    if "sd" in o:
-        s["sd"] = dict(o["sd"], lift0=o["sd"]["lift1"], lift1=o["sd"]["lift0"])
+    for k in ("sd", "sd_resampled"):
+        if k in o:
+            s[k] = dict(o[k], lift0=o[k]["lift1"], lift1=o[k]["lift0"])
+    if "difference" in o.get("placement", {}):
+        s["placement"] = dict(o["placement"], first_gap=-o["placement"]["first_gap"], difference=-o["placement"]["difference"])
     r = o["reading"]
     if r is not None:
         pair = r["pair"]
@@ -821,9 +863,10 @@ def name_beats(o, escapement="coaxial"):
     Swiss lever the beat followed by the longer gap between unlocks, which makes the beat error
     from the first sounds positive. Only a reading that is shown names the beats (the amplitude
     for a co-axial, the beat error for a lever), and only when the difference it rests on is more
-    than NAME_SD times its scatter over the resamples. Otherwise the app's names are kept. Returns
-    a new dict whose `names` says which and why, and whose `renamed` is True when the app's tock
-    became the tick; `o` is left as it was."""
+    than NAME_SD times its scatter over the resamples (for the beat error, that scatter as the
+    placement check widened it). Otherwise the app's names are kept. Returns a new dict whose
+    `names` says which and why, and whose `renamed` is True when the app's tock became the tick;
+    `o` is left as it was."""
     def keep(why):
         return dict(o, names="the app's: " + why, renamed=False)
 
@@ -876,7 +919,18 @@ def describe(o):
     sd = o.get("sd")
     pm = (lambda k: " +- %.2f" % sd[k]) if sd else (lambda k: "")
     held = lambda shown: "" if shown else "  [held back: the resamples do not agree well enough]"
-    lines.append("beat error from the first sounds: %.2f%s ms (the tock's unlock %+.3f ms from midway)%s" % (abs(r["first_gap"]), pm("first_gap"), r["first_gap"], held(o.get("show_beat_error", True))))
+    placed = o.get("placement", {})
+    held_be = held(o.get("show_beat_error", True))
+    if held_be and "why" in placed:
+        held_be = "  [held back: with the beats on the trend of their timestamps the sounds were not found]"
+    elif held_be and "difference" in placed and o["fail"] <= MAX_FAIL and o["sd_resampled"]["first_gap"] <= MAX_SD_MS:
+        held_be = "  [held back: it moves too far with the beats on the trend of their timestamps]"
+    lines.append("beat error from the first sounds: %.2f%s ms (the tock's unlock %+.3f ms from midway)%s" % (abs(r["first_gap"]), pm("first_gap"), r["first_gap"], held_be))
+    if "difference" in placed:
+        lines.append("  with the beats on the trend of their timestamps: %+.3f ms, %+.3f ms from the reading; scatter %.3f ms over the resamples, %.3f ms with that difference" % (
+            placed["first_gap"], -placed["difference"], o["sd_resampled"]["first_gap"], sd["first_gap"]))
+    elif "why" in placed:
+        lines.append("  with the beats on the trend of their timestamps: no reading (%s)" % placed["why"])
     lines.append("gap between the last sounds: %+.2f%s ms" % (r["last_gap"], pm("last_gap")))
     lines.append("unlock to lock: tick %.2f%s ms, tock %.2f%s ms, ratio %.3f" % (r["lift0"], pm("lift0"), r["lift1"], pm("lift1"), r["lift0"] / r["lift1"]))
     lines.append("amplitude at %.0f degrees of lift: %.0f%s degrees (tick alone %.0f, tock alone %.0f)%s" % (
