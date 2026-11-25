@@ -47,7 +47,7 @@ else:
 o = ev.name_beats(o, a.escapement)
 print("\n".join(ev.describe(o)))
 
-if a.plot:
+if a.plot and "ports" in o:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
