@@ -71,7 +71,8 @@ commands, line every sound up;
 ways, and the words `plain`, `lined` and `test` (the default) can be given together. Those
 commands keep each simulated watch's timestamps in their directory; run again on the same
 directory, they make only the audio again (`beats.mjs synth`, under a second) and check that its
-truth matches, since the app's analysis is the slow part.
+truth matches, since the app's analysis is the slow part. `analyze.py` names the beats itself
+(see "Which beat is the tick"); give it `--escapement lever` for a Swiss lever.
 
 | File | What it does |
 | --- | --- |
@@ -999,6 +1000,58 @@ Its limits:
 - The scripts that made and scored these windows are not in the repository. Computing time was
   not measured; the resamples that used to stop at a single block now run to the end.
 
+## Which beat is the tick
+
+Since 25 November (issue 32), `analyze.py` names the two beats itself. The app calls whichever
+beat comes first in its first analysed cycle the tick, so in separate runs the same beat of a
+watch is the tick about half the time, and with the names go the sign of the beat error from the
+unlocks, the tick-alone and tock-alone amplitudes and the lift ratio. In the 36-hour capture the
+app's tick was the beat with the shorter lift; in the earlier ones, the longer. As decided on
+24 November:
+
+- On a co-axial, the default, the tick is the beat with the longer time from unlock to lock.
+  Every Omega capture with a reading put that time 7% to 11% longer in one beat (ratio 1.074 to
+  1.108), and named so, the Omega's beat error from the unlocks has read +0.20 to +0.35 ms: its
+  tock unlocks late.
+- On a Swiss lever (`--escapement lever`), the tick is the beat followed by the longer gap
+  between unlocks, so the beat error from the unlocks reads positive. A lever's two beats can
+  take near the same time from unlock to lock, the ETA's 7.49 and 7.45 ms, where the co-axial's
+  rule would name them by noise; and a lever kept off the repository, whose times differ by 6%,
+  would be named by lift and not by its gap.
+
+Only a reading that is shown names the beats, the amplitude for a co-axial and the beat error for
+a lever, and only when the difference it rests on is more than three times its scatter over the
+resamples (`NAME_SD`). Otherwise the app's names stay. The line `names:` says which, and why.
+Renaming measures nothing again: `events.name_beats` moves each beat's fields to the other and
+changes the sign of the gaps, which are measured from the tick to the tock.
+
+Checked on a computer:
+
+- The Omega's 40 s capture measured again with the app's tick and tock exchanged in its
+  timestamps read the same to 10⁻¹¹ ms as the renamed reading; only the resamples' draws
+  differed.
+- The same recordings and timestamps read on main and with this change, 12 runs, gave the same
+  output apart from the new line. The first minute of the 36-hour capture came out with the beats
+  exchanged under both rules: beat error +0.311 ms instead of −0.311, lift ratio 1.088 instead of
+  0.919, tick alone 224° and tock alone 243°. The two full-wind minutes, the first minute 23 hours
+  down and the published Safari capture kept the app's names, which were already the longer
+  lift's. Held back, the 23-hour capture's first 10 s, whose lifts came out the wrong way round
+  (ratio 0.902) with 70% of resamples failing, and the 40 s capture, held back whole, kept the
+  app's names. The ETA's Safari capture kept them as a co-axial, its times 0.03 ms apart, and as
+  a lever its gap named the app's tick.
+
+Its limits:
+
+- Each escapement has its own rule, and the prototype does not tell them apart; `--escapement`
+  says which. In milestone 8 the app will know it from its setting, or from the prompt decided
+  for issue 13.
+- A reading that is held back keeps the app's names, which can still swap between runs.
+- The co-axial's rule rests on one watch, the Omega 3861. That its longer-lift beat is the one
+  with the direct impulse is an inference from the patent's sequence, not something the audio
+  shows.
+- `checks.py`, `track.py` and `figure.py` keep the app's names. They compare readings with the
+  truth by size, which the names do not change.
+
 ## Limits
 
 - That the first sound is the unlock in both beats is a reading of the patents' sequence of
@@ -1095,10 +1148,10 @@ Its limits:
   0.06 ms early, and the beat error is the small difference of two intervals of about 3 ms.
   Decided on 24 November (issue 30): a co-axial's beat error belongs with its state of wind, and
   the app's README will say so with milestone 8.
-- The app's names for the two beats can swap between runs (issue 32), and with them the sign of
-  the beat error from the unlocks, the tick-alone and tock-alone amplitudes and the lift ratio.
-  In the 36-hour capture the tick was the beat with the shorter lift; in the earlier ones, the
-  longer.
+- `analyze.py` names the beats from a reading that is shown (see "Which beat is the tick"). A
+  reading held back keeps the app's names, which can swap between runs (issue 32), and with them
+  the sign of the beat error from the unlocks, the tick-alone and tock-alone amplitudes and the
+  lift ratio.
 - One co-axial watch: the published capture, and the four above kept off the repository. The
   averaging itself runs on a whole recording, in Python, even when the beat times come from the
   real-time pipeline.

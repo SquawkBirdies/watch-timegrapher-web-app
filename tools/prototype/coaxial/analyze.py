@@ -1,13 +1,17 @@
 """Beat error and amplitude of one recording from the sounds inside each beat.
 
 usage: python3 -I tools/prototype/coaxial/analyze.py <file.wav> <prefix>.beats.json <lift angle>
-           [--app] [--from seconds --to seconds] [--resamples n] [--plain | --lined] [--plot out.png]
+           [--app] [--from seconds --to seconds] [--resamples n] [--plain | --lined]
+           [--escapement coaxial | lever] [--plot out.png]
 
 <prefix>.beats.json comes from beats.mjs. --app works on envelopes made the way the app's
 filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. The sounds
 whose 10 s blocks show them moving are lined up again before averaging (see events.measure and
 events.moved); --lined lines every sound up, and --plain gives the plain average, as before
-18 November.
+18 November. The beats are named as decided on 24 November (events.name_beats): on a co-axial,
+the default, the tick is the beat with the longer time from unlock to lock; with --escapement
+lever, the beat followed by the longer gap between unlocks. A reading that is held back keeps
+the app's names.
 """
 import argparse
 import os
@@ -28,6 +32,7 @@ p.add_argument("--resamples", type=int, default=200)
 way = p.add_mutually_exclusive_group()
 way.add_argument("--plain", action="store_true")
 way.add_argument("--lined", action="store_true")
+p.add_argument("--escapement", choices=("coaxial", "lever"), default="coaxial")
 p.add_argument("--plot")
 a = p.parse_args()
 
@@ -39,6 +44,7 @@ if a.app:
     o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25}, reline=reline)
 else:
     o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=reline)
+o = ev.name_beats(o, a.escapement)
 print("\n".join(ev.describe(o)))
 
 if a.plot:

@@ -64,6 +64,13 @@ TEST_MIN_BLOCKS = 2     # fewest blocks in which a sound was placed for it to be
 TEST_MIN_SD_MS = 0.01   # floor on a block shift's scatter, so that a loud sound's tiny one cannot
                         # turn a hundredth of a millisecond into a change
 
+# Naming the beats (`name_beats`, issue 32 of the investigation). The app calls whichever beat
+# comes first in its first analysed cycle the tick, so in separate runs the same beat of a watch
+# is the tick about half the time. Decided 24 November: a co-axial's tick is the beat with the
+# longer time from unlock to lock, a Swiss lever's the beat followed by the longer gap.
+NAME_SD = 3.0           # the difference that names the beats must exceed this many times its
+                        # scatter over the resamples
+
 
 def load_wav(path, channel=0):
     fs, x = wavfile.read(path)
@@ -757,9 +764,78 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     return out
 
 
+def swap_names(o):
+    """The result of `measure` with the tick and the tock exchanged: every per-beat field moves
+    to the other beat, and the gaps, measured from the tick to the tock, change sign. Renaming
+    the beats measures nothing again, so the readings and their scatter are unchanged."""
+    s = dict(o)
+    for a, b in (("n0", "n1"), ("amp_tick", "amp_tock")):
+        if a in o:
+            s[a], s[b] = o[b], o[a]
+    for k in ("ports", "stacks", "times", "moved", "left_out"):
+        if k in o:
+            s[k] = [o[k][1], o[k][0]]
+    s["gap"] = -o["gap"]
+    if "moved" in o and "relined" in o:
+        s["relined"] = o["relined"].replace(describe_moved(o["moved"]), describe_moved(s["moved"]))
+    if "sd" in o:
+        s["sd"] = dict(o["sd"], lift0=o["sd"]["lift1"], lift1=o["sd"]["lift0"])
+    r = o["reading"]
+    if r is not None:
+        pair = r["pair"]
+        s["reading"] = dict(r, first_gap=-r["first_gap"], last_gap=-r["last_gap"], lift0=r["lift1"], lift1=r["lift0"],
+                            f0=r["f1"], l0=r["l1"], f1=r["f0"], l1=r["l0"],
+                            pair=dict(pair, f0=pair["f1"], l0=pair["l1"], f1=pair["f0"], l1=pair["l0"], lift0=pair["lift1"], lift1=pair["lift0"]))
+    return s
+
+
+def name_beats(o, escapement="coaxial"):
+    """The result of `measure` with its beats named as decided on 24 November (issue 32 of the
+    investigation), so that readings of one watch compare from run to run whatever the app called
+    its beats: on a co-axial the tick is the beat with the longer time from unlock to lock, on a
+    Swiss lever the beat followed by the longer gap between unlocks, which makes the beat error
+    from the first sounds positive. Only a reading that is shown names the beats (the amplitude
+    for a co-axial, the beat error for a lever), and only when the difference it rests on is more
+    than NAME_SD times its scatter over the resamples. Otherwise the app's names are kept. Returns
+    a new dict whose `names` says which and why, and whose `renamed` is True when the app's tock
+    became the tick; `o` is left as it was."""
+    def keep(why):
+        return dict(o, names="the app's: " + why, renamed=False)
+
+    r = o["reading"]
+    if r is None:
+        return keep("no reading")
+    if "sd" not in o:
+        return keep("no resamples to check the reading")
+    sd = o["sd"]
+    if escapement == "coaxial":
+        if not o.get("show_amplitude"):
+            return keep("the amplitude is held back")
+        diff = r["lift0"] - r["lift1"]
+        if abs(diff) <= NAME_SD * np.hypot(sd["lift0"], sd["lift1"]):
+            return keep("the two times from unlock to lock differ by %.2f ms, not more than %.0f times their scatter" % (abs(diff), NAME_SD))
+        rule = "the tick is the beat with the longer time from unlock to lock"
+        swap = diff < 0
+    elif escapement == "lever":
+        if not o.get("show_beat_error"):
+            return keep("the beat error is held back")
+        if abs(r["first_gap"]) <= NAME_SD * sd["first_gap"]:
+            return keep("the gap between unlocks is %.2f ms from half a period, not more than %.0f times its scatter" % (abs(r["first_gap"]), NAME_SD))
+        rule = "the tick is the beat followed by the longer gap between unlocks"
+        swap = r["first_gap"] < 0
+    else:
+        raise ValueError("escapement must be coaxial or lever, not %r" % escapement)
+    s = swap_names(o) if swap else dict(o)
+    s["names"] = rule + (", which the app named the tock" if swap else ", as the app named it")
+    s["renamed"] = bool(swap)
+    return s
+
+
 def describe(o):
     """The result of `measure` as lines of text."""
     lines = ["beats: %d ticks, %d tocks; gap between the app's timestamps %+.3f ms; believable unlock-to-lock time %.1f to %.1f ms" % (o["n0"], o["n1"], o["gap"], o["limits"][0], o["limits"][1])]
+    if "names" in o:
+        lines.append("names: " + o["names"])
     lines.append("band weights: " + " ".join("%.2f" % v for v in o["weights"]))
     if "relined" in o:
         lines.append(o["relined"])
