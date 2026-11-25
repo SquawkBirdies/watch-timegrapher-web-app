@@ -308,23 +308,41 @@ def windows_of(pair, j):
     return [(pair[k + str(j)]["onset_ms"] - 0.5, pair[k + str(j)]["peak_ms"] + 0.5) for k in ("f", "l")]
 
 
-def block_shifts(S, times, tms, base_until, weights, templates, windows, block_seconds=RELINE_BLOCK_S, until=None, resamples=0, seed=1):
+def block_shifts(S, times, tms, base_until, weights, templates, windows, block_seconds=RELINE_BLOCK_S, until=None, resamples=0, seed=1, starts=None):
     """How far each beat type's unlock and lock have moved, block by block, against templates of
     them. templates[j] and windows[j] hold the unlock's and the lock's. Returns for each type the
     middle times of the blocks and the two shifts in milliseconds, NaN where a sound could not
     be placed. With `resamples`, each block's beats are also resampled that many times and the
     scatter of each shift is returned after the shifts, NaN where fewer than four in five
-    resamples placed the sound, as the filter requires of a block."""
+    resamples placed the sound, as the filter requires of a block.
+
+    With `starts`, the blocks begin there instead of every block_seconds from the first beat, and
+    a block with too few beats keeps its place with NaN shifts. A resample of a stretch passes
+    the whole stretch's blocks: left to make its own, one that drew none of the first or last
+    few beats made one block fewer, and on a 20 s stretch then had a single block and nothing to
+    line up on: 17% of the resamples of the Omega's 20 s stretches failed that way (issue 31)."""
     t0 = min(t.min() for t in times)
     t_end = max(t.max() for t in times) if until is None else until
+    if starts is None:
+        starts = []
+        a = t0
+        while a + block_seconds <= t_end + 0.5:
+            starts.append(a)
+            a += block_seconds
+        given = False
+    else:
+        given = True
     rng = np.random.default_rng(seed)
     out = []
     for j in (0, 1):
         mids, su, sl, du, dl = [], [], [], [], []
-        a = t0
-        while a + block_seconds <= t_end + 0.5:
+        for a in starts:
             idx = [np.flatnonzero((t >= a) & (t < a + block_seconds)) for t in times]
-            if min(len(i) for i in idx) >= RELINE_MIN_BEATS:
+            if given and min(len(i) for i in idx) < RELINE_MIN_BEATS:
+                mids.append(a + 0.5 * block_seconds)
+                for v in (su, sl) + ((du, dl) if resamples else ()):
+                    v.append(np.nan)
+            elif min(len(i) for i in idx) >= RELINE_MIN_BEATS:
                 c = matched(portrait(band_means(S[j], tms, idx[j], base_until), weights), tms)
                 shifts = [shift_of(templates[j][k], c, tms, *windows[j][k]) for k in (0, 1)]
                 mids.append(a + 0.5 * block_seconds)
@@ -336,7 +354,6 @@ def block_shifts(S, times, tms, base_until, weights, templates, windows, block_s
                     for k, d in ((0, du), (1, dl)):
                         got = [v[k] for v in drawn if v[k] is not None]
                         d.append(float(np.std(got)) if len(got) >= 0.8 * resamples else np.nan)
-            a += block_seconds
         out.append((np.array(mids), np.array(su), np.array(sl)) + ((np.array(du), np.array(dl)) if resamples else ()))
     return out
 
@@ -402,8 +419,9 @@ def reliable(blocks, left_out=None):
 
     With `left_out` from the whole set, those blocks are left out instead: a resample's blocks
     have no resamples of their own, and the whole set decides, as it decides which sounds move.
-    A resample that drew none of the first beats can start its blocks later and have one fewer;
-    then its blocks do not line up with the whole set's, and nothing is left out of them."""
+    A resample is cut into the whole set's blocks (block_shifts' `starts`), so that the blocks
+    left out are the same ones; until issue 31 one that drew none of the first or last beats
+    could have a block fewer, and then nothing was left out of its blocks."""
     out, mask = [], []
     for j in (0, 1):
         b = list(blocks[j])
@@ -530,8 +548,9 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
              of RELINE_BLOCK_S are matched against the plain average to see how far the unlock
              and the lock have moved; each beat is shifted by that, once for each sound, and
              averaged again. A smeared sound's half-rise lands early, which biased the reading.
-             Each resample measures the blocks again from the beats it drew and lines those
-             beats up on what it found, so the shifts' own noise is in the uncertainty. A
+             Each resample measures the whole set's blocks again from the beats it drew and
+             lines those beats up on what it found, so the shifts' own noise is in the
+             uncertainty. A
              block's shift that scatters by more than RELINE_MAX_SD_MS over the block's own
              resamples is left out (`reliable`), in the whole set and in every resample.
              Falls back to the plain average, with `relined` saying why, when a sound is placed
@@ -629,6 +648,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         # Each block is resampled whichever way, for its shifts' scatter: the test rests on it,
         # and so does leaving out the shifts that took another sound.
         blocks = block_shifts(S, times, tms, base_until, W, templates, windows, resamples=TEST_RESAMPLES)
+        # Where the whole set's blocks start; every resample is cut into the same blocks.
+        starts = blocks[0][0] - 0.5 * RELINE_BLOCK_S
         use = moved(blocks) if test else None
         blocks, left_out = reliable(blocks)
         out["left_out"] = left_out
@@ -649,14 +670,14 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
                 idx = (idx0, idx1)
                 use, stacks = shifts, lined
                 if idx0 is not None:
-                    # The whole procedure again on the drawn beats: their blocks, their shifts,
-                    # and the drawn beats lined up on them. A wrong shift moves a lined-up sound
+                    # The whole procedure again on the drawn beats: their shifts in the whole
+                    # set's blocks, and the drawn beats lined up on them. A wrong shift moves a lined-up sound
                     # one way and the mean shift added back the other, so drawing the shifts
                     # alone, with the beats left as the whole set lined them up, would overstate
                     # the scatter.
                     drawn = [[M[idx[j]] for M in S[j]] for j in (0, 1)]
                     drawn_times = [times[j][idx[j]] for j in (0, 1)]
-                    use = beat_shifts(reliable(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows), left_out)[0], drawn_times, out.get("moved"))
+                    use = beat_shifts(reliable(block_shifts(drawn, drawn_times, tms, base_until, w, templates, windows, starts=starts), left_out)[0], drawn_times, out.get("moved"))
                     if use is None:
                         return None, "a sound was placed in fewer than two blocks", ports, w
                     stacks = [[shift_rows(drawn[j], tms, use[j][k]) for k in (0, 1)] for j in (0, 1)]
