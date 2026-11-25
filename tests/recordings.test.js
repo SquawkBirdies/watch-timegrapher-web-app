@@ -13,6 +13,7 @@ import { analyze } from '../js/dsp/offline.js';
 import { DEFAULT_BANDS } from '../js/dsp/filterbank.js';
 import { medianZ } from '../js/dsp/timing.js';
 import { stream } from './helpers/stream.js';
+import { readiness, takeReading } from '../js/ui/positions.js';
 
 /** @param {string} name */
 const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
@@ -166,6 +167,16 @@ test('Omega 3861, Safari capture, in real time and co-axial: locks within 10 s, 
   assert.ok(r.readings.length > 0 && r.readings.every((x) => x.beatErrorMs === null), 'no beat error at any time');
   assert.ok(r.last && r.last.rate !== null && Math.abs(r.last.rate - 0.4) <= 0.5, `rate ${r.last?.rate}`);
   regularThroughout(r);
+  // In the six-position log a reading of this watch, the milestone 7 check's, can be saved only
+  // once the lock has lasted the whole 40 s window set here, though the 20 s default would have
+  // been full 20 s earlier; the saved reading records the 40 s.
+  const locked = r.readings.filter((x) => x.window !== null);
+  assert.ok(locked.every((x) => x.windowSeconds === 40), 'the window set, not lengthened');
+  const first = locked.findIndex((x) => readiness(true, x, 40).ready);
+  assert.ok(first > 0 && locked[first].t >= 40 && locked[first].t < 41, `first ready at ${locked[first]?.t.toFixed(1)} s`);
+  assert.ok(locked.slice(first).every((x) => readiness(true, x, 40).ready), 'ready from then on');
+  const saved = takeReading(r.last, { bph: 21600, escapement: 'coaxial', source: 'omega-3861-safari.wav', now: new Date() });
+  assert.ok(saved && saved.windowSeconds === 40 && saved.beatErrorGap === 'coaxial');
 });
 
 test('Omega 3861, Safari capture, first 30 s: the bands above 14.5 kHz make its beats clearer, and Swiss-lever mode misreads it', () => {

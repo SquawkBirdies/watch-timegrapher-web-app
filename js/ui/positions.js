@@ -4,7 +4,7 @@
 // page, so the automated tests can run it, and nothing is measured here: every number comes from
 // the pipeline's readings.
 
-import { formatRate, formatMs } from './model.js';
+import { formatRate, formatMs, formatDuration } from './model.js';
 
 /**
  * @typedef {'dialUp'|'dialDown'|'crownUp'|'crownDown'|'crownLeft'|'crownRight'} PositionId
@@ -53,7 +53,9 @@ const FULL_WINDOW_TOLERANCE_SECONDS = 0.01;
  * @property {BeatErrorGap|null} beatErrorGap why the beat error is missing; null when it is there
  * @property {boolean} irregular the beats fell at scattered times
  * @property {number} beats confident timestamps behind the rate, ticks and tocks together
- * @property {number} seconds how long a stretch of audio the reading covers
+ * @property {number} windowSeconds length of the averaging window the reading was made over:
+ *   the setting, or longer when faint ticks were averaged
+ * @property {number} seconds time from the first timestamp in the window to the last
  * @property {number} bph beat rate
  * @property {Escapement} escapement as set for the run
  * @property {string} source what was measured: Microphone, Simulator or a recording's name
@@ -114,7 +116,7 @@ export function readiness(tracking, readings, averagingSeconds) {
  * @returns {PositionReading|null} null when there is no rate to keep
  */
 export function takeReading(readings, context) {
-  if (readings.rate === null || readings.rateSd === null || !readings.window) return null;
+  if (readings.rate === null || readings.rateSd === null || !readings.window || readings.windowSeconds === null) return null;
   const beatErrorMs = readings.beatErrorMs;
   /** @type {BeatErrorGap|null} */
   let beatErrorGap = null;
@@ -126,6 +128,7 @@ export function takeReading(readings, context) {
     beatErrorGap,
     irregular: readings.irregular,
     beats: readings.fits.reduce((sum, f) => sum + (f ? f.count : 0), 0),
+    windowSeconds: readings.windowSeconds,
     seconds: readings.window[1] - readings.window[0],
     bph: context.bph,
     escapement: context.escapement,
@@ -241,7 +244,7 @@ export function formatSd(sd) {
  */
 export function describeReading(r) {
   const main = `${formatRate(r.rate)} s/d ±${formatSd(r.rateSd)}` + (r.beatErrorMs !== null ? ` · ${formatMs(r.beatErrorMs)} ms` : '');
-  const parts = [`${r.beats} beats over ${Math.round(r.seconds)} s`];
+  const parts = [`Over a ${formatDuration(Math.round(r.windowSeconds))} window`, `${r.beats} beats`];
   if (r.beatErrorGap === 'coaxial') parts.push('beat error not shown: co-axial');
   else if (r.beatErrorGap === 'irregular') parts.push('irregular beat, no beat error');
   else if (r.beatErrorGap === 'unmeasured') parts.push('beat error not measurable');
@@ -341,7 +344,7 @@ function cleanReading(raw) {
   const finite = (/** @type {unknown} */ v) => typeof v === 'number' && Number.isFinite(v);
   if (!finite(r.rate) || !finite(r.rateSd) || /** @type {number} */ (r.rateSd) < 0) return null;
   if (!(r.beatErrorMs === null || (finite(r.beatErrorMs) && /** @type {number} */ (r.beatErrorMs) >= 0))) return null;
-  if (!finite(r.beats) || !finite(r.seconds) || !finite(r.bph) || /** @type {number} */ (r.bph) <= 0) return null;
+  if (!finite(r.beats) || !finite(r.windowSeconds) || !finite(r.seconds) || !finite(r.bph) || /** @type {number} */ (r.bph) <= 0) return null;
   if (r.escapement !== 'lever' && r.escapement !== 'coaxial') return null;
   const gap = r.beatErrorGap === 'coaxial' || r.beatErrorGap === 'irregular' || r.beatErrorGap === 'unmeasured' ? r.beatErrorGap : null;
   return {
@@ -351,6 +354,7 @@ function cleanReading(raw) {
     beatErrorGap: r.beatErrorMs === null ? gap || 'unmeasured' : null,
     irregular: r.irregular === true,
     beats: Math.max(0, Math.round(/** @type {number} */ (r.beats))),
+    windowSeconds: Math.max(0, /** @type {number} */ (r.windowSeconds)),
     seconds: Math.max(0, /** @type {number} */ (r.seconds)),
     bph: /** @type {number} */ (r.bph),
     escapement: r.escapement,

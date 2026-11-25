@@ -70,6 +70,7 @@ function reading(rate, rateSd, beatErrorMs, more = {}) {
     beatErrorGap: beatErrorMs === null ? 'unmeasured' : null,
     irregular: false,
     beats: 160,
+    windowSeconds: 20,
     seconds: 19.9,
     bph: 28800,
     escapement: 'lever',
@@ -115,7 +116,9 @@ test('a saved reading keeps the rate, its uncertainty, the beat error and the be
   assert.equal(saved.beatErrorGap, null);
   // 28,800 vph is 8 beats a second: about 160 in a 20 s window, ticks and tocks together.
   assert.ok(saved.beats >= 150 && saved.beats <= 162, `${saved.beats} beats`);
-  assert.ok(saved.seconds > 19.5 && saved.seconds <= 20, `${saved.seconds} s`);
+  assert.equal(saved.windowSeconds, 20, 'made over the 20 s window');
+  assert.ok(saved.seconds > 19.5 && saved.seconds <= 20, `timestamps span ${saved.seconds} s`);
+  assert.match(describeReading(saved).detail, /^Over a 20 s window · \d+ beats$/);
   assert.equal(saved.savedAt, '2026-11-25T12:00:00.000Z');
   // The same reading on a watch set as co-axial says why it has no beat error once the
   // pipeline leaves it out.
@@ -196,8 +199,10 @@ test('a reading too uncertain to count is marked and left out of the average and
   assert.match(words.leftOut, /uncertain by more than ±1 s\/d: Crown up\./);
   assert.ok(isUncertain(/** @type {PositionReading} */ (log.readings.crownUp)));
   assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownUp)).detail, /uncertain, left out of the average/);
-  assert.deepEqual(describeReading(/** @type {PositionReading} */ (log.readings.dialUp)), { main: '+2.0 s/d ±0.08 · 0.15 ms', detail: '160 beats over 20 s' });
+  assert.deepEqual(describeReading(/** @type {PositionReading} */ (log.readings.dialUp)), { main: '+2.0 s/d ±0.08 · 0.15 ms', detail: 'Over a 20 s window · 160 beats' });
   assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownDown)).detail, /beat error not measurable/);
+  // A faint watch's lengthened window is given in minutes and seconds.
+  assert.match(describeReading(reading(1, 0.2, 0.1, { windowSeconds: 153.5 })).detail, /^Over a 2 min 34 s window/);
 });
 
 test('the summary says what it lacks: no positions, one position, co-axial beat error', () => {
@@ -237,6 +242,7 @@ test('the log comes back from storage as it was saved, and anything invalid in i
   stored.readings.dialDown = { rate: 'fast', rateSd: 0.1 };
   stored.readings.crownUp = { ...reading(1, -1, 0.1) };
   stored.readings.crownDown = { ...reading(1, 0.1, 0.1), escapement: 'tourbillon' };
+  stored.readings.crownRight = { ...reading(1, 0.1, 0.1), windowSeconds: undefined };
   stored.readings.nowhere = reading(1, 0.1, 0.1);
   assert.deepEqual(cleanLog(stored), log);
   assert.deepEqual(cleanLog(null), emptyLog());

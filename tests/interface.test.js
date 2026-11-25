@@ -13,6 +13,7 @@ import { Player } from '../js/audio/player.js';
 import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning } from '../js/ui/model.js';
 import { clean, DEFAULTS } from '../js/store.js';
 import { stream } from './helpers/stream.js';
+import { readiness } from '../js/ui/positions.js';
 
 /**
  * @typedef {import('../js/dsp/pipeline.js').PipelineEvent} PipelineEvent
@@ -79,6 +80,11 @@ test('the averaging window and the escapement can change while measuring', () =>
   const c = longer[longer.length - 1];
   const spanC = /** @type {[number, number]} */ (c.window)[1] - /** @type {[number, number]} */ (c.window)[0];
   assert.ok(spanC > 45, `a 60 s window reaches back past the 40 s history: ${spanC.toFixed(1)} s`);
+  // The six-position log goes by the window set: full at 10 s, and with 60 s set at 35 s into the
+  // lock, not full again until the lock has lasted 60 s.
+  assert.ok(readiness(true, b, 10).ready && b.windowSeconds === 10, 'a 10 s window is full');
+  assert.ok(longer.every((e) => e.windowSeconds === 60 && !readiness(true, e, 60).ready), 'a 60 s window waits for 60 s of lock');
+  assert.ok(readiness(true, c, 60).covered > 59 && readiness(true, c, 60).covered < 60, `covered ${readiness(true, c, 60).covered.toFixed(2)} s`);
 });
 
 test('a lock sends the averaged tick and tock, each peaking at its timestamp', () => {

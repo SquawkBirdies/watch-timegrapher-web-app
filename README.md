@@ -370,16 +370,19 @@ two modes, and the choice is remembered on the device:
   crown down, crown left and crown right.
 
 Each position is its own run. Place the watch, press Start, and keep it still until the reading
-has settled: the lock must have lasted the whole averaging window, 20 s by default or the longer
-window a faint watch's averaging needs, so that the reading draws on no audio from before the
-watch was placed. The button "Save as Dial up" becomes available then. Saving stops the run,
+has settled: the lock must have lasted the whole averaging window, so that the reading draws on a
+full window and on no audio from before the watch was placed. The window is the one set in the
+settings (10, 20, 40 or 60 s), or longer when a faint watch's ticks are averaged over several
+cycles, so a reading always runs for the longer of the two. With 40 s set, the button waits 40 s,
+though 20 s would give a reading too. The button "Save as Dial up" becomes available then. Saving stops the run,
 leaves the saved reading on the screen and suggests the next position without a reading. Tapping
 a row chooses the position the next reading is saved as, to skip one or to measure one again; a
 new reading replaces the old. Any source can be saved from, the simulator and recordings
 included, and a reading still on the screen after Stop can be saved, once per run.
 
 Each row keeps the rate with its statistical uncertainty, the beat error or why there is none,
-the number of beats behind the rate, and how long a stretch of audio the reading covers. Below the
+the window the reading was made over ("Over a 20 s window") and the number of beats behind the
+rate. Below the
 rows, the summary gives the average rate, the spread (fastest minus slowest position) and the
 largest beat error with its position. A reading whose rate is uncertain by more than ±1 s/day is
 marked and left out of the average and the spread, and a line says so; its beat error still
@@ -398,7 +401,10 @@ each Start: five positions read +5.3 or +5.4 s/day, as the recording's first 20 
 back after the page was reloaded, a position measured again replaced its reading, a reading could
 not be saved twice, and "Start new log" emptied the log. With the second Omega recording played in
 and the escapement set to co-axial, two positions read −2.2 ± 0.4 and −1.8 ± 0.7 s/day, marked
-"beat error not shown: co-axial". Nothing in this mode has been tested on the iPhone yet.
+"beat error not shown: co-axial". In the automated tests, with a 40 s window set, a reading of the
+Omega's Safari capture can be saved from 40 s into the recording and not before, and records the
+40 s; a window changed to 60 s 35 s into a lock waits until the lock has lasted 60 s. Nothing in
+this mode has been tested on the iPhone yet.
 
 Known limits of the six-position log:
 
