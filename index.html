@@ -22,6 +22,11 @@
     </button>
   </div>
 
+  <div class="tabs mode-tabs" role="radiogroup" aria-label="Mode" id="mode">
+    <button type="button" role="radio" data-mode="continuous" aria-checked="true">Continuous</button>
+    <button type="button" role="radio" data-mode="positions" aria-checked="false">Six positions</button>
+  </div>
+
   <section class="card readout" aria-label="Readings">
     <div class="state" id="state" data-state="idle" role="status">Not running</div>
     <div class="numbers">
@@ -45,6 +50,25 @@
     <div class="alert" id="irregular" role="status" hidden>
       <strong>Irregular beat</strong>
       <span id="irregular-text"></span>
+    </div>
+  </section>
+
+  <section class="card" id="positions" aria-labelledby="positions-title" hidden>
+    <div class="card-head"><h2 id="positions-title">Six positions</h2><span class="fine" id="positions-count"></span></div>
+    <p class="guidance" id="position-step"></p>
+    <button type="button" class="primary" id="save-position" disabled>Save as Dial up</button>
+    <fieldset class="position-list" id="position-list">
+      <legend class="fine">Tap a position to measure it next, or to measure it again.</legend>
+    </fieldset>
+    <div class="summary" aria-label="Summary of the positions">
+      <div class="num"><span class="k">Average rate</span><span class="v" id="sum-average">—</span><span class="why" id="sum-average-note"></span></div>
+      <div class="num"><span class="k">Spread</span><span class="v" id="sum-spread">—</span><span class="why" id="sum-spread-note"></span></div>
+      <div class="num"><span class="k">Largest beat error</span><span class="v" id="sum-beat-error">—</span><span class="why" id="sum-beat-error-note"></span></div>
+    </div>
+    <p class="fine" id="sum-left-out" hidden></p>
+    <div class="save-row">
+      <button type="button" class="secondary" id="new-log">Start new log</button>
+      <p class="fine" id="log-info">The log is kept on this device.</p>
     </div>
   </section>
 
@@ -160,7 +184,7 @@
   </section>
 
   <footer>
-    <p>Milestone 6 of 9 · live microphone. The <a href="diagnostic.html">audio diagnostic</a> shows
+    <p>Milestone 7 of 9 · six-position log. The <a href="diagnostic.html">audio diagnostic</a> shows
       which capture settings the browser applied, and the <a href="check.html">browser check</a>
       shows whether this browser has what the app needs.</p>
     <p>Written with generative AI; see the README in the <a id="source-link" href="https://github.com/">source repository</a> for who did what. MIT licence.</p>
@@ -186,6 +210,17 @@
     <div class="actions">
       <button type="submit" class="secondary" value="cancel">Cancel</button>
       <button type="submit" class="primary" value="continue" id="magnet-continue">Continue</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="new-log-dialog" aria-labelledby="new-log-title">
+  <form method="dialog">
+    <h2 id="new-log-title">Start a new log?</h2>
+    <p id="new-log-text">The saved readings are cleared.</p>
+    <div class="actions">
+      <button type="submit" class="secondary" value="cancel">Cancel</button>
+      <button type="submit" class="primary" value="clear" id="new-log-confirm">Clear</button>
     </div>
   </form>
 </dialog>

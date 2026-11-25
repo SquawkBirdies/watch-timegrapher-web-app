@@ -1,6 +1,10 @@
-// Settings kept on this device between visits. The browser's storage can be unavailable (private
-// browsing, storage turned off), so every read and write is allowed to fail: the app then
-// starts from the defaults each time.
+// Settings and the six-position log, kept on this device between visits. The browser's storage
+// can be unavailable (private browsing, storage turned off), so every read and write is allowed
+// to fail: the app then starts from the defaults each time, with an empty log.
+
+import { cleanLog, emptyLog } from './ui/positions.js';
+
+/** @typedef {import('./ui/positions.js').PositionLog} PositionLog */
 
 /**
  * @typedef {Object} Settings
@@ -12,6 +16,13 @@
  * @property {string} microphoneId the input chosen in the microphone picker; '' for the default
  * @property {boolean} magnetNoticeSeen the magnetism notice has been read once
  * @property {number} saveMinutes how many minutes of microphone audio are kept for saving
+ * @property {Mode} mode continuous, or a reading for each of six positions
+ */
+
+/**
+ * 'continuous' measures for as long as the source runs, recording no position; 'positions' saves
+ * a reading for each of the six positions a watch is checked in.
+ * @typedef {'continuous'|'positions'} Mode
  */
 
 /** @type {Readonly<Settings>} */
@@ -24,6 +35,7 @@ export const DEFAULTS = Object.freeze({
   microphoneId: '',
   magnetNoticeSeen: false,
   saveMinutes: 1,
+  mode: 'continuous',
 });
 
 export const BEAT_RATES = [18000, 19800, 21600, 25200, 28800, 36000];
@@ -33,6 +45,7 @@ export const SAVE_MINUTES = [1, 2, 5];
 export const LIFT_RANGE = [30, 70];
 
 const KEY = 'timegrapher.settings.v1';
+const LOG_KEY = 'timegrapher.positions.v1';
 
 /**
  * Keep only valid values; anything else falls back to the default.
@@ -54,6 +67,7 @@ export function clean(raw) {
   if (raw.magnetNoticeSeen === true) s.magnetNoticeSeen = true;
   const minutes = Number(raw.saveMinutes);
   if (SAVE_MINUTES.includes(minutes)) s.saveMinutes = minutes;
+  if (raw.mode === 'continuous' || raw.mode === 'positions') s.mode = raw.mode;
   return s;
 }
 
@@ -73,5 +87,24 @@ export function saveSettings(settings) {
     localStorage.setItem(KEY, JSON.stringify(settings));
   } catch {
     // Storage unavailable: the settings last until the page is closed.
+  }
+}
+
+/** @returns {PositionLog} the saved log, or an empty one */
+export function loadLog() {
+  try {
+    const text = localStorage.getItem(LOG_KEY);
+    return cleanLog(text ? JSON.parse(text) : {});
+  } catch {
+    return emptyLog();
+  }
+}
+
+/** @param {PositionLog} log */
+export function saveLog(log) {
+  try {
+    localStorage.setItem(LOG_KEY, JSON.stringify(log));
+  } catch {
+    // Storage unavailable: the log lasts until the page is closed.
   }
 }

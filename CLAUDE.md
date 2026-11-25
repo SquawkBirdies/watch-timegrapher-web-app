@@ -12,8 +12,8 @@ bear on your task. The design plan is a separate Claude Doc kept by the owner, L
   JavaScript modules, no build step, no runtime dependencies.
 - The signal pipeline in `js/dsp/` uses only standard JavaScript and `performance.now()`, with no
   DOM, so the same code runs in the Node tests and in the app's background worker. Keep it that
-  way. `js/ui/model.js`, `js/audio/live.js`, `js/audio/ring.js` and `js/store.js` stay free of the
-  page too, so that the tests can run them.
+  way. `js/ui/model.js`, `js/ui/positions.js`, `js/audio/live.js`, `js/audio/ring.js` and
+  `js/store.js` stay free of the page too, so that the tests can run them.
 
 ## Commands
 

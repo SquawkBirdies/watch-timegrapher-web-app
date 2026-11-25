@@ -115,7 +115,7 @@ canvas { display: block; width: 100%; touch-action: pan-y; }
 }
 .source-tabs { display: flex; }
 .source-tabs button { flex: 1 1 auto; padding: 9px 6px; white-space: nowrap; }
-.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.tabs button[aria-selected="true"], .tabs button[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
 .panel { display: grid; gap: 12px; }
 .field { display: grid; gap: 4px; }
 .field > span, .field > label { font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
@@ -170,6 +170,20 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 28px; ma
 .steps { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
 .steps strong { color: var(--ink); }
 .save-row { display: grid; gap: 6px; justify-items: start; }
+
+/* Mode and the six-position log */
+.mode-tabs { grid-template-columns: repeat(2, 1fr); background: var(--surface); }
+.position-list { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
+.position-list legend { padding: 0; margin-bottom: 4px; }
+.position-row { padding: 8px 12px; }
+.position-row strong { display: flex; justify-content: space-between; gap: 8px; }
+.position-row .reading { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.position-row[data-empty] .reading { color: var(--faint); font-weight: 500; }
+.position-row[data-uncertain] .reading { color: var(--warn); }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.summary .k { white-space: normal; }
+.summary .v { font-size: 22px; }
+#save-position { justify-self: start; }
 
 footer { display: grid; gap: 6px; padding: 4px 4px 0; font-size: 13px; color: var(--muted); }
 

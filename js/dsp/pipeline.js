@@ -94,7 +94,12 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  *   numbers and the reference points they had, so a tick stays a tick and the trace carries on
  * @typedef {{type: 'beats', beats: Beat[], replaceFrom: number|null}} BeatsEvent
  *   replaceFrom: when set, beats from that time on are superseded by this list
- * @typedef {{type: 'readings', t: number, window: [number, number]|null, signal: Signal|null, irregular: boolean} & import('./estimate.js').Readings} ReadingsEvent
+ * @typedef {{type: 'readings', t: number, window: [number, number]|null, windowStart: number|null, windowSeconds: number|null, signal: Signal|null, irregular: boolean} & import('./estimate.js').Readings} ReadingsEvent
+ *   window: the first and last timestamp the readings use.
+ *   windowStart: where the audio the readings draw on begins: `t` less the averaging window, or
+ *   the start of the lock until the lock has lasted that long.
+ *   windowSeconds: how long the averaging window is, the setting or longer for faint ticks (see
+ *   `averagingSpan`); the window is full once `t - windowStart` reaches it.
  *   irregular: true when the beats fall at scattered times; every timestamp is then one beat
  * @typedef {{type: 'waveform', t: number, rate: number, from: number, to: number, cycles: number, beats: AveragedBeat[]}} WaveformEvent
  *   The averaged tick and tock from the latest analysis. `rate` is the envelope sample rate;
@@ -1134,7 +1139,7 @@ export class Pipeline {
     this.nextReading = Infinity;
     const t = this.toSeconds(this.count);
     this.events.push({ type: 'status', state: 'listening', reason, bph: null, cyclesAveraged: null, t });
-    this.events.push({ type: 'readings', t, window: null, signal: null, irregular: false, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
+    this.events.push({ type: 'readings', t, window: null, windowStart: null, windowSeconds: null, signal: null, irregular: false, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
   }
 
   /**
@@ -1161,7 +1166,8 @@ export class Pipeline {
   readings() {
     const lock = this.lock;
     if (!lock) return null;
-    const from = Math.max(this.lockedFrom, this.count - this.averagingSpan());
+    const span = this.averagingSpan();
+    const from = Math.max(this.lockedFrom, this.count - span);
     const inside = this.dots.filter((d) => d.p >= from);
     if (inside.length === 0) return null;
     // Cluster j of the current template holds beats of type (j + shift) mod 2.
@@ -1192,7 +1198,7 @@ export class Pipeline {
       signal.z[type] = recent.length ? median(recent.map((d) => d.z)) : null;
       signal.cycles[type] = ty.K;
     }
-    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], signal, irregular: lock.irregular, ...r };
+    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], windowStart: this.toSeconds(from), windowSeconds: span / this.fe, signal, irregular: lock.irregular, ...r };
   }
 
   emitReadings() {
