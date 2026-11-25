@@ -37,7 +37,7 @@ energy and, as before 22 November, by noise. About twenty minutes.
 
 `suite` runs suite.mjs to make the 36 watches the app's unit tests build as whole recordings,
 then runs the prototype on them and on the six recordings in tests/fixtures, and scores each
-reading against the truth. It takes about fifteen minutes. When the directory already holds
+reading against the truth. It takes about twenty minutes. When the directory already holds
 the watches from an earlier run, they are used again.
 
 `pairing` reads simulated levers whose impulse is as loud as their drop or louder, levers whose
@@ -149,9 +149,9 @@ def sims(outdir, ways=(True,)):
     cases = []
     for seed in range(1, 9):
         cases.append(("co-axial in beat", seed, "coaxial", {}, 36))
-    for rest, label in ((1.35, "0.5"), (2.7, "1.0"), (-2.7, "1.0 the other way"), (5.4, "2.0")):
+    for rest, label in ((1.35, "0.5 ms"), (2.7, "1.0 ms"), (-2.7, "1.0 ms the other way"), (5.4, "2.0 ms")):
         for seed in (11, 12):
-            cases.append(("co-axial beat error %s ms" % label, seed, "coaxial", {"restOffsetDeg": rest}, 36))
+            cases.append(("co-axial beat error %s" % label, seed, "coaxial", {"restOffsetDeg": rest}, 36))
     for amp in (200, 240, 310):
         for seed in (21, 22):
             cases.append(("co-axial amplitude %d" % amp, seed, "coaxial", {"amplitude": amp}, 36))

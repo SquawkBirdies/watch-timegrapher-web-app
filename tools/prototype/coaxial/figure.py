@@ -27,6 +27,8 @@ fig, axes = plt.subplots(2, 1, figsize=(8.2, 8.4), facecolor=SURFACE)
 for ax, (wav, beats, lift, title, xlim) in zip(axes, cases):
     fs, x = ev.load_wav(wav)
     o = ev.measure(x, fs, ev.load_beats(beats), lift, 0)
+    if o["reading"] is None:
+        sys.exit("%s: no reading: %s" % (wav, o["why"]))
     tms, gap, r = o["tms"], o["gap"], o["reading"]
     ax.set_facecolor(SURFACE)
     top = 0
