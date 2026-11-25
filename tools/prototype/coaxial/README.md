@@ -136,10 +136,11 @@ to 0.032 ms, the ETA's from 0.023 to 0.025 ms. Until 25 November this table gave
 ± 0.02 ms, a low draw: with 100 resamples, as `checks.py` uses, four seeds gave 0.024, 0.032,
 0.028 and 0.032 ms, and with 200, three gave 0.030, 0.031 and 0.029 ms. Figures in this README
 from 100 resamples carry that much chance in their last digit. Across the analysis choices the
-Omega's beat error ran from 0.26 to 0.38 ms (by noise, plain average). The ETA's last sounds are 0.31 ms apart, which is the app's own Swiss-lever
-reading: the app's timestamps sit at the loudest part of each beat, which in a lever watch is the
-drop, while Witschi's instruments time the unlock. By energy the ETA's unlocks now read 0.30 ms
-apart too; by noise they read 0.15.
+Omega's beat error ran from 0.26 to 0.38 ms (by noise, plain average). By noise the ETA's last
+sounds were 0.31 ms apart, the app's own Swiss-lever reading (0.307 ms): the app's timestamps sit
+at the loudest part of each beat, which in a lever watch is the drop, while Witschi's instruments
+time the unlock. By energy the ETA's last sounds read 0.27 ms apart and its unlocks 0.30 ms; by
+noise its unlocks read 0.15.
 
 On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background) with a true
 beat error of 0, 0.5, 1 and 2 ms, sixteen runs read within 0.11 ms, the worst one in beat at
