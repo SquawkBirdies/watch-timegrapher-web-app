@@ -355,7 +355,9 @@ each sound, and averaged again, so that the sound that moves with the amplitude 
 Each sound's time is its place in its lined-up average plus the beats' mean shift. Each
 resample repeats the whole procedure, blocks included, on the beats it draws. In the amplitude
 filter the lined-up averages become the templates the blocks are matched against. A sound must
-be placed in at least two blocks, so a 20 s recording falls back to the plain average.
+be placed in at least two blocks, so a stretch whose beats span less than 19.5 s falls back to
+the plain average; a 20 s stretch's usually span more (see "Resamples cut into the whole
+stretch's blocks").
 
 Whole recordings of swinging watches, three of each, 180 s, as analyze.py reads them; amplitude
 error against the true mean lift time of all the beats, and in brackets how many were shown:
@@ -466,8 +468,10 @@ references lined nothing up, and such a swing reads as its average either way.
   simulated watch's offset hid most of the plain average's bias here and made it look the best.
 - On the ETA capture's beats from 1 to 21 s nothing moves (largest sum 2.6 against 6.6), so the
   plain 0.165 ± 0.011 ms is shown, where lined up it was held back with 17% of resamples
-  failing; so is a 30 s simulated co-axial (seed 51). A change found on just two blocks would
-  still be lined up on them and could still be held back.
+  failing; so is a 30 s simulated co-axial (seed 51). A change found on just two blocks is still
+  lined up on them. Until 24 November such a stretch was nearly always held back, because a
+  resample could lose a block; that was also the ETA's 17% (see "Resamples cut into the whole
+  stretch's blocks").
 - `checks.py suite` gave the same verdicts all three ways on the unit tests' 36 watches. On the
   Omega capture the test lines up both locks (26.1 and 20.4 against 13.3 on 4): either the
   amplitude changed during the capture or the scatter is too small on real audio, and one capture
@@ -934,6 +938,67 @@ Elsewhere:
 - The stated scatter is wider: the ETA ±0.022 ms against ±0.013, the Omega ±0.024 ms against
   ±0.028.
 
+## Resamples cut into the whole stretch's blocks
+
+Since 24 November (issue 31), each resample of a stretch that lines a sound up is cut into the
+whole stretch's 10 s blocks (`block_shifts`' `starts`), as it already lines up the sounds the
+whole stretch chose and leaves out the block shifts the whole stretch left out. Before, each
+resample cut its own blocks from the first beat it happened to draw. Lining up on two blocks
+needs the beats to span 19.5 s, and a 20 s stretch's span 19.7 to 19.9 s. A resample that missed
+the first or last few beats spanned less, made a single block, had nothing to line up on and
+failed: 17% to 47% of the resamples of 20 s stretches, enough to hold every one back whatever
+its sounds. Every stretch draws the same resamples, so stretches with the same number of beats
+failed alike. Longer stretches lost a block too, 42 of 200 resamples on one of the Omega's
+minutes; those still read, but on blocks a beat or two out of step with the whole stretch's, and
+with none of the shifts the whole stretch left out left out of them.
+
+Only the resamples change, so no reading moves. Measured:
+
+- The Omega's captures fully wound and 23 and 36 hours after (kept off the repository; see
+  "Limits"): the ten 20 s stretches held back with 17% to 47% of resamples failing now fail
+  none. Eight are
+  shown; two show the amplitude and hold the beat error, which scatters by 0.10 and 0.13 ms there
+  because one unlock's start is uncertain at 36 hours. Their single minutes read the same to the
+  last digit, the amplitude's scatter within 0.01°.
+- The ETA's beats from 1 to 21 s with every sound lined up (`--lined`): from 17.5% of resamples
+  failing, all of them single-block, to none, and shown: 0.32 ± 0.03 ms and 266°.
+- The six recordings in `tests/fixtures`: the same to full precision, except the Omega capture's
+  amplitude scatter, 0.8311° against 0.8319°.
+- `checks.py suite`: the 36 watches the same. `checks.py sims`: 45 of 46 the same; the co-axial
+  with a 4 dB unlock (seed 42), which lines up on 5 blocks, went from ±0.10 to ±0.09 ms and from
+  3% to 4% failing, shown both ways. Only 3 of the 46 line anything up.
+
+Since the change lets 20 s readings lined up on two blocks be shown, they were scored against
+the truth. Sixteen simulated watches of 180 s, co-axial and lever, two seeds each: steady at
+285°, swinging ±15° and ±30° every 60 s, and stepping from 285° to 255° at 90 s, each with a true
+beat error of about 0.5 ms. Each was cut into nine 20 s windows, scored against the truth of the
+window's own beats. The co-axials' unlock was set 20 dB over the background (`unlockDb`), which
+stands about as high over the noise of a 20 s average as the Omega's; at the default 5 dB the
+plain average fails 31% to 70% of resamples in 20 s. Of the 71 windows that lined a sound up:
+
+| Watch | Shown before | Shown now | Amplitude error, shown | Beat-error error, shown | Plain average, same windows |
+| --- | --- | --- | --- | --- | --- |
+| Co-axial, 33 windows | 0 | 32 | 1.4° rms, +2.6° worst | +0.07 ms worst | +13.5° worst shown, +15.7° in all |
+| Lever, 38 windows | 0 | 38 | 0.9° rms, −2.3° worst | +0.05 ms worst | −6.2° worst shown, −15.0° in all |
+
+No steady window lined anything up. The co-axials' beat error read about 0.03 ms high every
+way, as on other simulated co-axials. The stated amplitude scatter covered the lined-up errors:
+1 in 32 and 1 in 38 lay beyond twice it, against 8 in 25 and 10 in 30 on the plain average.
+
+Its limits:
+
+- Two blocks give a straight line, and the test on them has one degree of freedom. The co-axial
+  window still held, the first 20 s of a ±30° swing, where the amplitude rose from 285° to 315°
+  and fell back to 311°, read 311.4 ± 1.1° against a true 306.6°, 4.2 times its scatter. The
+  test lined up the tick's lock but called the tock's lock steady; with every sound lined up it
+  read 310.2 ± 1.4°. It was held only because 16.5% of resamples put the tock's unlock-to-lock
+  time under the 5.8 ms floor; its scatter alone would have passed it. A large swing inside a
+  20 s stretch can bias a reading by a few degrees that its stated scatter does not show.
+- Swings faster than a block were not tried here; they read as their average either way.
+  Fainter co-axials were not tried either: the plain average already holds their 20 s stretches.
+- The scripts that made and scored these windows are not in the repository. Computing time was
+  not measured; the resamples that used to stop at a single block now run to the end.
+
 ## Limits
 
 - That the first sound is the unlock in both beats is a reading of the patents' sequence of
@@ -961,14 +1026,18 @@ Elsewhere:
   0.41 to 0.42 ms. By energy they read 0.36 ± 0.03, 0.31 ± 0.04 and 0.30 ± 0.08 ms, within their
   scatter of each other but wider. A longer capture would tell. Its unlock itself is found from
   4 s of beats on. With every sound lined up, the first 20 s were held back, with 18% of
-  resamples failing to find the sounds, where the plain average read 0.16 ± 0.01 ms; lining up
-  only what moves keeps them plain.
+  resamples failing, where the plain average read 0.16 ± 0.01 ms; those resamples had lost a
+  block, and since 24 November they are shown (see "Resamples cut into the whole stretch's
+  blocks"). Lining up only what moves keeps them plain.
 - The averaging assumes the amplitude holds still over the beats averaged. On simulated watches
   a ±15° swing moved the lever's plain reading about 4° low and a ±30° swing about 20° low; the
   co-axial's read high, by up to 12° at ±30°. See "Larger swings, and false restarts". Lining up
   the sounds that move, the default now, takes it away on the lever, and on the co-axial for
   changes slower than a block, without the precision lining every sound up costs a steady
-  co-axial; see "Lining up only the sounds that move".
+  co-axial; see "Lining up only the sounds that move". On a 20 s stretch, lined up on two
+  blocks, a ±30° swing every 60 s still left up to 2.6° in the readings shown on simulated
+  watches, and one held reading 4.8° off at 4.2 times its stated scatter (see "Resamples cut
+  into the whole stretch's blocks").
 - The gate shows a beat error whose scatter under resampling is 0.1 ms or less, which does not
   keep its error under 0.1 ms: a reading shown at ±0.09 ms can be about 0.18 ms off at twice its
   scatter. On the 46 simulated watches the default's errors came to 1.0 times its stated scatter
