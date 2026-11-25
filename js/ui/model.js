@@ -48,6 +48,8 @@ export class Measurement {
     this.waveform = null;
     /** @type {number|null} seconds of audio before the first lock */
     this.lockedAt = null;
+    /** @type {number|null} when the current lock appeared, in seconds of audio; null without one */
+    this.lockSince = null;
     /** Seconds of audio sent to the pipeline so far. */
     this.audioSeconds = 0;
   }
@@ -60,6 +62,7 @@ export class Measurement {
     this.readings = null;
     this.waveform = null;
     this.lockedAt = null;
+    this.lockSince = null;
     this.audioSeconds = 0;
   }
 
@@ -77,6 +80,7 @@ export class Measurement {
     this.state = 'listening';
     this.readings = null;
     this.waveform = null;
+    this.lockSince = null;
   }
 
   /** @param {PipelineEvent} e */
@@ -91,10 +95,14 @@ export class Measurement {
           this.episodes.push({ bph: /** @type {number} */ (e.bph), n0: null, t0: null, base: last ? last.y : 0, beats: [] });
         }
         if (this.lockedAt === null) this.lockedAt = e.t;
+        // A lock that carries on a lost one is still a new lock: what was heard while it was
+        // lost belongs to neither.
+        this.lockSince = e.t;
       }
       if (e.state === 'listening') {
         this.readings = null;
         this.waveform = null;
+        this.lockSince = null;
       }
       this.state = e.state;
       this.bph = e.bph;

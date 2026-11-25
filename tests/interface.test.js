@@ -65,7 +65,10 @@ test('the averaging window and the escapement can change while measuring', () =>
     at += n;
     return out;
   };
-  const before = /** @type {ReadingsEvent[]} */ (run(pipeline, next, 30).filter((e) => e.type === 'readings'));
+  const first = run(pipeline, next, 30);
+  const lockEvent = first.find((e) => e.type === 'status' && e.state === 'tracking');
+  const lock = lockEvent ? lockEvent.t : null;
+  const before = /** @type {ReadingsEvent[]} */ (first.filter((e) => e.type === 'readings'));
   const a = before[before.length - 1];
   assert.ok(a.beatErrorMs !== null && Math.abs(a.beatErrorMs - 0.4) < 0.05);
   pipeline.setOptions({ averagingSeconds: 10, escapement: 'coaxial' });
@@ -80,11 +83,13 @@ test('the averaging window and the escapement can change while measuring', () =>
   const c = longer[longer.length - 1];
   const spanC = /** @type {[number, number]} */ (c.window)[1] - /** @type {[number, number]} */ (c.window)[0];
   assert.ok(spanC > 45, `a 60 s window reaches back past the 40 s history: ${spanC.toFixed(1)} s`);
-  // The six-position log goes by the window set: full at 10 s, and with 60 s set at 35 s into the
-  // lock, not full again until the lock has lasted 60 s.
-  assert.ok(readiness(true, b, 10).ready && b.windowSeconds === 10, 'a 10 s window is full');
-  assert.ok(longer.every((e) => e.windowSeconds === 60 && !readiness(true, e, 60).ready), 'a 60 s window waits for 60 s of lock');
-  assert.ok(readiness(true, c, 60).covered > 59 && readiness(true, c, 60).covered < 60, `covered ${readiness(true, c, 60).covered.toFixed(2)} s`);
+  // The six-position log goes by the window set: a 10 s window is full, and with 60 s set 35 s
+  // into the audio, not until the lock has lasted 60 s since it appeared.
+  assert.ok(lock !== null && lock < 10, `locked at ${lock}`);
+  assert.ok(readiness(true, b, 10, lock).ready && b.windowSeconds === 10, 'a 10 s window is full');
+  assert.ok(longer.every((e) => e.windowSeconds === 60 && !readiness(true, e, 60, lock).ready), 'a 60 s window waits for 60 s of lock');
+  const covered = readiness(true, c, 60, lock).covered;
+  assert.ok(Math.abs(covered - (c.t - /** @type {number} */ (lock))) < 1e-9 && covered < 60, `covered ${covered.toFixed(2)} s`);
 });
 
 test('a lock sends the averaged tick and tock, each peaking at its timestamp', () => {

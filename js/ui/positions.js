@@ -33,9 +33,11 @@ export const POSITIONS = /** @type {ReadonlyArray<{id: PositionId, name: string}
 export const MAX_RATE_SD = 1;
 
 /**
- * A reading has settled once it covers the whole averaging window: the lock has lasted at least
- * that long, so the reading draws on no audio from before the watch was placed. Both lengths
- * come from the same sample counts; this allows only for rounding.
+ * A reading has settled once the lock has lasted the whole averaging window, counted from the
+ * moment the lock appeared. The window slides with the audio, so the reading then draws only on
+ * audio heard since the lock: none from before the watch was placed or while it was settling,
+ * and none from the stretch the lock was found in, which the readings shown in continuous mode
+ * do use. Times come from the same sample counts; this allows only for rounding.
  */
 const FULL_WINDOW_TOLERANCE_SECONDS = 0.01;
 
@@ -92,21 +94,24 @@ export function positionName(id) {
 }
 
 /**
- * Whether the reading on screen can be saved: it must come from a lock and cover the whole
- * averaging window, which is longer than the setting when faint ticks are averaged.
+ * Whether the reading on screen can be saved: the lock must have lasted the whole averaging
+ * window since it appeared. The window is the one set, or longer when faint ticks are averaged.
  * @param {boolean} tracking the pipeline is locked
  * @param {ReadingsEvent|null} readings latest readings
  * @param {number} averagingSeconds the window set in the settings
- * @returns {{ready: boolean, covered: number, needed: number}} seconds the reading spans so far,
- *   and how many it spans once full
+ * @param {number|null} lockSince when the current lock appeared, in seconds of audio
+ * @returns {{ready: boolean, covered: number, needed: number}} seconds of the window heard since
+ *   the lock appeared, and how many it holds
  */
-export function readiness(tracking, readings, averagingSeconds) {
-  if (!tracking || !readings || readings.windowStart === null || readings.windowSeconds === null || readings.rate === null || readings.rateSd === null) {
+export function readiness(tracking, readings, averagingSeconds, lockSince) {
+  if (!tracking || lockSince === null || !readings || readings.windowStart === null || readings.windowSeconds === null || readings.rate === null || readings.rateSd === null) {
     return { ready: false, covered: 0, needed: averagingSeconds };
   }
   const needed = readings.windowSeconds;
-  const covered = Math.min(needed, readings.t - readings.windowStart);
-  return { ready: covered >= needed - FULL_WINDOW_TOLERANCE_SECONDS, covered, needed };
+  const covered = Math.max(0, Math.min(needed, readings.t - lockSince));
+  // The window must hold the whole set length and begin no earlier than the lock.
+  const ready = covered >= needed - FULL_WINDOW_TOLERANCE_SECONDS && readings.t - readings.windowStart >= needed - FULL_WINDOW_TOLERANCE_SECONDS && readings.windowStart >= lockSince - FULL_WINDOW_TOLERANCE_SECONDS;
+  return { ready, covered, needed };
 }
 
 /**
@@ -288,7 +293,7 @@ export function describeSummary(s) {
  * @property {PositionId|null} saved the position this run's reading was saved as, if it was
  * @property {boolean} running the source is running
  * @property {boolean} tracking the pipeline is locked
- * @property {number} covered seconds the current reading spans
+ * @property {number} covered seconds of the window heard since the lock appeared
  * @property {number} needed seconds the reading covers once full
  * @property {boolean} ready the current reading can be saved
  * @property {number|null} rateSd the current reading's rate uncertainty
@@ -312,8 +317,8 @@ export function positionStep(s) {
   }
   if (!s.running) return `Place the watch ${place(s.target)}, then press Start.`;
   const needed = Math.round(s.needed);
-  if (!s.tracking) return `Listening. The reading can be saved once it covers ${needed} s.`;
-  return `Keep the watch still: the reading covers ${Math.min(needed, Math.floor(s.covered))} of ${needed} s.`;
+  if (!s.tracking) return `Listening. Once locked, the reading takes ${needed} s.`;
+  return `Keep the watch still: ${Math.min(needed, Math.floor(s.covered))} of ${needed} s since the lock.`;
 }
 
 /**

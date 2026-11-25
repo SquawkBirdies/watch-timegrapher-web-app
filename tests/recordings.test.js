@@ -168,13 +168,14 @@ test('Omega 3861, Safari capture, in real time and co-axial: locks within 10 s, 
   assert.ok(r.last && r.last.rate !== null && Math.abs(r.last.rate - 0.4) <= 0.5, `rate ${r.last?.rate}`);
   regularThroughout(r);
   // In the six-position log a reading of this watch, the milestone 7 check's, can be saved only
-  // once the lock has lasted the whole 40 s window set here, though the 20 s default would have
-  // been full 20 s earlier; the saved reading records the 40 s.
+  // once the lock has lasted the whole 40 s window set here since it appeared, though the 20 s
+  // default would have been full 20 s earlier; the saved reading records the 40 s.
+  const lock = r.status[0].t;
   const locked = r.readings.filter((x) => x.window !== null);
   assert.ok(locked.every((x) => x.windowSeconds === 40), 'the window set, not lengthened');
-  const first = locked.findIndex((x) => readiness(true, x, 40).ready);
-  assert.ok(first > 0 && locked[first].t >= 40 && locked[first].t < 41, `first ready at ${locked[first]?.t.toFixed(1)} s`);
-  assert.ok(locked.slice(first).every((x) => readiness(true, x, 40).ready), 'ready from then on');
+  const first = locked.findIndex((x) => readiness(true, x, 40, lock).ready);
+  assert.ok(first > 0 && locked[first].t >= lock + 39.99 && locked[first].t < lock + 41, `locked at ${lock.toFixed(1)} s, first ready at ${locked[first]?.t.toFixed(1)} s`);
+  assert.ok(locked.slice(first).every((x) => readiness(true, x, 40, lock).ready), 'ready from then on');
   const saved = takeReading(r.last, { bph: 21600, escapement: 'coaxial', source: 'omega-3861-safari.wav', now: new Date() });
   assert.ok(saved && saved.windowSeconds === 40 && saved.beatErrorGap === 'coaxial');
 });

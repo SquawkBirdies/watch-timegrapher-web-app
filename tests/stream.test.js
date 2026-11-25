@@ -89,12 +89,13 @@ test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a long
   assert.ok(from >= lockStart - 0.5, 'not before the lock began');
   assert.ok(span > 20, 'longer than the 20 s setting');
   // The readings say how long the lengthened window is, and where it starts, so the six-position
-  // log waits for it to fill before a reading can be saved: here it is longer than the lock.
+  // log waits for the lock to last that long before a reading can be saved: here it has not.
   near(last.windowSeconds, Math.max(20, (12 * K * 2 * 0.2) / (1 + 45 / 86400)), 0.01, 'full window');
   near(last.windowStart, lockStart, 0.01, 'window start');
-  const ready = readiness(true, last, 20);
-  assert.equal(ready.ready, last.t - lockStart >= /** @type {number} */ (last.windowSeconds), 'full only once the lock has lasted the whole window');
-  near(ready.covered, last.t - lockStart, 0.01, 'covered');
+  const lockSince = r.status[0].t;
+  const ready = readiness(true, last, 20, lockSince);
+  assert.ok(last.t - lockSince < /** @type {number} */ (last.windowSeconds) && !ready.ready, 'not full: the lock is younger than the window');
+  near(ready.covered, last.t - lockSince, 0.01, 'covered');
   assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
 });
 

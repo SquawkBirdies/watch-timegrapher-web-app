@@ -723,7 +723,7 @@ function renderPositions(tracking, src) {
   ui.positions.hidden = !show;
   if (!show) return;
   const r = measurement.readings;
-  const state = readiness(tracking, r, settings.averagingSeconds);
+  const state = readiness(tracking, r, settings.averagingSeconds, measurement.lockSince);
   const savedAs = run ? run.savedAs : null;
   const canSave = state.ready && !!target && !!run && !savedAs && !loading;
   // "Saved" is said only while the log still holds that reading, not after a new log.
@@ -1003,7 +1003,7 @@ ui.savePosition.addEventListener('click', () => {
   const readings = measurement.readings;
   const id = target;
   if (!r || r.savedAs || !id || !readings || loading) return;
-  if (!readiness(measurement.state === 'tracking', readings, settings.averagingSeconds).ready) return;
+  if (!readiness(measurement.state === 'tracking', readings, settings.averagingSeconds, measurement.lockSince).ready) return;
   const reading = takeReading(readings, { bph: measurement.bph || settings.bph, escapement: r.escapement, source: r.name, now: new Date() });
   if (!reading) return;
   log = withReading(log, id, reading);

@@ -370,11 +370,14 @@ two modes, and the choice is remembered on the device:
   crown down, crown left and crown right.
 
 Each position is its own run. Place the watch, press Start, and keep it still until the reading
-has settled: the lock must have lasted the whole averaging window, so that the reading draws on a
-full window and on no audio from before the watch was placed. The window is the one set in the
-settings (10, 20, 40 or 60 s), or longer when a faint watch's ticks are averaged over several
-cycles, so a reading always runs for the longer of the two. With 40 s set, the button waits 40 s,
-though 20 s would give a reading too. The button "Save as Dial up" becomes available then. Saving stops the run,
+has settled: the lock must have lasted the whole averaging window, counted from the moment
+"Locked" appears. The window slides with the audio, so the reading saved then draws only on audio
+heard since the lock, none from before the watch was placed or while it settled. (The readout in
+continuous mode also uses the beats timed in the stretch the lock was found in, about the 8 s
+before "Locked".) The window is the one set in the settings (10, 20, 40 or 60 s), or longer when a
+faint watch's ticks are averaged over several cycles, so a reading always runs for the longer of
+the two. A lost lock starts the count again. The button "Save as Dial up" becomes available then:
+with the default 20 s window and a lock after 8 s, about 28.5 s after Start. Saving stops the run,
 leaves the saved reading on the screen and suggests the next position without a reading. Tapping
 a row chooses the position the next reading is saved as, to skip one or to measure one again; a
 new reading replaces the old. Any source can be saved from, the simulator and recordings
@@ -392,19 +395,26 @@ Omega's Safari capture, each ±0.09), so a combined figure would look more preci
 "Start new log" clears it after asking. Exporting it is planned for a later version.
 
 Checked in Chrome on a computer at phone size, with the ETA recording played in as a simulated
-microphone: six positions were saved one after another. Each became ready to save 20.4 to 20.8 s
-after Start, one 32.5 s after, and the summary read +5.5 s/day over 6 positions, a spread of
-1.1 s/day and a largest beat error of 0.44 ms. Chrome appears to play the file from its start at
-each Start: five positions read +5.3 or +5.4 s/day, as the recording's first 20 s do on their own
-(+5.31 ± 0.09), and the one ready after 32.5 s read +6.4, as the recording's 12 to 32 s do
-(+6.38 ± 0.11), because the ETA ran faster later in the recording. The log and the mode came
-back after the page was reloaded, a position measured again replaced its reading, a reading could
-not be saved twice, and "Start new log" emptied the log. With the second Omega recording played in
-and the escapement set to co-axial, two positions read −2.2 ± 0.4 and −1.8 ± 0.7 s/day, marked
-"beat error not shown: co-axial". In the automated tests, with a 40 s window set, a reading of the
-Omega's Safari capture can be saved from 40 s into the recording and not before, and records the
-40 s; a window changed to 60 s 35 s into a lock waits until the lock has lasted 60 s. Nothing in
-this mode has been tested on the iPhone yet.
+microphone, while the window was still counted from the start of the lock's audio: six positions
+were saved one after another. Each became ready to save 20.4 to 20.8 s after Start, one 32.5 s
+after, and the summary read +5.5 s/day over 6 positions, a spread of 1.1 s/day and a largest beat
+error of 0.44 ms. Chrome appears to play the file from its start at each Start: five positions
+read +5.3 or +5.4 s/day, as the recording's first 20 s do on their own (+5.31 ± 0.09), and the
+one ready after 32.5 s read +6.4, as the recording's 12 to 32 s do (+6.38 ± 0.11), because the
+ETA ran faster later in the recording. The log and the mode came back after the page was
+reloaded, a position measured again replaced its reading, a reading could not be saved twice, and
+"Start new log" emptied the log. With the second Omega recording played in and the escapement set
+to co-axial, two positions read −2.2 ± 0.4 and −1.8 ± 0.7 s/day, marked "beat error not shown:
+co-axial". With the window counted from the lock, one position of the ETA in Chrome locked about
+9 s after Start and was ready 30.3 s after it (checked every 2 s), reading +6.3 ± 0.10 s/day over
+a 20 s window, as the recording does from 9 to 29 s.
+
+In the automated tests, on the ETA's Safari capture, a simulated watch and the Omega's Safari
+capture alike, the lock appears at 8.07 s and a reading can be saved from 28.55 s with the 20 s
+window (20.36 s when the window was counted from the start of the lock's audio). With a 40 s
+window the Omega's capture can be saved from 49.03 s and not before, and the reading records the
+40 s; a window changed to 60 s waits until the lock has lasted 60 s. Nothing in this mode has
+been tested on the iPhone yet.
 
 Known limits of the six-position log:
 

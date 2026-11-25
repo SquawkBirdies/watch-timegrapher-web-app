@@ -1,5 +1,6 @@
 // Milestone 7: the six-position log and the choice between it and continuous measuring. A
-// reading may be saved only once the lock has lasted the whole averaging window; saved readings
+// reading may be saved only once the lock has lasted the whole averaging window since it
+// appeared; saved readings
 // keep what the pipeline measured; the summary's average and spread come from the readings that
 // are certain enough, and the log survives being stored. Drawing and tapping are checked in a
 // browser.
@@ -8,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
+import { Measurement } from '../js/ui/model.js';
 import {
   POSITIONS,
   MAX_RATE_SD,
@@ -34,7 +36,7 @@ import { stream } from './helpers/stream.js';
 
 /**
  * Two positions of one watch, simulated as two runs whose rates differ as a watch's do between
- * dial up and crown down. Each run is 24 s, long enough for a full 20 s window after the lock.
+ * dial up and crown down. Each run is 32 s: about 8 s to lock, then a full 20 s window.
  */
 const positionRuns = (() => {
   /** @type {Map<string, ReturnType<typeof stream>>} */
@@ -44,7 +46,7 @@ const positionRuns = (() => {
     const key = `${watch.rate}/${watch.seed}`;
     let r = memo.get(key);
     if (!r) {
-      const w = synthesizeWatch({ bph: 28800, rate: watch.rate, beatOffsetMs: 0.3, gain: 1.4, seconds: 24, seed: watch.seed });
+      const w = synthesizeWatch({ bph: 28800, rate: watch.rate, beatOffsetMs: 0.3, gain: 1.4, seconds: 32, seed: watch.seed });
       r = stream(w.channels, w.sampleRate, { chunk: 1024 });
       memo.set(key, r);
     }
@@ -80,28 +82,50 @@ function reading(rate, rateSd, beatErrorMs, more = {}) {
   };
 }
 
-test('a reading can be saved only once the lock has lasted the whole averaging window', () => {
+test('a reading can be saved only once the lock has lasted the whole averaging window since it appeared', () => {
   const r = positionRuns(DIAL_UP);
   assert.ok(r.status.length && r.status[0].state === 'tracking', 'locked');
+  const lock = r.status[0].t;
   const locked = r.readings.filter((e) => e.window !== null);
-  const states = locked.map((e) => ({ e, ...readiness(true, e, 20) }));
+  const states = locked.map((e) => ({ e, ...readiness(true, e, 20, lock) }));
   const first = states.findIndex((s) => s.ready);
   assert.ok(first > 0, 'not ready at the lock, ready later');
-  // Before: every reading drew on less than 20 s of audio since the lock began.
+  // Before: less than 20 s since the lock appeared, though the readings themselves already
+  // reached back to the start of the audio the lock was found in.
+  assert.ok(/** @type {number} */ (states[0].e.windowStart) < lock - 5, 'the first readings draw on audio from before the lock');
   for (const s of states.slice(0, first)) assert.ok(s.covered < 20 && !s.ready);
-  // From then on every reading covers the full window, and its timestamps span almost all of it.
+  // From then on every reading draws only on audio heard since the lock, a full 20 s of it.
   for (const s of states.slice(first)) {
     assert.ok(s.ready, `ready at ${s.e.t.toFixed(1)} s`);
     assert.equal(s.needed, 20);
+    assert.ok(/** @type {number} */ (s.e.windowStart) >= lock - 0.01, 'nothing from before the lock');
     const [from, to] = /** @type {[number, number]} */ (s.e.window);
-    assert.ok(to - from > 19.5, `timestamps span ${(to - from).toFixed(2)} s`);
+    assert.ok(from >= lock && to - from > 19.5, `timestamps from ${from.toFixed(2)} s, spanning ${(to - from).toFixed(2)} s`);
   }
-  // The lock covers the audio from its start, so the window is full 20 s into the recording.
   const at = states[first].e.t;
-  assert.ok(at >= 19.9 && at <= 21, `first ready at ${at.toFixed(2)} s`);
-  // Not tracking, or no readings: never ready.
-  assert.equal(readiness(false, states[first].e, 20).ready, false);
-  assert.equal(readiness(true, null, 20).ready, false);
+  assert.ok(at >= lock + 19.99 && at <= lock + 21, `locked at ${lock.toFixed(2)} s, first ready at ${at.toFixed(2)} s`);
+  // Not tracking, no lock time, or no readings: never ready.
+  assert.equal(readiness(false, states[first].e, 20, lock).ready, false);
+  assert.equal(readiness(true, states[first].e, 20, null).ready, false);
+  assert.equal(readiness(true, null, 20, lock).ready, false);
+});
+
+test('the lock time follows the lock: kept through repeat analyses, cleared when lost or interrupted, new when found again', () => {
+  const m = new Measurement();
+  m.start();
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 28800, cyclesAveraged: [1, 1], t: 8.1 });
+  assert.equal(m.lockSince, 8.1);
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 28800, cyclesAveraged: [1, 1], t: 12.1 });
+  assert.equal(m.lockSince, 8.1, 'a repeat analysis is not a new lock');
+  m.apply({ type: 'status', state: 'listening', reason: 'no trusted beat for several seconds', bph: null, cyclesAveraged: null, t: 26.2 });
+  assert.equal(m.lockSince, null);
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 28800, cyclesAveraged: [1, 1], t: 29.2, continues: true });
+  assert.equal(m.lockSince, 29.2, 'a lock that carries on a lost one starts the count again');
+  m.interrupt();
+  assert.equal(m.lockSince, null);
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 28800, cyclesAveraged: [1, 1], t: 40 });
+  m.start();
+  assert.equal(m.lockSince, null);
 });
 
 test('a saved reading keeps the rate, its uncertainty, the beat error and the beats behind them, as measured', () => {
@@ -137,7 +161,7 @@ test('two positions measured from simulated watches give the average and spread 
   ])) {
     const r = positionRuns(watch);
     const last = /** @type {ReadingsEvent} */ (r.last);
-    assert.ok(readiness(true, last, 20).ready);
+    assert.ok(readiness(true, last, 20, r.status[0].t).ready);
     const saved = takeReading(last, { bph: 28800, escapement: 'lever', source: 'Simulator', now: new Date() });
     assert.ok(saved);
     log = withReading(log, id, saved);
@@ -223,9 +247,9 @@ test('the summary says what it lacks: no positions, one position, co-axial beat 
 test('the line under the log says what to do next', () => {
   const base = { target: /** @type {PositionId|null} */ ('dialDown'), saved: null, running: false, tracking: false, covered: 0, needed: 20, ready: false, rateSd: null };
   assert.equal(positionStep(base), 'Place the watch dial down, then press Start.');
-  assert.equal(positionStep({ ...base, running: true }), 'Listening. The reading can be saved once it covers 20 s.');
-  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 12.7 }), 'Keep the watch still: the reading covers 12 of 20 s.');
-  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 41.5, needed: 48.04 }), 'Keep the watch still: the reading covers 41 of 48 s.');
+  assert.equal(positionStep({ ...base, running: true }), 'Listening. Once locked, the reading takes 20 s.');
+  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 12.7 }), 'Keep the watch still: 12 of 20 s since the lock.');
+  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 41.5, needed: 48.04 }), 'Keep the watch still: 41 of 48 s since the lock.');
   assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 0.09 }), 'Ready to save as Dial down.');
   assert.match(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 1.4 }), /uncertain by ±1\.4 s\/d, so it would be left out of the average/);
   assert.equal(positionStep({ ...base, saved: 'dialUp' }), 'Saved Dial up. Place the watch dial down, then press Start.');
