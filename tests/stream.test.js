@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
+import { readiness } from '../js/ui/positions.js';
 import { stream, join, againstTruth } from './helpers/stream.js';
 
 /**
@@ -87,6 +88,14 @@ test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a long
   assert.ok(span >= wanted - 2 * K * 0.4, `window ${span.toFixed(1)} s for ${K}-cycle averages, wanted ${wanted.toFixed(1)} s`);
   assert.ok(from >= lockStart - 0.5, 'not before the lock began');
   assert.ok(span > 20, 'longer than the 20 s setting');
+  // The readings say how long the lengthened window is, and where it starts, so the six-position
+  // log waits for the lock to last that long before a reading can be saved: here it has not.
+  near(last.windowSeconds, Math.max(20, (12 * K * 2 * 0.2) / (1 + 45 / 86400)), 0.01, 'full window');
+  near(last.windowStart, lockStart, 0.01, 'window start');
+  const lockSince = r.status[0].t;
+  const ready = readiness(true, last, 20, lockSince);
+  assert.ok(last.t - lockSince < /** @type {number} */ (last.windowSeconds) && !ready.ready, 'not full: the lock is younger than the window');
+  near(ready.covered, last.t - lockSince, 0.01, 'covered');
   assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
 });
 

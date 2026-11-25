@@ -4,8 +4,9 @@ A mechanical watch timegrapher that runs in a phone's web browser and listens th
 microphone. It measures rate (seconds per day) and beat error (milliseconds) and draws a
 real-time trace.
 
-**Status: milestone 6 of 9.** The timegrapher listens to the phone's microphone. It can also be
-driven by a simulated watch, by three demo recordings or by a recording of your own.
+**Status: milestone 7 of 9.** The timegrapher listens to the phone's microphone. It can also be
+driven by a simulated watch, by three demo recordings or by a recording of your own. It measures
+continuously, or saves a reading for each of the six positions a watch is checked in.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
 the timegrapher replaying the three demo recordings in milestone 5, and a live measurement of
@@ -357,6 +358,74 @@ Known limits of the live microphone:
 - The microphone cannot wait for the analysis. If the analysis falls more than 8 s behind, the
   measurement stops with a message. The iPhone ran the pipeline 22.6 times faster than real time.
 
+## Six positions
+
+A watch keeps slightly different time in each position, because gravity acts on its balance
+differently dial up, dial down and on each edge. A switch at the top of the screen chooses between
+two modes, and the choice is remembered on the device:
+
+- **Continuous**, the default, is the app as it was: it measures for as long as the source runs
+  and records no position.
+- **Six positions** adds a log below the readings, with a row for dial up, dial down, crown up,
+  crown down, crown left and crown right.
+
+Each position is its own run. Place the watch, press Start, and keep it still until the reading
+has settled: the lock must have lasted the whole averaging window, counted from the moment
+"Locked" appears. The window slides with the audio, so the reading saved then draws only on audio
+heard since the lock, none from before the watch was placed or while it settled. (The readout in
+continuous mode also uses the beats timed in the stretch the lock was found in, about the 8 s
+before "Locked".) The window is the one set in the settings (10, 20, 40 or 60 s), or longer when a
+faint watch's ticks are averaged over several cycles, so a reading always runs for the longer of
+the two. A lost lock starts the count again. The button "Save as Dial up" becomes available then:
+with the default 20 s window and a lock after 8 s, about 28.5 s after Start. Saving stops the run,
+leaves the saved reading on the screen and suggests the next position without a reading. Tapping
+a row chooses the position the next reading is saved as, to skip one or to measure one again; a
+new reading replaces the old. Any source can be saved from, the simulator and recordings
+included, and a reading still on the screen after Stop can be saved, once per run.
+
+Each row keeps the rate with its statistical uncertainty, the beat error or why there is none,
+the window the reading was made over ("Over a 20 s window") and the number of beats behind the
+rate. Below the
+rows, the summary gives the average rate, the spread (fastest minus slowest position) and the
+largest beat error with its position. A reading whose rate is uncertain by more than ±1 s/day is
+marked and left out of the average and the spread, and a line says so; its beat error still
+counts. No uncertainty is given for the average: each position's ± is statistical only, and a
+watch's 20 s readings can move by more than that (from −0.2 to +1.6 s/day over the minute of the
+Omega's Safari capture, each ±0.09), so a combined figure would look more precise than it is. One log is kept at a time, on the device;
+"Start new log" clears it after asking. Exporting it is planned for a later version.
+
+Checked in Chrome on a computer at phone size, with the ETA recording played in as a simulated
+microphone, while the window was still counted from the start of the lock's audio: six positions
+were saved one after another. Each became ready to save 20.4 to 20.8 s after Start, one 32.5 s
+after, and the summary read +5.5 s/day over 6 positions, a spread of 1.1 s/day and a largest beat
+error of 0.44 ms. Chrome appears to play the file from its start at each Start: five positions
+read +5.3 or +5.4 s/day, as the recording's first 20 s do on their own (+5.31 ± 0.09), and the
+one ready after 32.5 s read +6.4, as the recording's 12 to 32 s do (+6.38 ± 0.11), because the
+ETA ran faster later in the recording. The log and the mode came back after the page was
+reloaded, a position measured again replaced its reading, a reading could not be saved twice, and
+"Start new log" emptied the log. With the second Omega recording played in and the escapement set
+to co-axial, two positions read −2.2 ± 0.4 and −1.8 ± 0.7 s/day, marked "beat error not shown:
+co-axial". With the window counted from the lock, one position of the ETA in Chrome locked about
+9 s after Start and was ready 30.3 s after it (checked every 2 s), reading +6.3 ± 0.10 s/day over
+a 20 s window, as the recording does from 9 to 29 s.
+
+In the automated tests, on the ETA's Safari capture, a simulated watch and the Omega's Safari
+capture alike, the lock appears at 8.07 s and a reading can be saved from 28.55 s with the 20 s
+window (20.36 s when the window was counted from the start of the lock's audio). With a 40 s
+window the Omega's capture can be saved from 49.03 s and not before, and the reading records the
+40 s; a window changed to 60 s waits until the lock has lasted 60 s. Nothing in this mode has
+been tested on the iPhone yet.
+
+Known limits of the six-position log:
+
+- The app does not know how the watch lies. A reading is saved as whichever position is chosen.
+- A faint watch waits for its longer window. A simulated 18,000 vph watch averaged over 32 cycles
+  needs 154 s, and when the averaging deepens during a run the save waits for the longer window.
+- The log keeps whatever is saved: readings from different watches, sources or escapement settings
+  are not told apart in the summary.
+- A watch's rate also changes with its state of wind and over time, so readings taken minutes
+  apart differ for that reason too.
+
 ## Hosting
 
 The app is a folder of static files with no build step, served by GitHub Pages over HTTPS.
@@ -371,9 +440,11 @@ by how much its beats wander from one to the next. Below are the trace, one dot 
 of an ideal clock with low-confidence beats dimmed; a signal meter with advice; and the averaged
 tick and tock. The source can be the microphone, a simulated watch whose rate, beat error, beat
 variability and loudness can be changed while it runs, one of the three test recordings, or a
-recording chosen from the phone, replayed at real speed or faster. Settings (beat rate,
-escapement, lift angle, mains frequency, averaging window), the chosen microphone and whether
-the magnetism notice has been read are kept on the device.
+recording chosen from the phone, replayed at real speed or faster. A switch above the readings
+chooses continuous measuring or the six-position log (see [Six positions](#six-positions)).
+Settings (beat rate, escapement, lift angle, mains frequency, averaging window), the chosen
+microphone, the mode, the six-position log and whether the magnetism notice has been read are
+kept on the device.
 
 `check.html` checks the browser: secure connection, microphone access, audio worklets, screen
 wake lock, and whether the signal pipeline loads.
@@ -432,7 +503,8 @@ js/ui/waveform.js      the averaged tick and tock
 js/ui/canvas.js        drawing helpers and chart colours
 js/ui/wake.js          keeps the screen on while measuring
 js/ui/save.js          hands a saved file to the share sheet or a download
-js/store.js            settings kept on the device
+js/ui/positions.js     the six-position log: when a reading can be saved, and the summary
+js/store.js            settings and the six-position log, kept on the device
 tests/                 automated tests and the six recordings
 tools/                 command-line runners, the Python prototype kept for reference, and the
                        co-axial prototype (tools/prototype/coaxial/)
@@ -478,7 +550,8 @@ Done by Lawrence Fan:
 - the idea, the goals and the requirements
 - the design decisions recorded in the plan, including the magnetism warning, the minimum iOS
   version and the choice of plain JavaScript
-- suggestions taken into the design, including the Kalman beat tracker and the beat-rate override
+- suggestions taken into the design, including the Kalman beat tracker, the beat-rate override
+  and the continuous mode beside the six-position log
 - the six recordings in `tests/fixtures/` (five of watches, one with no watch), which are the
   only test data not produced by AI-written code
 

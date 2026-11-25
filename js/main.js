@@ -14,13 +14,15 @@ import { Player } from './audio/player.js';
 import { LiveInput } from './audio/live.js';
 import { listMicrophones } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
-import { loadSettings, saveSettings, clean, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES } from './store.js';
+import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, isUncertain, emptyLog, isPosition } from './ui/positions.js';
+import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES } from './store.js';
 
 /**
  * @typedef {import('./audio/file-source.js').Recording} Recording
  * @typedef {import('./dsp/pipeline.js').PipelineEvent} PipelineEvent
  * @typedef {import('./dsp/session.js').Load} Load
  * @typedef {import('./dsp/estimate.js').Escapement} Escapement
+ * @typedef {import('./ui/positions.js').PositionId} PositionId
  */
 
 /** The recordings in the repository's test fixtures, served from the same site. */
@@ -89,6 +91,24 @@ const ui = {
   settings: /** @type {HTMLDialogElement} */ ($('settings')),
   settingsForm: /** @type {HTMLFormElement} */ ($('settings-form')),
   settingsRestart: $('settings-restart'),
+  mode: $('mode'),
+  positions: $('positions'),
+  positionsCount: $('positions-count'),
+  positionStep: $('position-step'),
+  savePosition: /** @type {HTMLButtonElement} */ ($('save-position')),
+  positionList: $('position-list'),
+  sumAverage: $('sum-average'),
+  sumAverageNote: $('sum-average-note'),
+  sumSpread: $('sum-spread'),
+  sumSpreadNote: $('sum-spread-note'),
+  sumBeatError: $('sum-beat-error'),
+  sumBeatErrorNote: $('sum-beat-error-note'),
+  sumLeftOut: $('sum-left-out'),
+  newLog: $('new-log'),
+  logInfo: $('log-info'),
+  newLogDialog: /** @type {HTMLDialogElement} */ ($('new-log-dialog')),
+  newLogText: $('new-log-text'),
+  newLogConfirm: $('new-log-confirm'),
 };
 
 let settings = loadSettings();
@@ -101,6 +121,11 @@ let userFile = null;
 /** @type {Map<string, Recording>} */
 const demoCache = new Map();
 let speed = 1;
+/** The six-position log, and the position the next reading is saved as: the first without a
+ *  reading, until the user taps another. */
+let log = loadLog();
+/** @type {PositionId|null} */
+let target = nextPosition(log);
 
 /**
  * What is running, or ran last.
@@ -124,6 +149,8 @@ let speed = 1;
  * @property {boolean} resumed the microphone came back after an interruption, and the pipeline
  *   has not locked since
  * @property {number} interruptions so far
+ * @property {PositionId|null} savedAs the position this run's reading was saved as; a run's
+ *   reading is saved once at most
  */
 /** @type {Run|null} */
 let run = null;
@@ -322,7 +349,7 @@ async function start() {
  * @returns {Run}
  */
 function newRun(kind, name, duration, sampleRate, escapement) {
-  return { kind, name, duration, sampleRate, escapement, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0 };
+  return { kind, name, duration, sampleRate, escapement, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
 }
 
 /**
@@ -680,6 +707,67 @@ function render() {
           : tab === 'file' && !userFile
             ? 'No file chosen'
             : 'Ready';
+
+  renderPositions(tracking, src);
+}
+
+/**
+ * The mode switch, and in Six positions the log: what to do next, the save button, a row for
+ * each position and the summary.
+ * @param {boolean} tracking
+ * @param {import('./ui/model.js').SourceState} src
+ */
+function renderPositions(tracking, src) {
+  for (const b of modeButtons) b.setAttribute('aria-checked', String(b.dataset.mode === settings.mode));
+  const show = settings.mode === 'positions';
+  ui.positions.hidden = !show;
+  if (!show) return;
+  const r = measurement.readings;
+  const state = readiness(tracking, r, settings.averagingSeconds, measurement.lockSince);
+  const savedAs = run ? run.savedAs : null;
+  const canSave = state.ready && !!target && !!run && !savedAs && !loading;
+  // "Saved" is said only while the log still holds that reading, not after a new log.
+  const saved = savedAs && log.readings[savedAs] ? savedAs : null;
+  ui.savePosition.disabled = !canSave;
+  ui.savePosition.textContent = target ? `Save as ${positionName(target)}` : 'Save';
+  ui.positionStep.textContent = positionStep({
+    target,
+    saved,
+    running: src.running,
+    tracking,
+    covered: state.covered,
+    needed: state.needed,
+    ready: canSave,
+    rateSd: r ? r.rateSd : null,
+  });
+  const count = Object.keys(log.readings).length;
+  ui.positionsCount.textContent = `${count} of ${POSITIONS.length} saved`;
+  for (const { id } of POSITIONS) {
+    const row = positionRows[id];
+    const reading = log.readings[id];
+    row.input.checked = target === id;
+    row.toggleAttribute('data-empty', !reading);
+    row.toggleAttribute('data-uncertain', !!reading && isUncertain(reading));
+    if (reading) {
+      const words = describeReading(reading);
+      row.reading.textContent = words.main;
+      row.detail.textContent = words.detail;
+    } else {
+      row.reading.textContent = '—';
+      row.detail.textContent = 'Not measured yet';
+    }
+  }
+  const summary = describeSummary(summarise(log));
+  ui.sumAverage.textContent = summary.average;
+  ui.sumAverageNote.textContent = summary.averageNote;
+  ui.sumSpread.textContent = summary.spread;
+  ui.sumSpreadNote.textContent = summary.spreadNote;
+  ui.sumBeatError.textContent = summary.beatError;
+  ui.sumBeatErrorNote.textContent = summary.beatErrorNote;
+  ui.sumLeftOut.textContent = summary.leftOut;
+  ui.sumLeftOut.hidden = !summary.leftOut;
+  ui.newLog.toggleAttribute('disabled', count === 0);
+  ui.logInfo.textContent = log.started ? `Started ${new Date(log.started).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}. Kept on this device.` : 'The log is kept on this device.';
 }
 
 function selectedName() {
@@ -866,6 +954,83 @@ setInterval(() => {
     schedule();
   }
 }, 500);
+
+// ---- Mode and positions --------------------------------------------------------------------
+
+/** @type {HTMLButtonElement[]} */
+const modeButtons = Array.from(ui.mode.querySelectorAll('button'));
+for (const button of modeButtons) {
+  button.addEventListener('click', () => {
+    settings = clean({ ...settings, mode: button.dataset.mode });
+    saveSettings(settings);
+    schedule();
+  });
+}
+
+/**
+ * A row of the log for each position: a choice of which position to measure next, its name and
+ * its saved reading.
+ * @typedef {HTMLLabelElement & {input: HTMLInputElement, reading: HTMLElement, detail: HTMLElement}} PositionRow
+ */
+/** @type {Record<PositionId, PositionRow>} */
+const positionRows = /** @type {Record<PositionId, PositionRow>} */ ({});
+for (const p of POSITIONS) {
+  const row = /** @type {PositionRow} */ (document.createElement('label'));
+  row.className = 'choice position-row';
+  const input = document.createElement('input');
+  input.type = 'radio';
+  input.name = 'position';
+  input.value = p.id;
+  input.addEventListener('change', () => {
+    if (isPosition(input.value)) target = input.value;
+    schedule();
+  });
+  const title = document.createElement('strong');
+  const name = document.createElement('span');
+  name.textContent = p.name;
+  const reading = document.createElement('span');
+  reading.className = 'reading';
+  title.append(name, reading);
+  const detail = document.createElement('span');
+  row.append(input, title, detail);
+  Object.assign(row, { input, reading, detail });
+  ui.positionList.append(row);
+  positionRows[p.id] = row;
+}
+
+ui.savePosition.addEventListener('click', () => {
+  const r = run;
+  const readings = measurement.readings;
+  const id = target;
+  if (!r || r.savedAs || !id || !readings || loading) return;
+  if (!readiness(measurement.state === 'tracking', readings, settings.averagingSeconds, measurement.lockSince).ready) return;
+  const reading = takeReading(readings, { bph: measurement.bph || settings.bph, escapement: r.escapement, source: r.name, now: new Date() });
+  if (!reading) return;
+  log = withReading(log, id, reading);
+  saveLog(log);
+  r.savedAs = id;
+  target = nextPosition(log, id);
+  // The watch is moved to its next position now, so the run ends here and the screen keeps the
+  // reading just saved: answers still on their way would mix in the handling of the watch.
+  if (r.running || r.stopping) {
+    r.stopping = false;
+    stop();
+  }
+  schedule();
+});
+
+ui.newLog.addEventListener('click', () => {
+  const count = Object.keys(log.readings).length;
+  if (count === 0) return;
+  ui.newLogText.textContent = `The ${count === 1 ? 'reading' : `readings of ${count} positions`} saved in this log ${count === 1 ? 'is' : 'are'} cleared.`;
+  ui.newLogDialog.showModal();
+});
+ui.newLogConfirm.addEventListener('click', () => {
+  log = emptyLog();
+  saveLog(log);
+  target = nextPosition(log);
+  schedule();
+});
 
 // ---- Settings ------------------------------------------------------------------------------
 
