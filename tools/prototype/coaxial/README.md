@@ -51,7 +51,7 @@ python3 -I tools/prototype/coaxial/checks.py kalman-sims /tmp/kalman   # about t
 python3 -I tools/prototype/coaxial/track.py recording tests/fixtures/omega-3861-safari.wav /tmp/omega 36
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track            # about half an hour
 python3 -I tools/prototype/coaxial/track.py sims /tmp/track-lever lever  # about half an hour
-python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about 40 minutes
+python3 -I tools/prototype/coaxial/checks.py suite /tmp/suite          # about twenty minutes
 python3 -I tools/prototype/coaxial/checks.py pairing /tmp/pairing      # about twenty minutes
 python3 -I tools/prototype/coaxial/track.py swings /tmp/swings both     # about an hour
 python3 -I tools/prototype/coaxial/track.py steady /tmp/steady both     # about half an hour
@@ -121,7 +121,7 @@ All on a computer. Nothing has been compared with a timing machine.
 
 | Recording | Beat error from the first sounds | Amplitude |
 | --- | --- | --- |
-| Omega 3861, Safari capture, 60 s | 0.35 ± 0.02 ms | 287° at a 36° lift angle |
+| Omega 3861, Safari capture, 60 s | 0.35 ± 0.03 ms | 287° at a 36° lift angle |
 | ETA 2836-2, Safari capture, 30 s | 0.30 ± 0.02 ms | 267° at a 50° lift angle |
 | The three Voice Memos recordings | nothing shown | nothing shown |
 
@@ -129,19 +129,23 @@ These add the bands by energy, the default since 22 November, and line up only t
 move, the default since 18 November: on the Omega the two locks, on the ETA nothing. Added by
 noise, as before 22 November, the Omega read 0.31 ± 0.03 ms and 284° and the ETA 0.15 ± 0.01 ms
 and 263°; the figures below that are dated before 22 November were measured that way, and most
-of those not about lining up came from the plain average. The ± is the scatter under resampling,
-widened since 25 November by the beat error's check with the beats on the trend (see "The beat
-error checked with the beats on the trend"), which moved neither capture's by more than 0.001 ms.
-Across the analysis choices the Omega's beat error ran from 0.26 to 0.38 ms (by noise,
-plain average). The ETA's last sounds are 0.31 ms apart, which is the app's own Swiss-lever
+of those not about lining up came from the plain average. The ± is the scatter over
+`analyze.py`'s 200 resamples, widened since 25 November by the beat error's check with the beats
+on the trend (see "The beat error checked with the beats on the trend"): the Omega's from 0.030
+to 0.032 ms, the ETA's from 0.023 to 0.025 ms. Until 25 November this table gave the Omega
+± 0.02 ms, a low draw: with 100 resamples, as `checks.py` uses, four seeds gave 0.024, 0.032,
+0.028 and 0.032 ms, and with 200, three gave 0.030, 0.031 and 0.029 ms. Figures in this README
+from 100 resamples carry that much chance in their last digit. Across the analysis choices the
+Omega's beat error ran from 0.26 to 0.38 ms (by noise, plain average). The ETA's last sounds are 0.31 ms apart, which is the app's own Swiss-lever
 reading: the app's timestamps sit at the loudest part of each beat, which in a lever watch is the
 drop, while Witschi's instruments time the unlock. By energy the ETA's unlocks now read 0.30 ms
 apart too; by noise they read 0.15.
 
 On simulated co-axial watches (60 s, 21,600 vph, unlock 5 dB over the background) with a true
 beat error of 0, 0.5, 1 and 2 ms, sixteen runs read within 0.11 ms, the worst one in beat at
-±0.04 ms and the rest within 0.07 ms, and amplitudes of 200° to 310° within 1°. With the unlock
-2 dB over the background or less, or with only 20 s of audio, nothing was shown. Of all 46
+±0.07 ms (±0.04 ms before the beat error's check of 25 November) and the rest within 0.07 ms,
+and amplitudes of 200° to 310° within 1°. With the unlock 2 dB over the background or less, or
+with only 20 s of audio, nothing was shown. Of all 46
 simulated runs, 32 were shown, one 0.11 ms off and the rest within 0.08 ms, and the amplitude
 within 2° (33 before the beat error's check of 25 November, the rest within 0.09 ms). By noise,
 as before 22 November, 32 were shown, within 0.09 ms and 2°; with every
@@ -714,14 +718,16 @@ true beat error. No balance is behind them, so the time from the first sound to 
 one, 7 ms for the default sounds, is checked instead of an amplitude. The lift angle is chosen
 per beat rate to make that time read 280°, so that the gate on believable amplitudes passes.
 
-Louder and 60 s long, by default; the plain average gave the same verdicts, as did adding the
-bands by noise before 22 November:
+Louder and 60 s long, by default, measured again on 25 November; before the beat error's check
+of that day the 0.5 ms jitter watch was shown, 0.24 ± 0.07 ms, and the plain average gave the same
+verdicts, as did adding the bands by noise before 22 November:
 
 | Outcome on the 36 watches | Watches |
 | --- | --- |
-| shown and wrong | 2: the 36,000 vph watches told 18,000 vph read 0.01 and 0.03 ms against 0.50 |
-| shown and right | 22, none more than 0.05 ms off, stated to ±0.01 to ±0.07 ms |
+| shown and wrong | 2: the 36,000 vph watches told 18,000 vph read 0.04 and 0.01 ms against 0.50 |
+| shown and right | 21, none more than 0.05 ms off, stated to ±0.01 to ±0.07 ms |
 | refused, rightly | 1: the two-sound co-axial, whose beats share no first sound |
+| held back, would have been right | 1: 0.5 ms jitter, 0.24 ± 0.16 ms against 0.20, held by the beat error's check, which reads it 0.15 ms higher with the beats on the trend (see "The beat error checked with the beats on the trend") |
 | held back, would have been wrong | 6: 3 basket cases and 1, 2 and 5 ms jitter, by their scatter |
 | nothing | 5: the two 18,000 vph watches told 36,000, which the app could not time; the blurred three sounds, whose loudest later sound comes 2.0 ms after its first and whose last is quieter than its first; the two-sound watch whose tock changes its loudest sound, with nothing between its tock's first sound and its lock, which read 0.05 ms against 0 until 22 November; and no watch |
 
@@ -1102,6 +1108,36 @@ Checked on a computer, against main:
   co-axial with 0.3 ms. The second reading found the sounds in all 58.
 - Cost: `analyze.py` with 100 resamples took 60.2 s against 53.2 s on the Omega's Safari capture
   (60 s, lined up) and 15.3 s against 11.8 s on the ETA's (30 s, plain), 13% and 30% longer.
+
+The trend is a straight line through each beat type's confident timestamps and the median of
+every 15 timestamps' distances from it. Until 25 November that median filled its window with
+zeros past the first and last timestamps (scipy's `medfilt`), which pulled the 7 beats at each end
+towards the straight line, by up to 0.07 ms on the Omega's Safari capture. Since then, found in a
+review of the code, the window near an end holds only the timestamps there are
+(`events.running_median`); repeating the end's own distance, also tried, leaves that beat's noise
+in the trend. Against the zeros:
+
+- The recordings, read by `analyze.py` with its 200 resamples. Omega Safari: 0.357 ms with the
+  beats on the trend instead of 0.346, so 0.010 ms from the reading instead of −0.001, and its
+  scatter 0.032 ms instead of 0.030. ETA Safari: 0.295 instead of 0.301 ms, scatter 0.025 instead
+  of 0.024 ms. The Omega's captures of 23 November: 0.218 and 0.203 ms, scatter 0.016 and
+  0.012 ms, against 0.218 and 0.205 ms, 0.015 and 0.013 ms. The readings themselves, the
+  amplitudes and what is shown are unchanged. The Voice Memos recordings, whose beats the app
+  averages so that every reading is on the trend, still give nothing. Their sounds moved by up
+  to 0.02 ms, and in the second Voice Memos capture of the Omega a faint sound of the tick, 7.3 dB
+  over the noise of the average, is no longer found, so it gives nothing for want of two sounds
+  in a beat rather than of two at the same time. The no-watch capture gives nothing too.
+- The 46 simulated watches of `checks.py sims`: the same readings and verdicts; 7 stated scatters
+  moved by 0.01 or 0.02 ms in the printed digits, the worst shown, 0.11 ms off, now at ±0.07 ms.
+  Errors come to 0.77 times the stated scatter (rms) against 0.79.
+- The issue's 58 watches: the same readings and verdicts. The scatter moved by 0.018 ms at most,
+  on a lever with 0.2 ms of beat jitter (0.041 to 0.059 ms, still shown); error ÷ scatter of the
+  16 shifted ones is 1.34 (rms) either way.
+- `checks.py suite`: the same verdicts as on main, scatters within 0.02 ms in the printed digits
+  except one basket case's, ±0.50 instead of ±0.70 ms, held either way. Two of its watches have
+  every beat on the trend because the app averaged their cycles: the one that stops for 15 s and
+  starts again still reads 0.19 ± 0.07 ms against 0.20, and the 36,000 vph watches told
+  18,000 vph read as before.
 
 Its limits:
 

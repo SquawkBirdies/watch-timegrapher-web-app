@@ -246,12 +246,31 @@ def true_amplitude(spec, constant, t):
     return np.full(t.shape, constant)
 
 
+class NoReference:
+    """What stands for the reference when the app timed too few beats to stack: no pair, and
+    why. Until 25 November building a Reference from such a result failed with a KeyError."""
+
+    pair = None
+    relined = None
+
+    def __init__(self, why):
+        self.why = why
+
+
+def reference_of(o, lift, reference_seconds, nearest=True, reline="test"):
+    """The reference from the stacked beats of a plain `events.measure` result, or a
+    NoReference saying why there are none."""
+    if "stacks" not in o:
+        return NoReference(o["why"])
+    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest, reline, o["levels"])
+
+
 def prepare(wav, stream_json, lift, reference_seconds, nearest=True, reline="test"):
     fs, x = ev.load_wav(wav)
     B = ev.load_beats(stream_json)
     # Only the stacked beats are wanted here; the reference does its own lining up.
     o = ev.measure(x, fs, B, lift, 0, reline=False)
-    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], lift, reference_seconds, nearest, reline, o["levels"]), o
+    return reference_of(o, lift, reference_seconds, nearest, reline), o
 
 
 def filter_sd_deg(row, amp):
@@ -326,8 +345,7 @@ def simulate(outdir, kind, name, over, seed, seconds):
 
 
 def reference(sim, reference_seconds, nearest=True, reline="test"):
-    o = sim["o"]
-    return Reference(o["stacks"], o["times"], o["tms"], o["base_until"], o["bph"], sim["lift"], reference_seconds, nearest, reline, o["levels"])
+    return reference_of(sim["o"], sim["lift"], reference_seconds, nearest, reline)
 
 
 # The two ways of averaging that `sims`, `swings` and `steady` compare when given `both`.

@@ -91,6 +91,10 @@ def load_wav(path, channel=0):
         x = x[:, channel]
     if x.dtype.kind == "i":
         x = x.astype(np.float64) / np.iinfo(x.dtype).max
+    elif x.dtype.kind == "u":
+        # 8-bit WAV samples are unsigned, with silence at 128.
+        half = (np.iinfo(x.dtype).max + 1) / 2
+        x = (x.astype(np.float64) - half) / half
     return fs, x.astype(np.float64)
 
 
@@ -154,10 +158,23 @@ def app_rows(x, fs, bands=HF_BANDS, envelope_rate=12000):
     return Rows(rows, levels), fs / dec
 
 
+def running_median(v, k):
+    """The median of the k values centred on each value of v (k odd). Near either end the window
+    holds only the values there are. Until 25 November beat_times used scipy's medfilt, which
+    fills the window with zeros past the ends: that pulled the trend's 7 beats at each end
+    towards its straight line, by up to 0.07 ms on the Omega's Safari capture, and moved the
+    placement check's second reading of it by 0.011 ms. Repeating the end value instead would
+    leave the end beat's own noise in the trend."""
+    h = k // 2
+    padded = np.concatenate([np.full(h, np.nan), np.asarray(v, dtype=float), np.full(h, np.nan)])
+    return np.nanmedian(np.lib.stride_tricks.sliding_window_view(padded, k), axis=1)
+
+
 def beat_times(beats, j, on_trend=False):
     """Times and beat numbers of the beats of type j. When the app timed every beat on its
     own, those timestamps are used. When it averaged several cycles per timestamp, or with
-    `on_trend`, every beat is placed on the trend of the confident timestamps instead."""
+    `on_trend`, every beat is placed on the trend of the confident timestamps instead: a
+    straight line, and the median of every 15 timestamps' distances from it."""
     b = beats["beats"][j]
     t = np.array(b["t"])
     n = np.array(b["n"])
@@ -165,7 +182,7 @@ def beat_times(beats, j, on_trend=False):
     if b["K"] == 1 and not on_trend:
         return t[ok], n[ok]
     slope, icpt = np.polyfit(n[ok], t[ok], 1)
-    r = signal.medfilt(t[ok] - (icpt + slope * n[ok]), 15)
+    r = running_median(t[ok] - (icpt + slope * n[ok]), 15)
     nn = np.arange(np.ceil(n[ok].min()), np.floor(n[ok].max()) + 1)
     nn = nn[(nn - j) % 2 == 0]
     return icpt + slope * nn + np.interp(nn, n[ok], r), nn
@@ -558,7 +575,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     B        the JSON written by beats.mjs
     lift     lift angle in degrees
     nboot    resamples of the beats for the uncertainty; 0 for none
-    t_from, t_to   use only the beats between these times, in seconds
+    t_from, t_to   use only the beats between these times, in seconds; either may be left
+             out, which leaves that end of the recording open
     weights  band weights to use instead of working them out
     weighting  "energy" or "noise", how the weights are worked out; WEIGHTING when absent
     find     keyword arguments for find_sounds; use_peak times sounds at their maxima
@@ -614,12 +632,15 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
         return {"bph": bph, "lift": lift, "n0": counts[0], "n1": counts[1], "limits": (lo, hi), "reading": None,
                 "why": "the app timed too few beats: %d %s of its ticks and %d of its tocks, against at least %d of each" % (counts[0], what, counts[1], MIN_BEATS)}
 
+    # The stretch of the recording to read. Until 25 November an end time alone was ignored and a
+    # start time alone failed.
+    t_lo = -np.inf if t_from is None else t_from
+    t_hi = np.inf if t_to is None else t_to
     confident = []
     for j in (0, 1):
         b = B["beats"][j] if j < len(B["beats"]) else {"t": [], "ok": []}
         t, ok = np.array(b["t"], dtype=float), np.array(b["ok"], dtype=bool)
-        if t_from is not None:
-            ok &= (t >= t_from) & (t < t_to)
+        ok &= (t >= t_lo) & (t < t_hi)
         confident.append(int(ok.sum()))
     if min(confident) < MIN_BEATS:
         return too_few(confident, "confident timestamps")
@@ -627,10 +648,8 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     T = []
     for j in (0, 1):
         t, n = beat_times(B, j, on_trend)
-        if t_from is not None:
-            keep = (t >= t_from) & (t < t_to)
-            t, n = t[keep], n[keep]
-        T.append((t, n))
+        keep = (t >= t_lo) & (t < t_hi)
+        T.append((t[keep], n[keep]))
     if min(len(T[0][0]), len(T[1][0])) < MIN_BEATS:
         return too_few([len(T[0][0]), len(T[1][0])], "beats")
     # The gap between the app's tick and tock timestamps beyond half a period.
@@ -810,9 +829,10 @@ def measure(x, fs, B, lift, nboot=200, t_from=None, t_to=None, seed=1, weights=N
     check = PLACEMENT_CHECK if placement_check is None else placement_check
     if check and not on_trend and "sd" in out and all(b["K"] == 1 for b in B["beats"][:2]):
         # The same reading with every beat on the trend of its timestamps (see PLACEMENT_CHECK).
-        # It reuses the band envelopes and draws no resamples, which costs about a third of the
-        # reading with 100 resamples. When it finds no sounds the beat error cannot be checked,
-        # and is held back (decided 25 November); in 62 readings that never happened.
+        # It reuses the band envelopes and draws no resamples; with 100 resamples it made the
+        # two Safari captures' readings 13% and 30% longer. When it finds no sounds the beat
+        # error cannot be checked, and is held back (decided 25 November); in 62 readings that
+        # never happened.
         o2 = measure(x, fs, B, lift, 0, t_from, t_to, seed, weights, rows, find, use_peak, reline, weighting,
                      placement_check=False, on_trend=True)
         r2 = o2["reading"]
@@ -920,11 +940,19 @@ def describe(o):
     pm = (lambda k: " +- %.2f" % sd[k]) if sd else (lambda k: "")
     held = lambda shown: "" if shown else "  [held back: the resamples do not agree well enough]"
     placed = o.get("placement", {})
-    held_be = held(o.get("show_beat_error", True))
-    if held_be and "why" in placed:
-        held_be = "  [held back: with the beats on the trend of their timestamps the sounds were not found]"
-    elif held_be and "difference" in placed and o["fail"] <= MAX_FAIL and o["sd_resampled"]["first_gap"] <= MAX_SD_MS:
-        held_be = "  [held back: it moves too far with the beats on the trend of their timestamps]"
+    held_be = ""
+    if not o.get("show_beat_error", True):
+        # Every reason, so that a beat error the placement check could not check is not taken
+        # for one the resamples supported (until 25 November only the check's reason was given).
+        own = o.get("sd_resampled", sd)
+        reasons = []
+        if not own or o["fail"] > MAX_FAIL or own["first_gap"] > MAX_SD_MS:
+            reasons.append("the resamples do not agree well enough")
+        if "why" in placed:
+            reasons.append("with the beats on the trend of their timestamps the sounds were not found")
+        elif "difference" in placed and not reasons:
+            reasons.append("it moves too far with the beats on the trend of their timestamps")
+        held_be = "  [held back: %s]" % ("; ".join(reasons) or "the resamples do not agree well enough")
     lines.append("beat error from the first sounds: %.2f%s ms (the tock's unlock %+.3f ms from midway)%s" % (abs(r["first_gap"]), pm("first_gap"), r["first_gap"], held_be))
     if "difference" in placed:
         lines.append("  with the beats on the trend of their timestamps: %+.3f ms, %+.3f ms from the reading; scatter %.3f ms over the resamples, %.3f ms with that difference" % (

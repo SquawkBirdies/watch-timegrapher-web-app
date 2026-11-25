@@ -1,11 +1,12 @@
 """Beat error and amplitude of one recording from the sounds inside each beat.
 
 usage: python3 -I tools/prototype/coaxial/analyze.py <file.wav> <prefix>.beats.json <lift angle>
-           [--app] [--from seconds --to seconds] [--resamples n] [--plain | --lined]
+           [--app] [--from seconds] [--to seconds] [--resamples n] [--plain | --lined]
            [--escapement coaxial | lever] [--no-placement-check] [--plot out.png]
 
 <prefix>.beats.json comes from beats.mjs. --app works on envelopes made the way the app's
-filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. The sounds
+filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. --from and
+--to read only the beats between those times, in seconds; either can be given alone. The sounds
 whose 10 s blocks show them moving are lined up again before averaging (see events.measure and
 events.moved); --lined lines every sound up, and --plain gives the plain average, as before
 18 November. The beats are named as decided on 24 November (events.name_beats): on a co-axial,

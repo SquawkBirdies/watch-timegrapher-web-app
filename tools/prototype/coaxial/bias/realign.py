@@ -44,6 +44,8 @@ def main(argv):
     ref_s = min(float(rest[0]) if rest else 60.0, len(x) / fs)
     B = ev.load_beats(stream)
     o = ev.measure(None, fs, B, lift, 0, rows=ev.band_rows(x, fs), reline=False)
+    if "stacks" not in o:
+        sys.exit("no beats to average: " + o["why"])
     bph, tms, base_until, times = o["bph"], o["tms"], o["base_until"], o["times"]
 
     def amp(t_ms):
