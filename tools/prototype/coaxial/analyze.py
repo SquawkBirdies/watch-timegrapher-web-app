@@ -2,7 +2,7 @@
 
 usage: python3 -I tools/prototype/coaxial/analyze.py <file.wav> <prefix>.beats.json <lift angle>
            [--app] [--from seconds --to seconds] [--resamples n] [--plain | --lined]
-           [--escapement coaxial | lever] [--plot out.png]
+           [--escapement coaxial | lever] [--no-placement-check] [--plot out.png]
 
 <prefix>.beats.json comes from beats.mjs. --app works on envelopes made the way the app's
 filter bank makes them (12 kHz, causal filters) instead of the audio at its own rate. The sounds
@@ -11,7 +11,9 @@ events.moved); --lined lines every sound up, and --plain gives the plain average
 18 November. The beats are named as decided on 24 November (events.name_beats): on a co-axial,
 the default, the tick is the beat with the longer time from unlock to lock; with --escapement
 lever, the beat followed by the longer gap between unlocks. A reading that is held back keeps
-the app's names.
+the app's names. When the app timed every beat alone, the beat error is read again with every
+beat on the trend of its timestamps and the difference is added to its scatter (issue 33,
+events.PLACEMENT_CHECK); --no-placement-check leaves it out, as before 25 November.
 """
 import argparse
 import os
@@ -33,6 +35,7 @@ way = p.add_mutually_exclusive_group()
 way.add_argument("--plain", action="store_true")
 way.add_argument("--lined", action="store_true")
 p.add_argument("--escapement", choices=("coaxial", "lever"), default="coaxial")
+p.add_argument("--no-placement-check", dest="placement_check", action="store_false")
 p.add_argument("--plot")
 a = p.parse_args()
 
@@ -41,9 +44,10 @@ fs, x = ev.load_wav(a.wav)
 B = ev.load_beats(a.beats)
 if a.app:
     rows, fe = ev.app_rows(x, fs)
-    o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25}, reline=reline)
+    o = ev.measure(None, fe, B, a.lift, a.resamples, a.t_from, a.t_to, rows=rows, find={"smooth_ms": 0.25}, reline=reline,
+                   placement_check=a.placement_check)
 else:
-    o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=reline)
+    o = ev.measure(x, fs, B, a.lift, a.resamples, a.t_from, a.t_to, reline=reline, placement_check=a.placement_check)
 o = ev.name_beats(o, a.escapement)
 print("\n".join(ev.describe(o)))
 
