@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
-import { readiness } from '../js/ui/positions.js';
+import { readiness, takeReading, describeReading } from '../js/ui/positions.js';
 import { stream, join, againstTruth } from './helpers/stream.js';
 
 /**
@@ -96,6 +96,10 @@ test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a long
   const ready = readiness(true, last, 20, lockSince);
   assert.ok(last.t - lockSince < /** @type {number} */ (last.windowSeconds) && !ready.ready, 'not full: the lock is younger than the window');
   near(ready.covered, last.t - lockSince, 0.01, 'covered');
+  // Saved in the six-position log, the reading counts timestamps of several cycles, not beats.
+  const saved = takeReading(last, { bph: 18000, escapement: 'lever', source: 'Simulator', now: new Date() });
+  assert.ok(saved && saved.cycles && Math.max(...saved.cycles.map((k) => k || 1)) === K, `cycles ${saved?.cycles}`);
+  assert.match(describeReading(saved).detail, /\d+ timestamps of (up to )?\d+ cycles/);
   assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
 });
 

@@ -54,7 +54,10 @@ const FULL_WINDOW_TOLERANCE_SECONDS = 0.01;
  * @property {number|null} beatErrorMs null when it was not measured
  * @property {BeatErrorGap|null} beatErrorGap why the beat error is missing; null when it is there
  * @property {boolean} irregular the beats fell at scattered times
- * @property {number} beats confident timestamps behind the rate, ticks and tocks together
+ * @property {number} beats confident timestamps behind the rate, ticks and tocks together: one
+ *   beat each, or for a faint watch an average of several cycles each (see `cycles`)
+ * @property {(number|null)[]|null} cycles tick-tock cycles averaged per timestamp, for ticks and
+ *   tocks, null for a type not timed; null when not known (readings saved before 26 November)
  * @property {number} windowSeconds length of the averaging window the reading was made over:
  *   the setting, or longer when faint ticks were averaged
  * @property {number} seconds time from the first timestamp in the window to the last
@@ -133,6 +136,7 @@ export function takeReading(readings, context) {
     beatErrorGap,
     irregular: readings.irregular,
     beats: readings.fits.reduce((sum, f) => sum + (f ? f.count : 0), 0),
+    cycles: readings.signal ? readings.signal.cycles.map((k, type) => (readings.fits[type] ? k || 1 : null)) : null,
     windowSeconds: readings.windowSeconds,
     seconds: readings.window[1] - readings.window[0],
     bph: context.bph,
@@ -249,13 +253,27 @@ export function formatSd(sd) {
  */
 export function describeReading(r) {
   const main = `${formatRate(r.rate)} s/d ±${formatSd(r.rateSd)}` + (r.beatErrorMs !== null ? ` · ${formatMs(r.beatErrorMs)} ms` : '');
-  const parts = [`Over a ${formatDuration(Math.round(r.windowSeconds))} window`, `${r.beats} beats`];
+  const parts = [`Over a ${formatDuration(Math.round(r.windowSeconds))} window`, countText(r)];
   if (r.beatErrorGap === 'coaxial') parts.push('beat error not shown: co-axial');
   else if (r.beatErrorGap === 'irregular') parts.push('irregular beat, no beat error');
   else if (r.beatErrorGap === 'unmeasured') parts.push('beat error not measurable');
   else if (r.irregular) parts.push('irregular beat');
   if (isUncertain(r)) parts.push(`uncertain, left out of the average`);
   return { main, detail: parts.join(' · ') };
+}
+
+/**
+ * What the rate was measured from, in words. A faint watch's timestamps each average several
+ * cycles, so counting them as beats would undercount what was heard.
+ * @param {PositionReading} r
+ * @returns {string}
+ */
+function countText(r) {
+  const ks = r.cycles ? /** @type {number[]} */ (r.cycles.filter((k) => k !== null)) : [];
+  if (ks.length === 0) return `${r.beats} timestamps`;
+  const most = Math.max(...ks);
+  if (most === 1) return `${r.beats} beats`;
+  return Math.min(...ks) === most ? `${r.beats} timestamps of ${most} cycles` : `${r.beats} timestamps of up to ${most} cycles`;
 }
 
 /**
@@ -359,6 +377,7 @@ function cleanReading(raw) {
     beatErrorGap: r.beatErrorMs === null ? gap || 'unmeasured' : null,
     irregular: r.irregular === true,
     beats: Math.max(0, Math.round(/** @type {number} */ (r.beats))),
+    cycles: cleanCycles(r.cycles),
     windowSeconds: Math.max(0, /** @type {number} */ (r.windowSeconds)),
     seconds: Math.max(0, /** @type {number} */ (r.seconds)),
     bph: /** @type {number} */ (r.bph),
@@ -366,4 +385,15 @@ function cleanReading(raw) {
     source: typeof r.source === 'string' ? r.source.slice(0, 200) : '',
     savedAt: typeof r.savedAt === 'string' ? r.savedAt.slice(0, 40) : '',
   };
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {(number|null)[]|null} two whole numbers of at least 1, or null for a type not timed;
+ *   null when missing or invalid
+ */
+function cleanCycles(raw) {
+  if (!Array.isArray(raw) || raw.length !== 2) return null;
+  const ok = raw.every((k) => k === null || (Number.isInteger(k) && k >= 1));
+  return ok ? raw.map((k) => (k === null ? null : Number(k))) : null;
 }
