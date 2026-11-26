@@ -27,11 +27,14 @@ import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAG
  * @typedef {import('./ui/positions.js').PositionId} PositionId
  */
 
-/** The recordings in the repository's test fixtures, served from the same site. */
+/**
+ * The two watch recordings among the repository's test fixtures that Safari saved from the
+ * phone's microphone, served from the same site. They are what the microphone gives the app, so
+ * the sounds inside their beats can be read, which the Voice Memos recordings do not allow.
+ */
 const DEMOS = [
-  { id: 'eta', name: 'ETA 2836-2', detail: 'Phone against the case. 64 s, 12 MB.', url: 'tests/fixtures/eta-2836-2.wav', escapement: /** @type {Escapement} */ ('lever') },
-  { id: 'omega', name: 'Omega 3861', detail: 'Co-axial escapement, faint ticks. 62 s, 12 MB.', url: 'tests/fixtures/omega-3861.wav', escapement: /** @type {Escapement} */ ('coaxial') },
-  { id: 'omega-b', name: 'Omega 3861, second recording', detail: 'Co-axial, phone held over the dial. 76 s, 15 MB.', url: 'tests/fixtures/omega-3861-b.wav', escapement: /** @type {Escapement} */ ('coaxial') },
+  { id: 'eta', name: 'ETA 2836-2', detail: 'Swiss lever escapement. 30 s, 12 MB.', url: 'tests/fixtures/eta-2836-2-safari.wav', escapement: /** @type {Escapement} */ ('lever') },
+  { id: 'omega', name: 'Omega 3861', detail: 'Co-axial escapement. 60 s, 23 MB.', url: 'tests/fixtures/omega-3861-safari.wav', escapement: /** @type {Escapement} */ ('coaxial') },
 ];
 
 /** Seconds of trace shown while a source runs. */
