@@ -1,23 +1,23 @@
 // The sounds inside each beat (js/dsp/sounds.js) and the readings that rest on them
 // (js/dsp/amplitude.js): milestone 8's stage after the timestamps, ported from the prototype in
-// tools/prototype/coaxial/. The ported helpers are held to what SciPy and NumPy give for the
-// same input. The readings are held to simulated watches built from the motion of their balance
-// (tests/helpers/balance.js), whose unlocks, locks and amplitude are known. The real recordings
-// are in recordings.test.js.
-//
-// This first step reads the plain average of the beats, with no measure of its scatter and no
-// gate, so only watches that the plain average reads well are held to the truth here. A
-// simulated co-axial exactly in beat, whose unlock is as faint as the Omega's, reads 0.01 to
-// 0.14 ms over eight seeds; whether such a reading may be shown is for the resamples to say.
+// tools/prototype/coaxial/. Here the stage is tested on its own, without the pipeline. The
+// ported helpers are held to what SciPy and NumPy give for the same input. The readings, their
+// scatter, the gates and the lining up are held to made-up watches given straight as envelopes
+// (tests/helpers/envelopes.js), whose truth is exact and which read in a fraction of a second.
+// Simulated watches that go through the pipeline are in sounds-watches.test.js, and the real
+// recordings in recordings.test.js.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { synthesizeBalanceWatch, coaxialWatch, leverWatch } from './helpers/balance.js';
+import { madeUpWatch } from './helpers/envelopes.js';
 import { seededRandom } from '../js/audio/simulator.js';
-import { analyze } from '../js/dsp/offline.js';
-import { stackBeats, stretchMs, samplesBefore, bandMeans, energyWeights, mixBands, smooth, findPeaks, findSounds } from '../js/dsp/sounds.js';
-import { liftLimits, amplitudeOf, pairBeats, timestampGap, readStacks, measureSounds } from '../js/dsp/amplitude.js';
+import { seededRandom as fromMathutil, chiSquaredQuantile, chiSquaredBelow } from '../js/dsp/mathutil.js';
+import {
+  stackBeats, stretchMs, samplesBefore, toColumns, shiftedColumns, bandMeans, energyWeights, mixBands, smooth, findPeaks, findSounds,
+  smoothForMatching, shiftOf,
+} from '../js/dsp/sounds.js';
+import { liftLimits, amplitudeOf, pairBeats, timestampGap, movedSounds, readBeats, measureSounds } from '../js/dsp/amplitude.js';
 
 /** @typedef {import('../js/dsp/sounds.js').Sound} Sound */
 
@@ -84,14 +84,66 @@ function stackWithClick(beats) {
 
 test('the averaged beat leaves out the highest and lowest twentieth of the beats at each instant, so one click does not show', () => {
   // As scipy.stats.trim_mean(M, 0.05): int(0.05 n) beats go from each end, so 1 of 20 and none of 19.
-  const twenty = bandMeans(stackWithClick(20), 2);
+  const twenty = bandMeans(toColumns(stackWithClick(20)), 2);
   assertClose(twenty.levels, [1], 1e-12, 'quiet level');
   assertClose(twenty.excess[0], [0, 0, 2, 2, 2], 1e-12, '20 beats');
-  const nineteen = bandMeans(stackWithClick(19), 2);
+  const nineteen = bandMeans(toColumns(stackWithClick(19)), 2);
   assertClose(nineteen.excess[0], [0, 0, 2, 2 + 997 / 19, 2], 1e-9, '19 beats: nothing is left out, and the click shows');
   // A resample draws beats with repeats: here the beat with the click, three times over in ten.
-  const drawn = bandMeans(stackWithClick(20), 2, [7, 7, 7, 0, 1, 2, 3, 4, 5, 6]);
+  const drawn = bandMeans(toColumns(stackWithClick(20)), 2, [7, 7, 7, 0, 1, 2, 3, 4, 5, 6]);
   assertClose(drawn.excess[0], [0, 0, 2, 2 + 3 * 997 / 10, 2], 1e-9, 'ten drawn beats');
+  // Drawn twice in 39, the click is two of the 39 values and only one goes from each end.
+  const twice = bandMeans(toColumns(stackWithClick(20)), 2, [7, 7, ...Array.from({ length: 37 }, (_, i) => (i % 19) + (i % 19 >= 7 ? 1 : 0))]);
+  assertClose(twice.excess[0], [0, 0, 2, 2 + 997 / 37, 2], 1e-9, '39 drawn beats');
+});
+
+test('the values to leave out are found the same whether the beats were ranked beforehand or not', () => {
+  // Three bands of 60 beats of noise, with clicks; averaged whole, as a resample draws them, and
+  // as a block of twelve.
+  const random = fromMathutil(7);
+  const count = 60;
+  const length = 40;
+  const bands = [0, 1, 2].map(() => Float32Array.from({ length: count * length }, () => (random() < 0.02 ? 300 : 1) * (0.2 + random() * random() * 4)));
+  const stack = { bands, count, length, before: 30, kept: Int32Array.from({ length: count }, (_, i) => i) };
+  const ranked = toColumns(stack);
+  assert.ok(ranked.order && ranked.order.length === 3);
+  const unranked = { ...ranked, order: null };
+  // The expected values the slow way: each instant's values sorted, the ends dropped.
+  /** @param {number[]} beats */
+  const bySorting = (beats) => bands.map((band) => {
+    const cut = Math.floor(0.05 * beats.length);
+    const m = Array.from({ length }, (_, k) => {
+      const column = beats.map((i) => band[i * length + k]).sort((p, q) => p - q).slice(cut, beats.length - cut);
+      return column.reduce((sum, v) => sum + v, 0) / column.length;
+    });
+    const quiet = m.slice(0, 10).sort((p, q) => p - q);
+    const level = 0.5 * (quiet[4] + quiet[5]);
+    return m.map((v) => v / level - 1);
+  });
+  const all = Array.from({ length: count }, (_, i) => i);
+  const draw = Array.from({ length: count }, () => Math.floor(random() * count));
+  const block = all.slice(20, 32);
+  for (const [label, beats, given] of /** @type {[string, number[], number[]|undefined][]} */ ([['all', all, undefined], ['a draw', draw, draw], ['a block', block, block]])) {
+    const want = bySorting(beats);
+    for (const columns of [ranked, unranked]) {
+      const got = bandMeans(columns, 10, given);
+      want.forEach((w, b) => assertClose(got.excess[b], w, 1e-9, `${label}, band ${b}, ${columns.order ? 'ranked' : 'unranked'}`));
+    }
+  }
+});
+
+test('a beat read later has its sounds earlier in its stretch, and keeps its end values past either end', () => {
+  const ramp = Float32Array.from({ length: 12 }, (_, i) => i < 6 ? 10 * i : 100 + i);
+  const stack = { bands: [ramp], count: 2, length: 6, before: 3, kept: Int32Array.from([0, 1]) };
+  // At 1 kHz a sample is a millisecond. The first beat read 1.5 ms later, the second 2 ms earlier.
+  const columns = shiftedColumns(stack, null, [1.5, -2], 1000);
+  assert.equal(columns.order, null);
+  const beat = (/** @type {number} */ i) => Array.from({ length: 6 }, (_, k) => columns.bands[0][k * 2 + i]);
+  assertClose(beat(0), [15, 25, 35, 45, 50, 50], 1e-6, 'later');
+  assertClose(beat(1), [106, 106, 106, 107, 108, 109], 1e-6, 'earlier');
+  // Beats drawn, each with its own shift: the second beat twice, unshifted and half a sample late.
+  const drawn = shiftedColumns(stack, [1, 1], [0, 0.5], 1000);
+  assertClose(Array.from({ length: 6 }, (_, k) => drawn.bands[0][k * 2 + 1]), [106.5, 107.5, 108.5, 109.5, 110.5, 111], 1e-6, 'half a sample');
 });
 
 test('the bands are added by their energy: each by its quiet level, so the averaged beat is the excess energy over all of them', () => {
@@ -272,169 +324,217 @@ test('there is no reading when the stretch around each beat cannot hold both the
   const flat = [new Float32Array(12000).fill(1)];
   const stack = stackBeats(flat, Array.from({ length: 12 }, (_, i) => 600 + 900 * i), 480, 144);
   assert.equal(stack.count, 12);
+  const beats = { stack, times: Float64Array.from({ length: 12 }, (_, i) => 0.05 + 0.075 * i), residualMs: new Float64Array(12) };
   // At 9,000 vph and 52 degrees an unlock could come 44 ms before the lock, and the stretch
   // starts 40 ms before the timestamp. The app's slowest beat rate, 18,000 vph, leaves 8 ms of
   // quiet at the widest lift angle the settings take, 70 degrees.
-  assert.equal(readStacks([stack, stack], 12000, 0, 9000, 52).why, 'short-stretch');
+  assert.equal(readBeats([beats, beats], 12000, 0, 9000, 52).why, 'short-stretch');
   assert.ok(-liftLimits(18000, 70)[1] - 1.5 > -40 + 8);
-  const silent = readStacks([stack, stack], 12000, 0, 28800, 52);
+  const silent = readBeats([beats, beats], 12000, 0, 28800, 52);
   assert.equal(silent.why, 'few-sounds');
   assert.ok(silent.beats && silent.beats.every((b) => b.sounds.length === 0 && b.noise === 0));
 });
 
-// Simulated watches, each analysed once. The beat rate is given: the stage reads the beats the
-// pipeline timed, however their rate was found, and a detected rate gives the same timestamps
-// in about twice the time.
+test('the seeded generator the resamples draw from is the simulator\'s own, in a new home', () => {
+  assert.equal(fromMathutil, seededRandom);
+  const a = fromMathutil(1);
+  const b = fromMathutil(1);
+  const first = Array.from({ length: 5 }, () => a());
+  assert.deepEqual(Array.from({ length: 5 }, () => b()), first, 'the same seed gives the same values');
+  assert.ok(first.every((v) => v >= 0 && v < 1) && new Set(first).size === 5);
+});
 
-/**
- * @typedef {Object} Simulated
- * @property {import('./helpers/balance.js').BalanceTruth} truth
- * @property {import('../js/dsp/amplitude.js').SoundsReading} sounds what the stage read
- * @property {number} unlockGapMs the true gap between the unlocks, in the pipeline's naming of the beats
- * @property {[number, number]} liftMs the true times from unlock to lock, in that naming
- */
-
-/** @type {Map<string, Simulated>} */
-const runs = new Map();
-
-/**
- * A simulated watch and what the stage read from it, made once.
- * @param {string} name
- * @param {() => import('./helpers/balance.js').BalanceWatchOptions} make
- * @param {number} liftAngle
- * @returns {Simulated}
- */
-function simulated(name, make, liftAngle) {
-  let run = runs.get(name);
-  if (!run) {
-    const options = make();
-    const watch = synthesizeBalanceWatch(options);
-    const analysis = analyze(watch.channels, watch.sampleRate, { bph: options.bph, liftAngle });
-    assert.ok(analysis.sounds);
-    // The pipeline calls whichever beat comes first in its first cycle the tick. The truth
-    // counts beats from the first one made, so its even beats may be either.
-    const first = analysis.beats[0].t[analysis.beats[0].ok.indexOf(1)];
-    let nearest = 0;
-    watch.truth.lock.forEach((t, k) => {
-      if (Math.abs(t - first) < Math.abs(watch.truth.lock[nearest] - first)) nearest = k;
-    });
-    const even = nearest % 2 === 0;
-    const [a, b] = watch.truth.liftMs;
-    run = { truth: watch.truth, sounds: analysis.sounds, unlockGapMs: even ? watch.truth.unlockGapMs : -watch.truth.unlockGapMs, liftMs: even ? [a, b] : [b, a] };
-    runs.set(name, run);
+test('the chi-squared point a moving sound is judged by is SciPy\'s', () => {
+  // scipy.stats.chi2.ppf(0.99, dof), SciPy 1.18.
+  for (const [dof, want] of [[1, 6.6348966010212145], [2, 9.21034037197618], [3, 11.344866730144373], [4, 13.276704135987622], [5, 15.08627246938899], [10, 23.209251158954356], [29, 49.58788447289881], [100, 135.80672317102676]]) {
+    assert.ok(Math.abs(chiSquaredQuantile(0.99, dof) - want) < 1e-9 * want, `${dof} degrees of freedom: ${chiSquaredQuantile(0.99, dof)}`);
   }
-  return run;
-}
+  assert.ok(Math.abs(chiSquaredQuantile(0.5, 3) - 2.3659738843753377) < 1e-9);
+  assert.ok(Math.abs(chiSquaredQuantile(0.001, 2) - 0.002001000667167068) < 1e-12);
+  // scipy.stats.chi2.cdf(x, dof), on both sides of where the series gives way to the continued fraction.
+  for (const [x, dof, want] of [[0.5, 1, 0.5204998778130466], [3, 1, 0.9167354833364496], [2, 4, 0.2642411176571153], [13.2767, 4, 0.9899999820274282], [40, 29, 0.9160631015084817], [1e-3, 2, 0.0004998750208307296], [300, 100, 1]]) {
+    assert.ok(Math.abs(chiSquaredBelow(x, dof) - want) < 1e-12, `below ${x} on ${dof}: ${chiSquaredBelow(x, dof)}`);
+  }
+  assert.equal(chiSquaredBelow(0, 3), 0);
+});
+
+test('a sound that comes later in a block is found that much later, and a louder sound nearby is not taken for it', () => {
+  const whole = drawnBeat([[-7, -6.5, 4], [-3.5, -3, 40], [-0.5, 0, 30]]);
+  const template = smoothForMatching(whole.curve, whole.ms);
+  // The unlock's stretch of the template: from 0.5 ms before it starts to 0.5 ms after it is loudest.
+  const [from, to] = [-7.25, -6];
+  // The match is not scaled by how much sound the block has under the window, so even against
+  // itself the template's best match need not be at no shift: here it is 0.02 ms early. Every
+  // block carries the same offset, which goes out when the shifts are compared with each other
+  // and when the beats' mean shift is added back.
+  const own = shiftOf(template, template, whole.ms, from, to);
+  assert.ok(own !== null && Math.abs(own) < 0.03, `against itself ${own}`);
+  for (const late of [0.3, -0.45, 1.1]) {
+    const block = drawnBeat([[-7 + late, -6.5 + late, 4], [-3.5, -3, 40], [-0.5, 0, 30]]);
+    const shift = shiftOf(template, smoothForMatching(block.curve, block.ms), block.ms, from, to);
+    assert.ok(shift !== null && Math.abs(shift - own - late) < 0.005, `${late} ms late, found ${shift}`);
+  }
+  // The unlock in place and a sound five times louder 1 ms after it: the louder one matches the
+  // template more strongly, but the match nearest no shift is the unlock's own.
+  const crowded = drawnBeat([[-7, -6.5, 4], [-6, -5.5, 20], [-3.5, -3, 40], [-0.5, 0, 30]]);
+  const kept = shiftOf(template, smoothForMatching(crowded.curve, crowded.ms), crowded.ms, from, to);
+  assert.ok(kept !== null && Math.abs(kept - own) < 0.005, `with a louder sound 1 ms later, found ${kept}`);
+  // Nothing where the unlock should be: no match reaches half the template's own.
+  const without = drawnBeat([[-3.5, -3, 40], [-0.5, 0, 30]]);
+  assert.equal(shiftOf(template, smoothForMatching(without.curve, without.ms), without.ms, from, to), null);
+  // A search that would leave the stretch is not made: 1.5 ms either way is looked through.
+  assert.equal(shiftOf(template, template, whole.ms, -39, -38), null);
+});
+
+test('a sound counts as moving only when its block shifts differ by more than their own scatter allows', () => {
+  const sd = (/** @type {number} */ v) => Float64Array.from([v, v, v, v]);
+  /** @type {import('../js/dsp/amplitude.js').BlockShifts} */
+  const tick = {
+    mids: [5, 15, 25, 35],
+    // An unlock that wanders within its scatter, and a lock that comes steadily later.
+    shifts: [Float64Array.from([0.01, -0.02, 0, 0.015]), Float64Array.from([-0.2, -0.07, 0.06, 0.19])],
+    scatter: [sd(0.02), sd(0.02)],
+  };
+  /** @type {import('../js/dsp/amplitude.js').BlockShifts} */
+  const tock = {
+    mids: [5, 15, 25, 35],
+    // An unlock placed in one block only, and a lock whose shifts differ by 0.02 ms at a stated
+    // scatter of a thousandth: the scatter is floored at 0.01 ms, so that is no change.
+    shifts: [Float64Array.from([NaN, 0.3, NaN, NaN]), Float64Array.from([0, 0.02, NaN, NaN])],
+    scatter: [sd(0.02), sd(0.001)],
+  };
+  const [[tickUnlock, tickLock], [tockUnlock, tockLock]] = movedSounds([tick, tock]);
+  assert.equal(tickUnlock.moved, false);
+  assert.equal(tickUnlock.dof, 3);
+  // Their weighted mean is 0.00125, and the squared distances from it sum to 0.00071875, over 0.02 squared.
+  assert.ok(Math.abs(tickUnlock.chi2 - 0.00071875 / 0.0004) < 1e-9, `chi-squared ${tickUnlock.chi2}`);
+  assert.ok(Math.abs(tickUnlock.limit - chiSquaredQuantile(0.99, 3)) < 1e-12);
+  assert.equal(tickLock.moved, true);
+  assert.ok(tickLock.chi2 > 100);
+  assert.deepEqual([tockUnlock.moved, tockUnlock.dof, Number.isNaN(tockUnlock.chi2), Number.isNaN(tockUnlock.limit)], [false, 0, true, true], 'placed in one block: not tested');
+  assert.equal(tockLock.moved, false);
+  assert.ok(Math.abs(tockLock.chi2 - 2) < 1e-9 && tockLock.dof === 1, `chi-squared ${tockLock.chi2} with the scatter floored`);
+});
 
 /**
- * Hold a reading to the truth.
- * @param {Simulated} run
- * @param {{ms: number, degrees: number}} within how far the beat error and each time from unlock
- *   to lock may be from the truth, and how far the amplitude
+ * Read a made-up watch at 50 degrees of lift.
+ * @param {ReturnType<typeof madeUpWatch>} w
+ * @param {import('../js/dsp/amplitude.js').ReadOptions} [options]
  */
-function assertReadsTruth(run, within) {
-  const s = run.sounds;
+const readMadeUp = (w, options) => measureSounds(w.rows, w.envelopeRate, w.beats, w.bph, 50, w.toPosition, options);
+
+/** A steady made-up watch 0.4 ms out of beat, 20 s long, and its reading, made once. */
+let steady = /** @type {{watch: ReturnType<typeof madeUpWatch>, reading: ReturnType<typeof readMadeUp>}|null} */ (null);
+const steadyWatch = () => (steady ??= ((watch) => ({ watch, reading: readMadeUp(watch) }))(madeUpWatch({ seconds: 20 })));
+
+test('a made-up watch 0.4 ms out of beat is read from its unlocks, with a scatter over 200 draws, and both readings may be shown', () => {
+  const { watch, reading: s } = steadyWatch();
   assert.equal(s.why, null);
-  assert.ok(s.unlockGapMs !== null && s.beatErrorMs !== null && s.liftMs && s.amplitude !== null);
-  assert.ok(Math.abs(s.unlockGapMs - run.unlockGapMs) <= within.ms, `the tock's unlock ${s.unlockGapMs.toFixed(3)} ms from midway, truly ${run.unlockGapMs.toFixed(3)}`);
-  assert.equal(s.beatErrorMs, Math.abs(s.unlockGapMs));
-  for (const j of [0, 1]) assert.ok(Math.abs(s.liftMs[j] - run.liftMs[j]) <= within.ms, `unlock to lock ${s.liftMs[j].toFixed(3)} ms, truly ${run.liftMs[j].toFixed(3)}`);
-  assert.ok(Math.abs(s.amplitude - run.truth.meanAmplitude) <= within.degrees, `amplitude ${s.amplitude.toFixed(2)}, truly ${run.truth.meanAmplitude.toFixed(2)}`);
-}
-
-/**
- * The simulated lever's three sounds with the impulse and the unlock at other levels, and
- * optionally a fourth sound after the drop, as a rebound might make.
- * @param {{impulseDb?: number, unlockDb?: number, afterDrop?: {delayMs: number, db: number}}} [levels]
- * @returns {[import('./helpers/balance.js').BeatSound[], import('./helpers/balance.js').BeatSound[]]}
- */
-function leverSounds({ impulseDb = 18, unlockDb = 12, afterDrop } = {}) {
-  /** @type {import('./helpers/balance.js').BeatSound[]} */
-  const beat = [
-    { after: 'unlock', db: unlockDb, riseMs: 0.12, decayMs: 0.5, band: [7000, 22000] },
-    { after: 'unlock', delayMs: 2.4, delayJitterMs: 0.08, db: impulseDb, riseMs: 0.1, decayMs: 0.5, band: [5000, 22000] },
-    { after: 'lock', db: 25, riseMs: 0.08, decayMs: 0.7, band: [5000, 22000] },
-  ];
-  if (afterDrop) beat.push({ after: 'lock', delayMs: afterDrop.delayMs, delayJitterMs: 0.1, db: afterDrop.db, riseMs: 0.12, decayMs: 0.5, band: [5000, 22000] });
-  return [beat, beat];
-}
-
-// What the plain average may be held to. A lever's unlock stands 22 dB over the noise of the
-// average, and these watches read within 0.02 ms and 0.3 degrees. A co-axial's stands 11 dB
-// over it, as the Omega's does, and the prototype's shown readings of such watches were within
-// 0.08 ms and 2 degrees.
-const LEVER = { ms: 0.03, degrees: 0.5 };
-const COAXIAL = { ms: 0.08, degrees: 2 };
-
-test('a simulated Swiss lever 0.5 ms out of beat reads its beat error from the unlocks, with its sign, and its amplitude', () => {
-  const run = simulated('lever 0.5 ms', () => leverWatch({ restOffsetDeg: 1.7, seed: 61 }), 50);
-  assert.ok(Math.abs(Math.abs(run.truth.unlockGapMs) - 0.5) < 0.01 && run.truth.meanAmplitude === 270);
-  assertReadsTruth(run, LEVER);
-  const s = run.sounds;
-  assert.ok(s.beats && s.beats.every((b) => b.sounds.length === 3), 'unlock, impulse and drop in each beat');
-  // 40 s at 28,800 vph is 160 beats of each type; the first and last have no whole stretch.
-  assert.ok(s.counts.every((c) => c >= 155 && c <= 160), `beats averaged ${s.counts}`);
-  // A lever's two beats sound alike, so its timestamps are as far apart as its unlocks.
-  assert.ok(s.timestampGapMs !== null && s.unlockGapMs !== null && Math.abs(s.timestampGapMs - s.unlockGapMs) < 0.02);
-  assert.ok(s.unlockDb !== null && s.unlockDb > 18, `unlock ${s.unlockDb} dB over the noise of the average`);
+  assert.ok(s.unlockGapMs !== null && s.liftMs && s.amplitude !== null && s.scatter && s.lining);
+  assert.ok(Math.abs(s.unlockGapMs - 0.4) < 0.02, `the tock's unlock ${s.unlockGapMs} ms from midway`);
+  assert.ok(s.liftMs.every((v) => Math.abs(v - 7.4) < 0.03), `unlock to lock ${s.liftMs}`);
+  assert.ok(Math.abs(s.amplitude - amplitudeOf(50, 28800, 7.4)) < 0.5, `amplitude ${s.amplitude}`);
+  assert.deepEqual([s.showBeatError, s.showAmplitude, s.beatErrorHeld, s.amplitudeHeld], [true, true, null, null]);
+  assert.deepEqual([s.failing, s.otherSound], [0, 0]);
+  // Eighty beats of each type as alike as these give the beat error to a few thousandths.
+  assert.ok(s.scatter.unlockGapMs > 0.002 && s.scatter.unlockGapMs < 0.02, `scatter ${s.scatter.unlockGapMs} ms`);
+  assert.ok(s.scatter.amplitude < 0.2 && s.scatter.liftMs.every((v) => v < 0.01));
+  // Nothing moves over its two blocks of 10 s, so the plain average stands.
+  assert.equal(s.lining.state, 'steady');
+  assert.equal(s.lining.blocks, 2);
+  assert.ok(s.lining.moved && s.lining.moved.every((type) => type.every((m) => !m.moved && m.dof === 1)));
+  // The same recording always gives the same reading: the draws are seeded.
+  const again = readMadeUp(watch);
+  assert.deepEqual([again.unlockGapMs, again.scatter, again.failing], [s.unlockGapMs, s.scatter, s.failing]);
+  const other = readMadeUp(watch, { seed: 2 });
+  assert.ok(other.scatter && other.unlockGapMs === s.unlockGapMs && other.scatter.unlockGapMs !== s.scatter.unlockGapMs, 'other draws, another scatter for the same reading');
+  // Out of beat the other way, the gap changes sign.
+  const back = readMadeUp(madeUpWatch({ seconds: 20, gapMs: -0.7, seed: 4 }));
+  assert.ok(back.unlockGapMs !== null && Math.abs(back.unlockGapMs + 0.7) < 0.02 && back.beatErrorMs === -back.unlockGapMs, `the other way: ${back.unlockGapMs}`);
 });
 
-test('a simulated Swiss lever in beat at 220 degrees reads no beat error and that amplitude', () => {
-  const run = simulated('lever in beat at 220', () => leverWatch({ amplitude: 220, seed: 62 }), 50);
-  assert.ok(Math.abs(run.truth.unlockGapMs) < 1e-9);
-  assertReadsTruth(run, LEVER);
-});
-
-test('a simulated co-axial 0.5 ms out of beat reads 0.5 ms from its unlocks, where its timestamps are 3.6 ms apart', () => {
-  const run = simulated('co-axial 0.5 ms', () => coaxialWatch({ restOffsetDeg: 1.35, seed: 11 }), 36);
-  assert.ok(Math.abs(Math.abs(run.truth.unlockGapMs) - 0.5) < 0.01);
-  assertReadsTruth(run, COAXIAL);
-  const s = run.sounds;
-  // The timestamps follow each beat's loudest sound, the impulse in one beat and the lock in
-  // the other: Swiss-lever mode's beat error, which does not describe the watch.
-  assert.ok(s.timestampGapMs !== null && Math.abs(s.timestampGapMs) > 3, `timestamps ${s.timestampGapMs} ms apart`);
-  // The two beats cross different arcs, 37.45 and 34.55 degrees, so their times differ by 8%.
-  assert.ok(s.liftMs && Math.abs(Math.max(...s.liftMs) / Math.min(...s.liftMs) - 1.083) < 0.02, `unlock to lock ${s.liftMs}`);
-  assert.ok(s.amplitudes && Math.abs(s.amplitudes[0] - s.amplitudes[1]) > 15, 'one beat alone would read the amplitude 20 degrees off the other');
-});
-
-test('the same co-axial 1.0 ms out of beat the other way reads the opposite sign', () => {
-  const one = simulated('co-axial 0.5 ms', () => coaxialWatch({ restOffsetDeg: 1.35, seed: 11 }), 36);
-  const other = simulated('co-axial 1.0 ms the other way', () => coaxialWatch({ restOffsetDeg: -2.7, seed: 11 }), 36);
-  assert.ok(Math.abs(Math.abs(other.truth.unlockGapMs) - 1.0) < 0.01 && Math.sign(other.truth.unlockGapMs) === -Math.sign(one.truth.unlockGapMs));
-  assertReadsTruth(other, COAXIAL);
-  assert.ok(one.sounds.unlockGapMs !== null && other.sounds.unlockGapMs !== null);
-  assert.equal(Math.sign(other.sounds.unlockGapMs), -Math.sign(one.sounds.unlockGapMs));
-});
-
-test('a simulated lever whose impulse is 9 dB louder than its drop is still read from its unlock to its drop', () => {
-  // Issue 24 of the investigation: paired on its loudest later sounds alone, this watch gave no
-  // reading, its impulses coming 2.4 ms after the unlock.
-  const run = simulated('lever impulse 9 dB over the drop', () => leverWatch({ sounds: leverSounds({ impulseDb: 34 }), seconds: 60, restOffsetDeg: 1.7, seed: 1 }), 50);
-  assertReadsTruth(run, LEVER);
-  const s = run.sounds;
-  assert.ok(s.pair && s.beats);
-  for (const j of [0, 1]) {
-    const loudest = s.beats[j].sounds.reduce((a, b) => (b.level > a.level ? b : a));
-    assert.ok(loudest !== s.pair.lock[j] && loudest.onsetMs < s.pair.lock[j].onsetMs, 'the loudest sound is the impulse, before the lock');
+test('a reading with too few draws to judge it is never to be shown', () => {
+  const { watch, reading } = steadyWatch();
+  for (const resamples of [0, 4]) {
+    const s = readMadeUp(watch, { resamples });
+    assert.equal(s.unlockGapMs, reading.unlockGapMs, 'the reading itself is the same');
+    assert.deepEqual([s.showBeatError, s.showAmplitude, s.beatErrorHeld, s.amplitudeHeld, s.scatter], [false, false, 'unchecked', 'unchecked', null], `${resamples} draws`);
   }
 });
 
-test('a simulated lever whose unlock is too faint to find gives no reading, rather than one timed from its impulse', () => {
-  // Issue 25: at 220 degrees the time from the impulse to the drop is itself believable, and
-  // read as the lift it gave an amplitude 79 degrees high.
-  const lost = simulated('lever unlock lost at 220', () => leverWatch({ sounds: leverSounds({ unlockDb: -10 }), amplitude: 220, restOffsetDeg: 1.7, seed: 1 }), 50);
-  assert.equal(lost.sounds.why, 'no-middle-sound');
-  assert.ok(lost.sounds.beats && lost.sounds.beats.every((b) => b.sounds.length === 2), 'impulse and drop are all that is heard');
-  assert.ok(lost.sounds.amplitude === null && lost.sounds.beatErrorMs === null);
-  // Issue 24: with a sound 4 ms after the drop, quieter than the impulse, the drop comes too
-  // soon after the first sound and the later sound is not taken for the lock.
-  const rebound = simulated('lever unlock lost, sound after the drop', () => leverWatch({ sounds: leverSounds({ unlockDb: -10, afterDrop: { delayMs: 4, db: 15 } }), restOffsetDeg: 1.7, seed: 1 }), 50);
-  assert.equal(rebound.sounds.why, 'lift-range');
-  assert.ok(rebound.sounds.refusedLiftMs && rebound.sounds.refusedLiftMs.every((t) => Math.abs(t - 5) < 0.1), `refused ${rebound.sounds.refusedLiftMs}`);
+test('an irregular watch keeps its amplitude and loses its beat error; a beat found halfway between the tick and the tock holds both back', () => {
+  const { watch, reading } = steadyWatch();
+  const irregular = readMadeUp(watch, { irregular: true });
+  assert.deepEqual([irregular.showBeatError, irregular.beatErrorHeld, irregular.showAmplitude, irregular.amplitudeHeld], [false, 'irregular', true, null]);
+  assert.equal(irregular.amplitude, reading.amplitude);
+  // With a beat halfway, the beat rate in use is half the watch's own: the tick and the tock
+  // are the same kind of beat, and the amplitude formula has the wrong rate.
+  const halfway = readMadeUp(watch, { halfway: true });
+  assert.deepEqual([halfway.showBeatError, halfway.beatErrorHeld, halfway.showAmplitude, halfway.amplitudeHeld], [false, 'halfway', false, 'halfway']);
 });
 
-test('a simulated lever whose impulse cannot be heard gives no reading either: the cost of refusing a beat with nothing between', () => {
-  const run = simulated('lever impulse missing', () => leverWatch({ sounds: leverSounds({ impulseDb: -10 }), restOffsetDeg: 1.7, seed: 1 }), 50);
-  assert.equal(run.sounds.why, 'no-middle-sound');
+test('beats that fall at scattered times scatter the beat error past its gate and leave the amplitude alone', () => {
+  // Each whole beat 0.6 ms off the grid (standard deviation), its timestamp with it. Drawn
+  // again, the 80 beats of each type put the gap between them anywhere within 0.12 ms.
+  const s = readMadeUp(madeUpWatch({ seconds: 20, beatJitterMs: 0.6 }));
+  assert.ok(s.scatter && s.amplitude !== null);
+  assert.ok(s.scatter.unlockGapMs > 0.1 && s.scatter.unlockGapMs < 0.2, `scatter ${s.scatter.unlockGapMs} ms`);
+  assert.deepEqual([s.showBeatError, s.beatErrorHeld, s.showAmplitude, s.amplitudeHeld], [false, 'scatter', true, null]);
+  assert.ok(Math.abs(s.amplitude - amplitudeOf(50, 28800, 7.4)) < 0.5 && s.scatter.amplitude < 0.2, `amplitude ${s.amplitude} +- ${s.scatter.amplitude}`);
+});
+
+test('an unlock that many draws of the beats lose holds both readings back, though the draws that find it agree', () => {
+  // At 0.45 of the quiet level the unlock stands 10 dB over the noise of the average and 3% of
+  // the draws lose it; at 0.4, 11.5% do, over the 5% allowed.
+  const found = readMadeUp(madeUpWatch({ seconds: 20, unlock: 0.45 }));
+  assert.ok(found.failing !== null && found.failing > 0 && found.failing <= 0.05, `failing ${found.failing}`);
+  assert.deepEqual([found.showBeatError, found.showAmplitude], [true, true]);
+  const lost = readMadeUp(madeUpWatch({ seconds: 20, unlock: 0.4 }));
+  assert.ok(lost.failing !== null && lost.failing > 0.05 && lost.failing < 0.3 && lost.scatter, `failing ${lost.failing}`);
+  assert.deepEqual([lost.showBeatError, lost.beatErrorHeld, lost.showAmplitude, lost.amplitudeHeld], [false, 'failing', false, 'failing']);
+  assert.ok(lost.scatter.unlockGapMs < 0.1 && lost.scatter.amplitude < 5, 'the scatter alone would have passed');
+  assert.ok(lost.unlockGapMs !== null && Math.abs(lost.unlockGapMs - 0.4) < 0.03);
+  // Fainter still, the sounds of the whole average cannot be paired, and there is no reading.
+  assert.equal(readMadeUp(madeUpWatch({ seconds: 20, unlock: 0.25 })).why, 'no-pair');
+});
+
+test('when the time from unlock to lock changes while the beats are taken, the plain average reads the amplitude 6 degrees low and shows it; lined up again on the unlock, it is right', () => {
+  // The time grows from 6.9 to 7.9 ms over 30 s, as when the amplitude falls by about 36
+  // degrees. The timestamps follow the lock, so the unlock moves a millisecond against them
+  // and the plain average smears it: its rise starts early, and the time reads 0.18 ms long.
+  const watch = madeUpWatch({ seconds: 30, liftMs: (t) => 6.9 + t / 30 });
+  const truth = amplitudeOf(50, 28800, 0.5 * (watch.truth.liftMs[0] + watch.truth.liftMs[1]));
+  assert.ok(Math.abs(watch.truth.liftMs[0] - 7.4) < 0.01);
+  const s = readMadeUp(watch);
+  assert.ok(s.lining && s.lining.moved && s.amplitude !== null && s.unlockGapMs !== null && s.scatter && s.liftMs);
+  assert.equal(s.lining.state, 'lined');
+  assert.equal(s.lining.blocks, 3);
+  assert.deepEqual(s.lining.moved.map((type) => type.map((m) => m.moved)), [[true, false], [true, false]], 'the unlocks move, the locks do not');
+  // The blocks' shifts follow the unlock: about a third of a millisecond earlier, then later.
+  for (const type of s.lining.shifts) {
+    assert.ok(type.shifts[0][0] > 0.2 && Math.abs(type.shifts[0][1]) < 0.1 && type.shifts[0][2] < -0.2, `unlock shifts ${Array.from(type.shifts[0])}`);
+    // The lock's shifts are alike in every block; what they share is the match's own offset.
+    assert.ok(type.shifts[1].every((v) => Math.abs(v - type.shifts[1][0]) < 0.01 && Math.abs(v) < 0.05), `lock shifts ${Array.from(type.shifts[1])}`);
+  }
+  assert.ok(Math.abs(s.amplitude - truth) < 1, `lined up: ${s.amplitude}, truly ${truth}`);
+  assert.ok(s.liftMs.every((v) => Math.abs(v - 7.4) < 0.03), `unlock to lock ${s.liftMs}`);
+  assert.ok(Math.abs(s.unlockGapMs - 0.4) < 0.03 && s.showBeatError && s.showAmplitude);
+  // The earlier behaviour, kept as a setting: the plain average.
+  const plain = readMadeUp(watch, { lineUp: 'never' });
+  assert.ok(plain.amplitude !== null && plain.scatter && plain.lining === null);
+  assert.ok(plain.amplitude < truth - 5 && plain.amplitude > truth - 8 && plain.showAmplitude && plain.scatter.amplitude < 2, `plain: ${plain.amplitude} +- ${plain.scatter.amplitude}, shown ${plain.showAmplitude}`);
+  // Its unlock is smeared, so its beat error scatters twice as far.
+  assert.ok(plain.scatter.unlockGapMs > 1.5 * s.scatter.unlockGapMs, `scatter ${plain.scatter.unlockGapMs} against ${s.scatter.unlockGapMs} ms`);
+});
+
+test('a stretch of 15 s has one block and nothing to line up on, so a changing amplitude is read low and shown: a limit', () => {
+  // The same change as above in half the time. The real-time stage reads 30 s of beats or more.
+  const watch = madeUpWatch({ seconds: 15, liftMs: (t) => 6.9 + t / 15 });
+  const truth = amplitudeOf(50, 28800, 0.5 * (watch.truth.liftMs[0] + watch.truth.liftMs[1]));
+  const s = readMadeUp(watch);
+  assert.ok(s.lining && s.lining.moved && s.amplitude !== null && s.scatter);
+  assert.equal(s.lining.blocks, 1);
+  assert.equal(s.lining.state, 'steady');
+  assert.ok(s.lining.moved.every((type) => type.every((m) => !m.moved && Number.isNaN(m.chi2))), 'no sound could be tested');
+  assert.ok(s.amplitude < truth - 5 && s.amplitude > truth - 8 && s.showAmplitude, `${s.amplitude} +- ${s.scatter.amplitude}, truly ${truth}, shown ${s.showAmplitude}`);
 });

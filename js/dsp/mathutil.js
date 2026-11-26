@@ -195,3 +195,98 @@ export function robustLine(x, y, iterations = 6) {
   }
   return { a, b, weights: w, residualSd: kept > 2 ? Math.sqrt(ss / (kept - 2)) : robustSd(r) };
 }
+
+/**
+ * Small seeded random number generator (mulberry32). The same seed always gives the same
+ * values, so that a recording always gives the same reading.
+ * @param {number} seed
+ * @returns {() => number} uniform values in [0, 1)
+ */
+export function seededRandom(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Natural logarithm of the gamma function, by Lanczos's approximation; for x > 0.
+ * @param {number} x
+ * @returns {number}
+ */
+export function logGamma(x) {
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - logGamma(1 - x);
+  const z = x - 1;
+  let sum = c[0];
+  for (let i = 1; i < 9; i++) sum += c[i] / (z + i);
+  const t = z + 7.5;
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(sum);
+}
+
+/**
+ * The share of a chi-squared distribution with `dof` degrees of freedom that lies below x:
+ * the regularised lower incomplete gamma function P(dof / 2, x / 2), by its series for small x
+ * and its continued fraction for large.
+ * @param {number} x
+ * @param {number} dof
+ * @returns {number}
+ */
+export function chiSquaredBelow(x, dof) {
+  if (!(x > 0)) return 0;
+  const a = dof / 2;
+  const h = x / 2;
+  const front = Math.exp(a * Math.log(h) - h - logGamma(a));
+  if (h < a + 1) {
+    let term = 1 / a;
+    let sum = term;
+    for (let n = 1; n < 1000; n++) {
+      term *= h / (a + n);
+      sum += term;
+      if (term < sum * 1e-16) break;
+    }
+    return front * sum;
+  }
+  // Lentz's method for the upper function's continued fraction.
+  const tiny = 1e-300;
+  let b = h + 1 - a;
+  let c = 1 / tiny;
+  let d = 1 / b;
+  let f = d;
+  for (let n = 1; n < 1000; n++) {
+    const an = -n * (n - a);
+    b += 2;
+    d = an * d + b;
+    if (Math.abs(d) < tiny) d = tiny;
+    c = b + an / c;
+    if (Math.abs(c) < tiny) c = tiny;
+    d = 1 / d;
+    const delta = d * c;
+    f *= delta;
+    if (Math.abs(delta - 1) < 1e-16) break;
+  }
+  return 1 - front * f;
+}
+
+/**
+ * The value that a chi-squared variable with `dof` degrees of freedom stays below with
+ * probability p (SciPy's chi2.ppf), by bisection.
+ * @param {number} p between 0 and 1
+ * @param {number} dof
+ * @returns {number}
+ */
+export function chiSquaredQuantile(p, dof) {
+  let lo = 0;
+  let hi = Math.max(1, dof);
+  while (chiSquaredBelow(hi, dof) < p) hi *= 2;
+  for (let i = 0; i < 200 && hi - lo > 1e-13 * hi; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (chiSquaredBelow(mid, dof) < p) lo = mid;
+    else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}

@@ -18,7 +18,7 @@ bear on your task. The design plan is a separate Claude Doc kept by the owner, L
 ## Commands
 
 ```
-npm test                 # all tests, about eight minutes; Node 22 or later, nothing to install
+npm test                 # all tests, about eleven minutes; Node 22 or later, nothing to install
 npm run typecheck        # tsc over js/ with the strict settings in jsconfig.json
 node --test tests/live.test.js                                      # one file
 node --test --test-name-pattern="basket case" tests/irregular.test.js   # matching tests
