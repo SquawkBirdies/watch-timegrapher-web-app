@@ -6,7 +6,9 @@ real-time trace.
 
 **Status: milestone 7 of 9.** The timegrapher listens to the phone's microphone. It can also be
 driven by a simulated watch, by three demo recordings or by a recording of your own. It measures
-continuously, or saves a reading for each of the six positions a watch is checked in.
+continuously, or saves a reading for each of the six positions a watch is checked in. Milestone
+8, amplitude and a beat error measured from the unlock, is under way: the first of its six steps
+is in the code, and nothing of it shows in the app yet.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
 the timegrapher replaying the three demo recordings in milestone 5, a live measurement of the
@@ -106,6 +108,52 @@ against 3.8 dB in the Omega's capture and 11.8 dB in the ETA's. Made as loud as 
 60 s long, 22 of them read within 0.05 ms, and the two 36,000 vph watches given as 18,000 vph
 read about 0 ms against 0.50, as the app's own Swiss-lever reading does. Its README gives the
 method, its checks, and its limits.
+
+Milestone 8 brings that method into the app, for both escapements, in six steps. The first is
+in. `js/dsp/sounds.js` averages each beat type's envelopes around its timestamps and finds the
+sounds in the averaged beat; `js/dsp/amplitude.js` takes the first as the unlock, chooses the
+lock for both beats together, and gives the beat error from the unlocks and the amplitude. So
+far this runs only on a whole recording, when `analyze` is given a lift angle
+(`{ liftAngle: 36 }`, or a fifth argument to `tools/run-analysis.js`). The real-time pipeline
+does not use it, and the app shows none of it.
+
+| Recording, first channel, whole | Beat error from the unlocks | Amplitude | Unlock to lock, tick and tock |
+| --- | --- | --- | --- |
+| Omega 3861, Safari capture, at 36° | 0.343 ms | 287.8° | 6.96 and 6.32 ms |
+| ETA 2836-2, Safari capture, at 50° | 0.275 ms | 265.9° | 7.49 and 7.50 ms |
+| The three Voice Memos recordings | none | none | timestamps that each average several cycles |
+| No watch, Safari capture | none | none | no beats timed |
+
+This step reads the plain average of the beats, and three things are still to come with the
+next: lining the beats up again where a sound moves, a scatter for each reading, and the gates
+that hold a doubtful reading back. Until then nothing here says whether a reading may be shown.
+
+- **Against the prototype.** Given each beat where the prototype puts it, the port finds the same
+  sounds as the prototype's plain average on envelopes made as the app makes them
+  (`analyze.py --app --plain`), each within 2 hundred-millionths of a millisecond, which is
+  rounding: on the two captures and on 59 simulated watches, with no reading for the same 8 of
+  those, each for the same reason. The prototype reads the captures at 0.340 ms and 287.8°, and
+  0.273 ms and 265.7°. The port puts each beat at its timestamp's own place in the envelope
+  instead, three eighths of an envelope sample (0.03 ms) earlier, the same for every beat. That
+  moves the readings by up to 0.004 ms and 0.2° on the captures, and by up to 0.017 ms and 0.3°
+  on the simulated watches.
+- **Against the truth,** on those 59 simulated watches, 60 s each unless said. The 12 levers
+  whose unlock is heard read within 0.011 ms and 0.3°, including 8 whose impulse is as loud as
+  the drop or up to 9 dB louder. The 5 levers whose unlock is lost or whose impulse cannot be
+  heard give no reading. The 42 co-axials follow the Omega's pattern. The 36 whose unlock is set
+  3 dB or more over the background all read, within 0.14 ms (0.05 ms rms) and 1.6°: the 8 in
+  beat read 0.01 to 0.14 ms, and the 6 of 20 s and 30 s within 0.10 ms. Of the 6 with the unlock
+  set 2 dB over the background or level with it, 2 give no reading, 3 read within 0.09 ms, and 1
+  reads 3.05 ms and 11.5° off, having taken another sound for an unlock: the kind of reading the
+  gates are for.
+- **Every beat must be timed alone.** When a beat type's timestamps each average several cycles
+  there is no reading, as decided on 25 November. That leaves out all three Voice Memos
+  recordings, the ETA's because its ticks average two cycles.
+- **At 44.1 kHz the band from 18 kHz is still dropped,** and most of the Omega's unlock lies in
+  it. Keeping it, cut to 18 to 20.7 kHz, comes with the real-time step.
+- **Not checked against a timing machine.** That the first sound is the unlock in both
+  co-axial beats is a reading of the patents, and the Omega 3861's 36° lift angle comes from a
+  forum post; each degree of it moves the amplitude by about 8°.
 
 Readings are averaged over 20 s by default, which follows the watch's own changes sooner but
 reads less steadily. The last readings at 20 s were +6.91 s/day for the ETA, +0.45 s/day for the
@@ -493,6 +541,7 @@ Requires Node 22 or later. There is nothing to install.
 npm test             # about eight minutes on a fast computer
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
+node tools/run-analysis.js tests/fixtures/omega-3861-safari.wav 0 0 0 36   # with a lift angle
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
 node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat rate given
 ```
@@ -512,6 +561,8 @@ js/dsp/template.js     averaged tick-tock cycle
 js/dsp/timing.js       matched-filter beat timing, with averaging for faint watches
 js/dsp/irregular.js    irregular watches: every beat timed on its own
 js/dsp/estimate.js     rate and beat error from the timestamps; the escapement setting
+js/dsp/sounds.js       each beat type's averaged beat and the sounds in it (milestone 8)
+js/dsp/amplitude.js    the unlock and the lock; beat error from the unlocks, amplitude (milestone 8)
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
 js/dsp/tracker.js      Kalman beat tracker
 js/dsp/pipeline.js     real-time pipeline: listening, tracking, lock lost

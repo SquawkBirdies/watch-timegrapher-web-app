@@ -42,10 +42,12 @@ test('no watch, in real time: never locks with any beat rate given', () => {
 });
 
 test('no watch, whole recording: no lock and almost no confident timestamps', () => {
-  const r = analyze(wav.channels, wav.sampleRate);
+  const r = analyze(wav.channels, wav.sampleRate, { liftAngle: 50 });
   assert.equal(r.locked, false);
   assert.equal(r.rate, null);
   assert.equal(r.beatErrorMs, null);
+  // With no beats timed there are no sounds inside them to read.
+  assert.ok(r.sounds && r.sounds.why === 'few-beats' && r.sounds.beatErrorMs === null && r.sounds.amplitude === null);
   // Chance alone puts about 1% of noise peaks above the 99th-percentile threshold.
   for (const b of r.beats) {
     const confident = b.ok.reduce((s, v) => s + v, 0);

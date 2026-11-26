@@ -3,6 +3,11 @@
 A prototype, written on 16 November 2026. It is not part of the app and changes nothing the app
 shows. The investigation behind it is written up in a separate Claude Doc kept by the owner.
 
+Milestone 8 ports it into the app step by step. Since 26 November its plain average (`--plain`)
+is in `js/dsp/sounds.js` and `js/dsp/amplitude.js`, which were checked against it sound by sound
+on envelopes made as the app makes them (`--app`); the app's README gives the numbers. Lining the
+beats up again, the resamples and the gates are still only here.
+
 ## The idea
 
 The app gives each beat one timestamp, at the loudest part of its averaged sound. In a Swiss
