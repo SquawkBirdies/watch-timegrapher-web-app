@@ -10,6 +10,8 @@ import { trackBeats, medianZ, LAG_MS } from './timing.js';
 import { alignBeats, continueBeats } from './irregular.js';
 import { summarize } from './estimate.js';
 import { medfilt } from './mathutil.js';
+import { soundRows } from './sounds.js';
+import { measureSounds } from './amplitude.js';
 
 /**
  * @typedef {import('./estimate.js').BeatSeries} BeatSeries
@@ -41,6 +43,8 @@ import { medfilt } from './mathutil.js';
  *   when a beat lies halfway between the tick and the tock
  * @property {Float32Array[]} template averaged tick-tock cycle per band and channel
  * @property {[number, number]} clusters tick and tock positions in the template, in samples
+ * @property {import('./amplitude.js').SoundsReading|null} sounds the beat error from the unlocks
+ *   and the amplitude, from the sounds inside each beat; null unless a lift angle was given
  */
 
 export { MAX_OFFSET_SD_MS, MIN_SIMILARITY, MAX_SCATTER_MS } from './estimate.js';
@@ -51,13 +55,14 @@ export { MAX_OFFSET_SD_MS, MIN_SIMILARITY, MAX_SCATTER_MS } from './estimate.js'
  * Analyse a recording.
  * @param {ArrayLike<number>[]} channels one array of samples per channel
  * @param {number} sampleRate
- * @param {{humHz?: number, bph?: number, startSeconds?: number, endSeconds?: number, bands?: number[][], escapement?: import('./estimate.js').Escapement, timing?: TimingOptions}} [options]
+ * @param {{humHz?: number, bph?: number, startSeconds?: number, endSeconds?: number, bands?: number[][], escapement?: import('./estimate.js').Escapement, timing?: TimingOptions, liftAngle?: number}} [options]
  *   `bands` replaces the filter bank's band edges in hertz; `escapement` as in `summarize`;
- *   `timing` as in `trackBeats`
+ *   `timing` as in `trackBeats`; with `liftAngle`, in degrees, the sounds inside each beat are
+ *   read too (`sounds` in the result)
  * @returns {Analysis}
  */
 export function analyze(channels, sampleRate, options = {}) {
-  const { humHz = 60, bph: forcedBph, startSeconds = 0, endSeconds, bands, escapement, timing } = options;
+  const { humHz = 60, bph: forcedBph, startSeconds = 0, endSeconds, bands, escapement, timing, liftAngle } = options;
   const from = Math.max(0, Math.round(startSeconds * sampleRate));
   const to = Math.min(channels[0].length, endSeconds === undefined ? Infinity : Math.round(endSeconds * sampleRate));
   const audio = channels.map((c) => Float32Array.from(/** @type {any} */ (c).subarray ? /** @type {any} */ (c).subarray(from, to) : Array.prototype.slice.call(c, from, to)));
@@ -65,7 +70,8 @@ export function analyze(channels, sampleRate, options = {}) {
   // Stages 2 and 3.
   const bank = new FilterBank(sampleRate, audio.length, bands ? { bands } : {});
   const cleanup = new Cleanup(bank.envelopeRate, bank.rowCount, { humHz });
-  const rows = cleanup.process(bank.process(audio));
+  const raw = bank.process(audio);
+  const rows = cleanup.process(raw);
   const fe = bank.envelopeRate;
 
   const dec = bank.decimation;
@@ -73,7 +79,12 @@ export function analyze(channels, sampleRate, options = {}) {
   const toSeconds = (p) => ((p + cleanup.delay) * dec + (dec - 1) / 2 + from) / sampleRate;
   const result = analyzeRows(rows, fe, toSeconds, { bph: forcedBph, escapement, timing });
   if (!result) throw new Error('unreachable: no accept filter was given');
-  return { sampleRate, ...result };
+  // Stage 10 reads the envelopes as the filter bank made them, before Cleanup. A timestamp's
+  // place in them is `toSeconds` undone, without Cleanup's delay.
+  /** @param {number} t */
+  const toRaw = (t) => (t * sampleRate - from - (dec - 1) / 2) / dec;
+  const sounds = liftAngle === undefined ? null : measureSounds(soundRows(bank, raw), fe, result.beats, result.bph, liftAngle, toRaw);
+  return { sampleRate, ...result, sounds };
 }
 
 /**
@@ -87,7 +98,7 @@ export function analyze(channels, sampleRate, options = {}) {
  *   `accept` can reject the chosen beat rate before the costly stages run; `periodPpm` with `bph`
  *   skips the beat-rate search when the period is already known approximately; `timing` as in
  *   `trackBeats`
- * @returns {(Omit<Analysis, 'sampleRate'> & {period: number, split: [Float32Array[], Float32Array[]] | null, tracks: import('./timing.js').BeatTrack[]}) | null}
+ * @returns {(Omit<Analysis, 'sampleRate' | 'sounds'> & {period: number, split: [Float32Array[], Float32Array[]] | null, tracks: import('./timing.js').BeatTrack[]}) | null}
  *   `split` holds the folded half templates, and is null when the analysis did not fold
  *   null when `accept` rejected the candidate
  */

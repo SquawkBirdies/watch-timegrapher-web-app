@@ -3,6 +3,8 @@
 // against the phone. In the third the phone was held over the dial of the Omega, in a different
 // room. Each recording is analysed whole, and then fed to the real-time pipeline in small chunks.
 // The last tests use the Safari captures of the same two watches, saved by the audio diagnostic.
+// The whole-recording analyses also read the sounds inside each beat (milestone 8): the Safari
+// captures give a beat error from the unlocks and an amplitude, the Voice Memos recordings none.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +26,7 @@ const etaWhole = () => {
   if (!eta) {
     const wav = readWav(fixture('eta-2836-2.wav'));
     // The first 2 s and everything after 54 s contain handling noise.
-    eta = { wav, whole: analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 54 }) };
+    eta = { wav, whole: analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 54, liftAngle: 50 }) };
   }
   return eta;
 };
@@ -37,26 +39,31 @@ test('ETA 2836-2: 28,800 vph, about +6.5 s/day, about 0.43 ms beat error, every 
   assert.ok(Math.abs(r.beatErrorMs - 0.43) <= 0.1, `beat error ${r.beatErrorMs.toFixed(3)}`);
   assert.ok(r.beats.every((b) => b.K <= 2), 'timed beat by beat');
   assert.ok(r.jitterMs !== null && r.jitterMs < 0.2, `scatter ${r.jitterMs}`);
+  // Its ticks' timestamps each average two cycles, so the sounds inside its beats are not read.
+  assert.deepEqual(r.beats.map((b) => b.K), [2, 1]);
+  assert.ok(r.sounds && r.sounds.why === 'averaged' && r.sounds.beatErrorMs === null && r.sounds.amplitude === null);
 });
 
 test('Omega 3861: 21,600 vph, about +0.2 s/day, needs averaging, no beat error reported', () => {
   const wav = readWav(fixture('omega-3861.wav'));
-  const r = analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 60 });
+  const r = analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 60, liftAngle: 36 });
   assert.equal(r.bph, 21600);
   assert.ok(r.rate !== null);
   assert.ok(Math.abs(r.rate - 0.2) <= 0.5, `rate ${r.rate.toFixed(2)}`);
   assert.ok(Math.max(...r.beats.map((b) => b.K)) >= 4, 'weak-signal averaging was needed');
   assert.equal(r.beatErrorMs, null, 'one beat is too faint for a beat error');
+  assert.ok(r.sounds && r.sounds.why === 'averaged', 'and no single beat can be placed to read its sounds');
 });
 
 test('Omega 3861, second recording: 21,600 vph, about -2.1 s/day, ticks too blurred for a beat error', () => {
   const wav = readWav(fixture('omega-3861-b.wav'));
-  const r = analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 73 });
+  const r = analyze(wav.channels, wav.sampleRate, { startSeconds: 2, endSeconds: 73, liftAngle: 36 });
   assert.equal(r.bph, 21600);
   assert.ok(r.rate !== null);
   assert.ok(Math.abs(r.rate + 2.1) <= 0.5, `rate ${r.rate.toFixed(2)}`);
   assert.ok(r.fits.every((f) => f !== null), 'ticks and tocks are both audible in this recording');
   assert.equal(r.beatErrorMs, null, 'the tick timestamps scatter too much for a beat error');
+  assert.ok(r.sounds && r.sounds.why === 'averaged', 'and each timestamp averages several cycles, so the sounds inside the beats are not read');
 });
 
 test('ETA 2836-2 in real time: same readings as the whole-recording analysis', () => {
@@ -199,4 +206,52 @@ test('Omega 3861, Safari capture, first 30 s: the bands above 14.5 kHz make its 
   // independent timing finds the same 3.4 ms. This is why the escapement setting exists; if a
   // later version learns to measure this correctly, this check should change.
   assert.ok(all.beatErrorMs !== null && all.beatErrorMs > 3, `beat error ${all.beatErrorMs}`);
+});
+
+// The sounds inside each beat, read from the plain average of the beats. Expected values are
+// the prototype's on envelopes made as the app makes them, measured on 26 November with
+// `analyze.py --app --plain`: 0.340 ms and 288 degrees for the Omega, 0.273 ms and 266 degrees
+// for the ETA. Given each beat where the prototype puts it, this stage finds every sound within
+// 3e-9 ms of the prototype's. It puts each beat at its timestamp's own place in the envelope
+// instead, 0.375 of an envelope sample earlier, which moves these readings by up to 0.004 ms
+// and 0.2 degrees; hence 0.01 ms and 1 degree. No timing machine has read either watch.
+
+test('Omega 3861, Safari capture, whole: 0.34 ms from its unlocks and 288 degrees at 36 degrees of lift, where its timestamps are 3.6 ms apart', () => {
+  const cap = safariCapture('omega-3861-safari.wav');
+  const r = analyze(cap.channels, cap.sampleRate, { escapement: 'coaxial', liftAngle: 36 });
+  assert.equal(r.bph, 21600);
+  assert.equal(r.beatErrorMs, null, 'co-axial mode shows no beat error from the timestamps');
+  const s = r.sounds;
+  assert.ok(s && s.why === null && s.beatErrorMs !== null && s.unlockGapMs !== null && s.liftMs && s.amplitude !== null && s.amplitudes && s.timestampGapMs !== null && s.unlockDb !== null);
+  assert.deepEqual(r.beats.map((b) => b.K), [1, 1]);
+  assert.deepEqual(s.counts, [178, 178]);
+  assert.ok(Math.abs(s.beatErrorMs - 0.34) <= 0.01, `beat error ${s.beatErrorMs.toFixed(3)} ms`);
+  assert.ok(Math.abs(s.amplitude - 288) <= 1, `amplitude ${s.amplitude.toFixed(1)}`);
+  // The gap between the timestamps, which Swiss-lever mode reads as the beat error.
+  assert.ok(Math.abs(Math.abs(s.timestampGapMs) - 3.58) <= 0.02, `timestamps ${s.timestampGapMs.toFixed(3)} ms apart`);
+  // A co-axial's two beats take different times from unlock to lock, 6.95 and 6.32 ms here, so
+  // one beat alone would read 275 or 302 degrees. Whichever the pipeline named the tick, the
+  // beat error is measured from the beat with the longer time to the other.
+  const longer = s.liftMs[0] > s.liftMs[1] ? 0 : 1;
+  assert.ok(Math.abs(s.liftMs[longer] - 6.95) <= 0.02 && Math.abs(s.liftMs[1 - longer] - 6.32) <= 0.02, `unlock to lock ${s.liftMs.map((v) => v.toFixed(3))} ms`);
+  assert.ok(Math.abs(s.amplitudes[longer] - 275) <= 1.5 && Math.abs(s.amplitudes[1 - longer] - 302) <= 1.5, `each beat alone ${s.amplitudes.map((v) => v.toFixed(1))}`);
+  assert.ok((longer === 0 ? 1 : -1) * s.unlockGapMs > 0, 'the other beat\'s unlock comes later than midway');
+  // The unlock is the faintest sound used: 10.7 dB over the noise of the average.
+  assert.ok(s.unlockDb > 9 && s.unlockDb < 13, `unlock ${s.unlockDb.toFixed(1)} dB`);
+});
+
+test('ETA 2836-2, Safari capture, whole: 0.27 ms from its unlocks and 266 degrees at 50 degrees of lift, both beats alike', () => {
+  const cap = safariCapture('eta-2836-2-safari.wav');
+  const r = analyze(cap.channels, cap.sampleRate, { liftAngle: 50 });
+  assert.equal(r.bph, 28800);
+  const s = r.sounds;
+  assert.ok(s && s.why === null && s.beatErrorMs !== null && s.liftMs && s.amplitude !== null && s.timestampGapMs !== null && s.unlockDb !== null);
+  assert.deepEqual(s.counts, [118, 118]);
+  assert.ok(Math.abs(s.beatErrorMs - 0.273) <= 0.01, `beat error ${s.beatErrorMs.toFixed(3)} ms`);
+  assert.ok(Math.abs(s.amplitude - 266) <= 1, `amplitude ${s.amplitude.toFixed(1)}`);
+  // Today's Swiss-lever reading, from the timestamps of the loudest sounds, is 0.31 ms.
+  assert.ok(r.beatErrorMs !== null && Math.abs(r.beatErrorMs - 0.31) <= 0.02, `from the timestamps ${r.beatErrorMs}`);
+  // A lever's two beats take the same time from unlock to lock: 7.49 and 7.50 ms.
+  assert.ok(s.liftMs.every((v) => Math.abs(v - 7.495) <= 0.02), `unlock to lock ${s.liftMs.map((v) => v.toFixed(3))} ms`);
+  assert.ok(s.unlockDb > 20, `unlock ${s.unlockDb.toFixed(1)} dB`);
 });
