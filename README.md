@@ -230,6 +230,15 @@ The limits so far:
 
 - **The gates limit a reading's scatter, not its error,** as the co-axial shown 0.14 ms off
   says. A stated scatter counts how the beats differ within the reading, and nothing else.
+- **Noisy timestamps can shift the beat error from the unlocks, and its scatter does not say
+  so.** Each beat is averaged where its timestamp puts it, so timestamps that scatter smear the
+  averaged sounds. In the prototype, simulated faint co-axials whose unlock is as loud as its
+  lock, with timestamps scattering by 0.10 to 0.15 ms, read 0.067 ms off on average and 0.099 ms
+  at worst, 2.8 times their stated scatter. It was not seen on the simulated levers, on the
+  simulations shaped like the Omega or on the Safari captures. The prototype reads the beat
+  error a second time with every beat on the trend of its timestamps and adds the difference to
+  the stated scatter. The app does not yet: that check costs 13 to 30% more computing, and
+  waits until a phone has timed the stage.
 - **A stretch under 20 s has one block and nothing to line up on.** A made-up watch of 15 s
   whose amplitude falls by 36° reads it 6° low and shows it. In real time a reading has 30 s of
   beats or more.
