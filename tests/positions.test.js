@@ -25,6 +25,7 @@ import {
   cleanLog,
   isUncertain,
 } from '../js/ui/positions.js';
+import { POSITION_ICONS } from '../js/ui/position-icons.js';
 import { clean, DEFAULTS, loadLog } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 
@@ -275,6 +276,23 @@ test('the log comes back from storage as it was saved, and anything invalid in i
   // Without the browser's storage (as here, in Node) the log starts empty.
   assert.deepEqual(loadLog(), emptyLog());
   assert.equal(POSITIONS.length, 6);
+});
+
+test('every position has a drawing in the text colour, hidden from screen readers, and the flat ones show which way up the watch lies', () => {
+  for (const { id } of POSITIONS) {
+    const svg = POSITION_ICONS[id];
+    assert.match(svg, /^<svg viewBox="0 0 64 64" [^>]*aria-hidden="true"/, id);
+    assert.ok(!/NaN|undefined|Infinity/.test(svg), `${id} has only numbers in it`);
+    // No colour but the text's, so that the drawings follow light and dark mode.
+    const colours = [...svg.matchAll(/(?:fill|stroke)="([^"]+)"/g)].map((m) => m[1]).filter((c) => c !== 'none');
+    assert.ok(colours.every((c) => c === 'currentColor'), `${id}: ${[...new Set(colours)].join(', ')}`);
+  }
+  assert.equal(new Set(Object.values(POSITION_ICONS)).size, 6, 'six different drawings');
+  // Dial up shows the hands; dial down the shaded case back, with the crown moved to the left.
+  const crownX = (/** @type {string} */ svg) => Number(/<rect x="([\d.]+)" y="[\d.]+" width="4.5" height="5.2"/.exec(svg)?.[1]);
+  assert.ok(crownX(POSITION_ICONS.dialUp) > 32 && crownX(POSITION_ICONS.dialDown) < 32, 'crown right dial up, left dial down');
+  assert.match(POSITION_ICONS.dialDown, /fill-opacity/);
+  assert.doesNotMatch(POSITION_ICONS.dialUp, /fill-opacity/);
 });
 
 test('the mode is continuous unless six positions was chosen, and is remembered', () => {

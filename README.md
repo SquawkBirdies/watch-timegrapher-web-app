@@ -369,6 +369,14 @@ two modes, and the choice is remembered on the device:
 - **Six positions** adds a log below the readings, with a row for dial up, dial down, crown up,
   crown down, crown left and crown right.
 
+Each position has a small line drawing, beside its row and, larger, beside the line saying which
+position to measure next. The four upright positions show the watch face-on, standing on a ground
+line with its crown pointing the named way. The two flat ones show it from a little above, lying
+on the ground line: dial up with its hands, dial down with a shaded case back and the crown on
+the left, as it is once the watch is turned over. They are drawn in the text colour, so they
+follow light and dark mode, and screen readers skip them, since the position's name is always
+written beside them.
+
 Each position is its own run. Place the watch, press Start, and keep it still until the reading
 has settled: the lock must have lasted the whole averaging window, counted from the moment
 "Locked" appears. The window slides with the audio, so the reading saved then draws only on audio
@@ -385,8 +393,7 @@ included, and a reading still on the screen after Stop can be saved, once per ru
 
 Each row keeps the rate with its statistical uncertainty, the beat error or why there is none,
 the window the reading was made over ("Over a 20 s window") and the number of beats behind the
-rate. Below the
-rows, the summary gives the average rate, the spread (fastest minus slowest position) and the
+rate. Below the rows, the summary gives the average rate, the spread (fastest minus slowest position) and the
 largest beat error with its position. A reading whose rate is uncertain by more than ±1 s/day is
 marked and left out of the average and the spread, and a line says so; its beat error still
 counts. No uncertainty is given for the average: each position's ± is statistical only, and a
@@ -504,6 +511,7 @@ js/ui/canvas.js        drawing helpers and chart colours
 js/ui/wake.js          keeps the screen on while measuring
 js/ui/save.js          hands a saved file to the share sheet or a download
 js/ui/positions.js     the six-position log: when a reading can be saved, and the summary
+js/ui/position-icons.js  a drawing of each of the six positions
 js/store.js            settings and the six-position log, kept on the device
 tests/                 automated tests and the six recordings
 tools/                 command-line runners, the Python prototype kept for reference, and the
