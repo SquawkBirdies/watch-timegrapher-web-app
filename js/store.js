@@ -17,6 +17,12 @@ import { cleanLog, emptyLog } from './ui/positions.js';
  * @property {boolean} magnetNoticeSeen the magnetism notice has been read once
  * @property {number} saveMinutes how many minutes of microphone audio are kept for saving
  * @property {Mode} mode continuous, or a reading for each of six positions
+ * @property {Theme} theme light or dark, or 'auto' to follow the phone
+ */
+
+/**
+ * 'auto' follows the phone's light or dark setting; 'light' and 'dark' keep to one.
+ * @typedef {'auto'|'light'|'dark'} Theme
  */
 
 /**
@@ -36,6 +42,7 @@ export const DEFAULTS = Object.freeze({
   magnetNoticeSeen: false,
   saveMinutes: 1,
   mode: 'continuous',
+  theme: 'auto',
 });
 
 export const BEAT_RATES = [18000, 19800, 21600, 25200, 28800, 36000];
@@ -44,7 +51,8 @@ export const AVERAGING_CHOICES = [10, 20, 40, 60];
 export const SAVE_MINUTES = [1, 2, 5];
 export const LIFT_RANGE = [30, 70];
 
-const KEY = 'timegrapher.settings.v1';
+/** Where the settings are kept. index.html reads the theme from here before the page is drawn. */
+export const SETTINGS_KEY = 'timegrapher.settings.v1';
 const LOG_KEY = 'timegrapher.positions.v1';
 
 /**
@@ -68,13 +76,14 @@ export function clean(raw) {
   const minutes = Number(raw.saveMinutes);
   if (SAVE_MINUTES.includes(minutes)) s.saveMinutes = minutes;
   if (raw.mode === 'continuous' || raw.mode === 'positions') s.mode = raw.mode;
+  if (raw.theme === 'auto' || raw.theme === 'light' || raw.theme === 'dark') s.theme = raw.theme;
   return s;
 }
 
 /** @returns {Settings} */
 export function loadSettings() {
   try {
-    const text = localStorage.getItem(KEY);
+    const text = localStorage.getItem(SETTINGS_KEY);
     return clean(text ? JSON.parse(text) : {});
   } catch {
     return { ...DEFAULTS };
@@ -84,7 +93,7 @@ export function loadSettings() {
 /** @param {Settings} settings */
 export function saveSettings(settings) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(settings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // Storage unavailable: the settings last until the page is closed.
   }

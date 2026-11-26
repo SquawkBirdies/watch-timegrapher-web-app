@@ -449,9 +449,16 @@ tick and tock. The source can be the microphone, a simulated watch whose rate, b
 variability and loudness can be changed while it runs, one of the three test recordings, or a
 recording chosen from the phone, replayed at real speed or faster. A switch above the readings
 chooses continuous measuring or the six-position log (see [Six positions](#six-positions)).
-Settings (beat rate, escapement, lift angle, mains frequency, averaging window), the chosen
-microphone, the mode, the six-position log and whether the magnetism notice has been read are
-kept on the device.
+Settings (beat rate, escapement, lift angle, mains frequency, averaging window, theme), the
+chosen microphone, the mode, the six-position log and whether the magnetism notice has been read
+are kept on the device.
+
+The theme is Auto by default, which follows the phone's light or dark setting, or Light or Dark
+whatever the phone is set to. It changes at once, the charts and the browser's bars included, and
+a stored choice is applied before the page is first drawn, so the screen never shows the phone's
+theme first. In Chrome at phone size, each choice gave the expected colours under both phone
+settings and came back after a reload. The audio diagnostic and the browser check still follow
+the phone.
 
 `check.html` checks the browser: secure connection, microphone access, audio worklets, screen
 wake lock, and whether the signal pipeline loads.
@@ -510,6 +517,7 @@ js/ui/waveform.js      the averaged tick and tock
 js/ui/canvas.js        drawing helpers and chart colours
 js/ui/wake.js          keeps the screen on while measuring
 js/ui/save.js          hands a saved file to the share sheet or a download
+js/ui/theme.js         applies the theme chosen in the settings
 js/ui/positions.js     the six-position log: when a reading can be saved, and the summary
 js/ui/position-icons.js  a drawing of each of the six positions
 js/store.js            settings and the six-position log, kept on the device
