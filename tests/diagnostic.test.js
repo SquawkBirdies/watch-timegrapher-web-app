@@ -54,12 +54,18 @@ test('a session reports the same events as the pipeline, plus its computing time
   const load = session.load();
   assert.ok(Math.abs(load.audioSeconds - 20) < 1e-6);
   assert.ok(load.busySeconds > 0 && load.longestSeconds > 0 && load.longestSeconds <= load.busySeconds);
+  // No lift angle, so the stage that reads the sounds inside the beats is not there to cost anything.
+  assert.equal(load.stage, null);
+  assert.deepEqual(new Session(48000, 1, { liftAngle: 52 }).load().stage, { seconds: 0, readings: 0, lastSeconds: null, lastAudioSeconds: null, longestStepSeconds: 0 });
 });
 
-test('the speed test reads the simulated watch correctly and reports its speed', () => {
-  const r = benchmark({ seconds: 30 });
+test('the speed test reads the simulated watch correctly and reports its speed, with the stage that reads the sounds inside the beats at work', () => {
+  // 45 s: the stage starts its first reading 30 s after the lock, and takes its share of the
+  // time from then on, as in the app.
+  const r = benchmark({ seconds: 45 });
   assert.equal(r.channelCount, 1);
-  assert.ok(Math.abs(r.audioSeconds - 30) < 0.1);
+  assert.ok(Math.abs(r.audioSeconds - 45) < 0.1);
+  assert.ok(r.stage && r.stage.seconds > 0 && r.stage.seconds < r.busySeconds, `the stage took ${r.stage?.seconds} s of ${r.busySeconds} s`);
   assert.ok(r.lockedAt !== null && r.lockedAt < 10, `locked at ${r.lockedAt}`);
   assert.ok(r.rate !== null && Math.abs(r.rate - 12) < 0.2, `rate ${r.rate}`);
   assert.ok(r.beatErrorMs !== null && Math.abs(r.beatErrorMs - 0.3) < 0.05, `beat error ${r.beatErrorMs}`);

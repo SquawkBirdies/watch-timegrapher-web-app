@@ -100,3 +100,9 @@ google-chrome --use-fake-ui-for-media-stream --use-fake-device-for-media-stream 
 The first flag allows the microphone without asking. A 16-bit WAV file works. Chrome plays it in
 a loop and may deliver it at another sample rate: 44.1 kHz when this was tested. A few seconds of
 digital silence inserted into the file make an interruption.
+
+The simulated microphone is not a steady source for long. In headless Chrome on a two-core
+computer, on 26 November 2026, every run lost its lock for about 4 s somewhere between 30 and
+110 s in, most of them near 35 s, with the app as it was before that day's change as well as
+after. To watch the app for longer than half a minute, choose the recording under Your file
+instead: it is replayed sample for sample at real speed, through the same worker.

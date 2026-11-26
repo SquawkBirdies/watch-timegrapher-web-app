@@ -6,8 +6,12 @@ shows. The investigation behind it is written up in a separate Claude Doc kept b
 Milestone 8 ports it into the app step by step. Since 26 November `js/dsp/sounds.js` and
 `js/dsp/amplitude.js` hold its readings, its lining up, its resamples and its gates, checked
 against it draw by draw on envelopes made as the app makes them (`--app`); the app's README gives
-the numbers. The check with the beats on the trend of their timestamps, the naming of the beats
-and the slow filter for the amplitude over time are still only here.
+the numbers. `js/dsp/soundstage.js` runs them in the app's real-time pipeline, where the app
+stores each beat type's beats side by side and averages lined-up beats in one pass, with the same
+numbers. The app's filter bank cuts its top band to fit at 44.1 kHz as this prototype does, but
+only when at least half of the band is left, where `fitted_bands` here keeps any part of one. The
+check with the beats on the trend of their timestamps, the naming of the beats and the slow
+filter for the amplitude over time are still only here.
 
 ## The idea
 

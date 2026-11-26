@@ -14,10 +14,10 @@ import { madeUpWatch } from './helpers/envelopes.js';
 import { seededRandom } from '../js/audio/simulator.js';
 import { seededRandom as fromMathutil, chiSquaredQuantile, chiSquaredBelow } from '../js/dsp/mathutil.js';
 import {
-  stackBeats, stretchMs, samplesBefore, toColumns, shiftedColumns, bandMeans, energyWeights, mixBands, smooth, findPeaks, findSounds,
+  stackBeats, stretchMs, samplesBefore, toColumns, shiftedColumns, shiftedBandMeans, bandMeans, energyWeights, mixBands, smooth, findPeaks, findSounds,
   smoothForMatching, shiftOf,
 } from '../js/dsp/sounds.js';
-import { liftLimits, amplitudeOf, pairBeats, timestampGap, movedSounds, readBeats, measureSounds } from '../js/dsp/amplitude.js';
+import { liftLimits, amplitudeOf, pairBeats, timestampGap, movedSounds, readBeats, readBeatsSteps, timedBeats, heldBack, measureSounds } from '../js/dsp/amplitude.js';
 
 /** @typedef {import('../js/dsp/sounds.js').Sound} Sound */
 
@@ -62,9 +62,10 @@ test('each beat\'s stretch is read at its timestamp\'s fraction of a sample, and
   assert.equal(stack.count, 2);
   assert.equal(stack.length, 7);
   assert.deepEqual(Array.from(stack.kept), [0, 3]);
-  assertClose(stack.bands[0], [6.25, 7.25, 8.25, 9.25, 10.25, 11.25, 12.25, 46, 47, 48, 49, 50, 51, 52], 1e-6, 'the ramp');
+  // The beats lie side by side: the first sample of each, then the second of each.
+  assertClose(stack.bands[0], [6.25, 46, 7.25, 47, 8.25, 48, 9.25, 49, 10.25, 50, 11.25, 51, 12.25, 52], 1e-6, 'the ramp');
   // Between two samples the envelope is read off the straight line joining them.
-  assert.ok(Math.abs(stack.bands[1][4] - (0.75 * 100 + 0.25 * 121)) < 1e-4, `the square at 10.25 reads ${stack.bands[1][4]}`);
+  assert.ok(Math.abs(stack.bands[1][4 * 2] - (0.75 * 100 + 0.25 * 121)) < 1e-4, `the square at 10.25 reads ${stack.bands[1][4 * 2]}`);
   assertClose(stretchMs(4, 7, 12000), [-4 / 12, -3 / 12, -2 / 12, -1 / 12, 0, 1 / 12, 2 / 12], 1e-12, 'milliseconds from the timestamp');
   assert.equal(samplesBefore(stretchMs(4, 7, 12000), -0.2), 2);
 });
@@ -77,8 +78,8 @@ test('each beat\'s stretch is read at its timestamp\'s fraction of a sample, and
  */
 function stackWithClick(beats) {
   const band = new Float32Array(beats * 5);
-  for (let b = 0; b < beats; b++) band.set([1, 1, 3, 3, 3], b * 5);
-  band[7 * 5 + 3] = 1000;
+  for (let b = 0; b < beats; b++) [1, 1, 3, 3, 3].forEach((v, k) => (band[k * beats + b] = v));
+  band[3 * beats + 7] = 1000;
   return { bands: [band], count: beats, length: 5, before: 2, kept: Int32Array.from({ length: beats }, (_, i) => i) };
 }
 
@@ -113,7 +114,7 @@ test('the values to leave out are found the same whether the beats were ranked b
   const bySorting = (beats) => bands.map((band) => {
     const cut = Math.floor(0.05 * beats.length);
     const m = Array.from({ length }, (_, k) => {
-      const column = beats.map((i) => band[i * length + k]).sort((p, q) => p - q).slice(cut, beats.length - cut);
+      const column = beats.map((i) => band[k * count + i]).sort((p, q) => p - q).slice(cut, beats.length - cut);
       return column.reduce((sum, v) => sum + v, 0) / column.length;
     });
     const quiet = m.slice(0, 10).sort((p, q) => p - q);
@@ -133,7 +134,8 @@ test('the values to leave out are found the same whether the beats were ranked b
 });
 
 test('a beat read later has its sounds earlier in its stretch, and keeps its end values past either end', () => {
-  const ramp = Float32Array.from({ length: 12 }, (_, i) => i < 6 ? 10 * i : 100 + i);
+  // Two beats side by side: the first climbs from 0 to 50, the second from 106 to 111.
+  const ramp = Float32Array.from({ length: 12 }, (_, at) => (at % 2 === 0 ? 10 * (at >> 1) : 106 + (at >> 1)));
   const stack = { bands: [ramp], count: 2, length: 6, before: 3, kept: Int32Array.from([0, 1]) };
   // At 1 kHz a sample is a millisecond. The first beat read 1.5 ms later, the second 2 ms earlier.
   const columns = shiftedColumns(stack, null, [1.5, -2], 1000);
@@ -144,6 +146,44 @@ test('a beat read later has its sounds earlier in its stretch, and keeps its end
   // Beats drawn, each with its own shift: the second beat twice, unshifted and half a sample late.
   const drawn = shiftedColumns(stack, [1, 1], [0, 0.5], 1000);
   assertClose(Array.from({ length: 6 }, (_, k) => drawn.bands[0][k * 2 + 1]), [106.5, 107.5, 108.5, 109.5, 110.5, 111], 1e-6, 'half a sample');
+});
+
+test('beats read later are averaged in one pass as they are in two, each beat read once however often it was drawn, and an average can be worked out at chosen instants only', () => {
+  // Two bands of 50 beats of noise with clicks, 60 samples long, side by side.
+  const random = fromMathutil(11);
+  const count = 50;
+  const length = 60;
+  const bands = [0, 1].map(() => Float32Array.from({ length: count * length }, () => (random() < 0.02 ? 200 : 1) * (0.3 + 3 * random() * random())));
+  const stack = { bands, count, length, before: 40, kept: Int32Array.from({ length: count }, (_, i) => i) };
+  // At 1 kHz a sample is a millisecond: shifts within a sample, of a few samples, and past the
+  // ends of the stretch, where a beat keeps its end value.
+  for (const [label, reach] of /** @type {[string, number][]} */ ([['within a sample', 0.9], ['a few samples', 4.5], ['past the ends', 90]])) {
+    const each = Float64Array.from({ length: count }, () => (random() - 0.5) * 2 * reach);
+    const draw = Int32Array.from({ length: count }, () => Math.floor(random() * count));
+    // Nineteen beats: fewer than twenty, so that none is left out at either end.
+    const few = draw.subarray(0, 19);
+    for (const [which, beats] of /** @type {[string, Int32Array|null][]} */ ([['all the beats', null], ['a draw', draw], ['nineteen drawn', few]])) {
+      const shifts = beats ? Float64Array.from(beats, (i) => each[i]) : each;
+      const two = bandMeans(shiftedColumns(stack, beats, shifts, 1000), 12);
+      const one = shiftedBandMeans(stack, beats, shifts, 1000, 12);
+      assertClose(one.levels, Array.from(two.levels), 1e-12, `${label}, ${which}: quiet levels`);
+      two.excess.forEach((want, b) => assertClose(one.excess[b], Array.from(want), 1e-12, `${label}, ${which}: band ${b}`));
+    }
+  }
+  // Only the quiet stretch and a few instants wanted: those come out the same, ranked or not.
+  const only = new Uint8Array(length);
+  only.fill(1, 0, 12);
+  only.fill(1, 30, 37);
+  const ranked = toColumns(stack);
+  const block = Int32Array.from({ length: 14 }, (_, i) => 3 * i);
+  for (const columns of [ranked, { ...ranked, order: null }]) {
+    const full = bandMeans(columns, 12, block);
+    const part = bandMeans(columns, 12, block, only);
+    assertClose(part.levels, Array.from(full.levels), 0, 'quiet levels');
+    for (let b = 0; b < 2; b++) {
+      for (let k = 0; k < length; k++) assert.equal(part.excess[b][k], only[k] ? full.excess[b][k] : -1, `band ${b}, instant ${k}`);
+    }
+  }
 });
 
 test('the bands are added by their energy: each by its quiet level, so the averaged beat is the excess energy over all of them', () => {
@@ -451,6 +491,39 @@ test('a made-up watch 0.4 ms out of beat is read from its unlocks, with a scatte
   // Out of beat the other way, the gap changes sign.
   const back = readMadeUp(madeUpWatch({ seconds: 20, gapMs: -0.7, seed: 4 }));
   assert.ok(back.unlockGapMs !== null && Math.abs(back.unlockGapMs + 0.7) < 0.02 && back.beatErrorMs === -back.unlockGapMs, `the other way: ${back.unlockGapMs}`);
+});
+
+test('a reading taken a step at a time is the reading taken at once, and it says where its sounds are and why it may be held back', () => {
+  const { watch, reading: s } = steadyWatch();
+  const timed = timedBeats(watch.rows, watch.envelopeRate, watch.beats, watch.toPosition);
+  assert.ok(timed.why === null);
+  const steps = readBeatsSteps(timed.beats, watch.envelopeRate, timed.gapMs, watch.bph, 50);
+  let taken = 0;
+  let step = steps.next();
+  while (!step.done) {
+    taken++;
+    step = steps.next();
+  }
+  // Twelve rankings, the plain average, 40 draws of each block of each beat type, 200 draws.
+  assert.ok(taken > 300, `${taken} steps`);
+  assert.deepEqual(step.value, s);
+  // The places the readings rest on: for the tick and the tock, where the unlock and the lock start.
+  assert.ok(s.places && s.liftMs && s.unlockGapMs !== null && s.timestampGapMs !== null);
+  for (const j of [0, 1]) assert.equal(s.places[j][1] - s.places[j][0], s.liftMs[j]);
+  assert.ok(Math.abs(s.timestampGapMs + s.places[1][0] - s.places[0][0] - s.unlockGapMs) < 1e-12);
+  // What the pipeline knows of the watch can be applied to a reading after it is made.
+  assert.deepEqual(heldBack(s, false, false), { beatError: null, amplitude: null });
+  assert.deepEqual(heldBack(s, true, false), { beatError: 'irregular', amplitude: null });
+  assert.deepEqual(heldBack(s, true, true), { beatError: 'irregular', amplitude: 'halfway' });
+  assert.deepEqual(heldBack(s, false, true), { beatError: 'halfway', amplitude: 'halfway' });
+  assert.deepEqual(heldBack({ ...s, failing: 0.06 }, true, true), { beatError: 'failing', amplitude: 'failing' });
+  assert.deepEqual(heldBack({ ...s, failing: null, scatter: null }, false, false), { beatError: 'unchecked', amplitude: 'unchecked' });
+  assert.deepEqual(heldBack({ ...s, amplitude: null }, true, true), { beatError: null, amplitude: null }, 'nothing was read, so nothing is held back');
+  // Too few timestamps, or timestamps that each average several cycles: nothing to stack.
+  const few = timedBeats(watch.rows, watch.envelopeRate, watch.beats.map((b) => ({ ...b, ok: b.ok.map((_, i) => (i < 9 ? 1 : 0)) })), watch.toPosition);
+  assert.deepEqual([few.why, 'counts' in few && few.counts], ['few-beats', [9, 9]]);
+  const averaged = timedBeats(watch.rows, watch.envelopeRate, [watch.beats[0], { ...watch.beats[1], K: 4 }], watch.toPosition);
+  assert.equal(averaged.why, 'averaged');
 });
 
 test('a reading with too few draws to judge it is never to be shown', () => {

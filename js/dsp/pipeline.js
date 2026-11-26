@@ -22,16 +22,22 @@
 // one analysis to the next. So that timestamps stay comparable for as long as a lock lasts, each
 // repeat analysis measures how far its timestamps lie from the ones already reported for the
 // same beats, and reports its own moved back by that much.
+//
+// Given a lift angle, the pipeline also reads the sounds inside the beats: the beat error from
+// the unlocks and the amplitude (stage 10, js/dsp/soundstage.js). That stage takes the filter
+// bank's envelopes before they are cleaned and the confident beats timed since the lock, and
+// its readings go out with the others.
 
 import { FilterBank } from './filterbank.js';
 import { Cleanup } from './cleanup.js';
 import { acquireFast } from './acquire.js';
 import { analyzeRows } from './offline.js';
 import { buildWeights, correlateAt, pickPeak, pickPeakNear, pickPeaks, matchedFilter, averageCycles, NEAR_MS, LAG_MS } from './timing.js';
-import { summarize } from './estimate.js';
+import { summarize, halfwayBeat } from './estimate.js';
 import { SCATTER_LIMIT_MS } from './irregular.js';
 import { BeatTracker } from './tracker.js';
 import { robustLine, median, mean, std, percentile } from './mathutil.js';
+import { SoundStage } from './soundstage.js';
 
 /**
  * @typedef {Object} PipelineOptions
@@ -61,6 +67,10 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  * @property {boolean} [resumeLock] false gives a lock found soon after a lost one beat numbers and
  *   a reference point of its own, as before 22 November 2026, so the tick and the tock can swap
  *   and the trace steps
+ * @property {number} [liftAngle] lift angle in degrees. With it the sounds inside each beat are
+ *   read too, for the beat error from the unlocks and the amplitude (`sounds` in the readings);
+ *   without it that stage does not run
+ * @property {import('./soundstage.js').StageOptions} [sounds] how that stage runs
  */
 
 /**
@@ -94,17 +104,22 @@ import { robustLine, median, mean, std, percentile } from './mathutil.js';
  *   numbers and the reference points they had, so a tick stays a tick and the trace carries on
  * @typedef {{type: 'beats', beats: Beat[], replaceFrom: number|null}} BeatsEvent
  *   replaceFrom: when set, beats from that time on are superseded by this list
- * @typedef {{type: 'readings', t: number, window: [number, number]|null, windowStart: number|null, windowSeconds: number|null, signal: Signal|null, irregular: boolean} & import('./estimate.js').Readings} ReadingsEvent
+ * @typedef {{type: 'readings', t: number, window: [number, number]|null, windowStart: number|null, windowSeconds: number|null, signal: Signal|null, irregular: boolean, sounds: import('./soundstage.js').SoundsReport|null} & import('./estimate.js').Readings} ReadingsEvent
  *   window: the first and last timestamp the readings use.
  *   windowStart: where the audio the readings draw on begins: `t` less the averaging window, or
  *   the start of the lock until the lock has lasted that long.
  *   windowSeconds: how long the averaging window is, the setting or longer for faint ticks (see
  *   `averagingSpan`); the window is full once `t - windowStart` reaches it.
- *   irregular: true when the beats fall at scattered times; every timestamp is then one beat
- * @typedef {{type: 'waveform', t: number, rate: number, from: number, to: number, cycles: number, beats: AveragedBeat[]}} WaveformEvent
+ *   irregular: true when the beats fall at scattered times; every timestamp is then one beat.
+ *   sounds: the beat error from the unlocks and the amplitude, from the sounds inside each beat;
+ *   null when no lift angle was given, and when the lock is lost
+ * @typedef {{type: 'waveform', t: number, rate: number, from: number, to: number, cycles: number, beats: AveragedBeat[], marks: [SoundMarks, SoundMarks]|null}} WaveformEvent
  *   The averaged tick and tock from the latest analysis. `rate` is the envelope sample rate;
  *   `from` and `to` are the window's ends in seconds relative to each beat's timestamp;
- *   `cycles` is the number of tick-tock cycles averaged.
+ *   `cycles` is the number of tick-tock cycles averaged. `marks`: for the tick and the tock,
+ *   where the unlock and the lock start, when an amplitude is shown that rests on them.
+ * @typedef {{unlockMs: number, lockMs: number}} SoundMarks
+ *   milliseconds from the beat's timestamp
  * @typedef {StatusEvent | BeatsEvent | ReadingsEvent | WaveformEvent} PipelineEvent
  */
 
@@ -319,7 +334,7 @@ export class Pipeline {
     this.nextAttempt = Math.round(this.options.windows[0] * fe);
     /** Start of the audio the current lock was first found in. */
     this.lockedFrom = 0;
-    /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number, irregular: boolean, continues: boolean}} */
+    /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number, irregular: boolean, continues: boolean, halfway: boolean|null}} */
     this.lock = null;
     /**
      * The last lock lost, kept so that a new lock found soon after can carry on its beat numbers
@@ -356,6 +371,11 @@ export class Pipeline {
     this.events = [];
     /** Seconds spent in the lock analyses, for the speed check. */
     this.analysisSeconds = 0;
+    /**
+     * Stage 10, the sounds inside each beat; null without a lift angle.
+     * @type {SoundStage|null}
+     */
+    this.sounds = this.options.liftAngle === undefined ? null : new SoundStage(this.bank, this.cleanup.delay, this.options.liftAngle, this.options.sounds);
   }
 
   /**
@@ -385,13 +405,21 @@ export class Pipeline {
   }
 
   /**
-   * Change the settings that can change while measuring: the averaging window and the
-   * escapement. They apply from the next reading. Other settings need a new pipeline.
-   * @param {{averagingSeconds?: number, escapement?: import('./estimate.js').Escapement}} changes
+   * Change the settings that can change while measuring: the averaging window, the escapement
+   * and the lift angle. They apply from the next reading; a new lift angle blanks the beat error
+   * from the unlocks and the amplitude until they have been read again with it. Other settings
+   * need a new pipeline, and so does a lift angle for a pipeline that was made without one.
+   * @param {{averagingSeconds?: number, escapement?: import('./estimate.js').Escapement, liftAngle?: number}} changes
    */
   setOptions(changes) {
     if (changes.averagingSeconds !== undefined) this.options.averagingSeconds = changes.averagingSeconds;
     if (changes.escapement !== undefined) this.options.escapement = changes.escapement;
+    if (changes.liftAngle !== undefined && this.sounds) {
+      this.options.liftAngle = changes.liftAngle;
+      const before = this.sounds.version;
+      this.sounds.setLiftAngle(changes.liftAngle);
+      if (this.sounds.version !== before && this.state === 'tracking' && this.lock) this.events.push(this.waveform());
+    }
   }
 
   /**
@@ -414,7 +442,10 @@ export class Pipeline {
       i += take;
       if (this.blockFill === size) {
         this.blockFill = 0;
-        this.append(this.cleanup.process(this.bank.process(this.block)));
+        const raw = this.bank.process(this.block);
+        // Stage 10 reads the envelopes as the filter bank made them.
+        if (this.sounds) this.sounds.append(raw);
+        this.append(this.cleanup.process(raw));
         this.step();
       }
     }
@@ -464,10 +495,44 @@ export class Pipeline {
         this.reanalyseChange();
       }
     }
+    if (this.sounds && this.state === 'tracking' && this.lock) this.stepSounds(this.sounds, this.lock);
     if (this.state === 'tracking' && this.count >= this.nextReading) {
       this.nextReading = this.count + Math.round(this.options.readingSeconds * this.fe);
       this.emitReadings();
     }
+  }
+
+  /**
+   * Stage 10's part of an audio block: a reading of the sounds inside the beats is started when
+   * one is due, and the one in progress is taken a little further.
+   * @param {SoundStage} stage
+   * @param {NonNullable<Pipeline['lock']>} lock
+   */
+  stepSounds(stage, lock) {
+    const before = stage.version;
+    if (lock.types.some((ty) => ty.tracked && ty.K > 1)) {
+      stage.averaged();
+    } else {
+      stage.step(this.count, this.options.blockSize / this.sampleRate, () => ({
+        beats: this.dots.filter((d) => d.ok && d.K === 1),
+        bph: lock.bph,
+        period: lock.period,
+      }));
+    }
+    // The marks on the averaged beat follow the reading.
+    if (stage.version !== before) this.events.push(this.waveform());
+  }
+
+  /**
+   * Whether the current template holds a beat halfway between its tick and its tock: the beat
+   * rate in use is then half the watch's own. Worked out once for each analysis.
+   * @returns {boolean}
+   */
+  halfway() {
+    const lock = this.lock;
+    if (!lock) return false;
+    if (lock.halfway === null) lock.halfway = halfwayBeat(lock.template, lock.clusters, this.fe).found;
+    return lock.halfway;
   }
 
   /**
@@ -735,7 +800,7 @@ export class Pipeline {
     this.dots = this.dots.filter((d) => d.p < start).concat(dots).sort((a, b) => a.p - b.p);
     // What was heard under another verdict says nothing about a change from this one.
     if (!this.lock || this.lock.irregular !== analysis.irregular) this.recentLag = [[], []];
-    this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0, irregular: analysis.irregular, continues: resumed !== null };
+    this.lock = { bph: analysis.bph, nominalPeriod: 3600 / analysis.bph, start, length, period, template: analysis.template, clusters: analysis.clusters, types, confirmed, blocks: 0, blocksOk: 0, irregular: analysis.irregular, continues: resumed !== null, halfway: null };
     this.shift = shift;
     this.lastTrusted = start + length;
     this.trackingSince = this.count;
@@ -1007,7 +1072,8 @@ export class Pipeline {
       beats.push({ type: /** @type {0|1} */ (Math.abs((j + this.shift) % 2)), values });
     }
     beats.sort((a, b) => a.type - b.type);
-    return { type: 'waveform', t: this.toSeconds(this.count), rate: fe, from: -before / fe, to: after / fe, cycles: Math.max(0, Math.floor(lock.length / lock.period) - 1), beats };
+    const marks = this.sounds ? this.sounds.marks(this.halfway()) : null;
+    return { type: 'waveform', t: this.toSeconds(this.count), rate: fe, from: -before / fe, to: after / fe, cycles: Math.max(0, Math.floor(lock.length / lock.period) - 1), beats, marks };
   }
 
   /**
@@ -1095,8 +1161,9 @@ export class Pipeline {
         }
       }
     }
-    // Beats outlive their audio when the averaging window is longer than the history.
-    const oldest = this.count - Math.max(this.historyLength, this.averagingSpan());
+    // Beats outlive their audio when the averaging window is longer than the history, and for as
+    // long as stage 10 reads their sounds, which it keeps the envelopes for.
+    const oldest = this.count - Math.max(this.historyLength, this.averagingSpan(), this.sounds ? this.sounds.window : 0);
     if (this.dots.length && this.dots[0].p < oldest) this.dots = this.dots.filter((d) => d.p >= oldest);
     if (fresh.length && lock.confirmed) this.events.push({ type: 'beats', beats: fresh.map((d) => this.beat(d)), replaceFrom: null });
   }
@@ -1112,6 +1179,8 @@ export class Pipeline {
       lock.confirmed = true;
       this.lost = null;
       this.trackingSince = this.count;
+      // Stage 10 reads only beats heard from here on.
+      if (this.sounds) this.sounds.reset(this.count);
       this.state = 'tracking';
       this.nextReading = this.count;
       this.announce(this.dots.filter((d) => d.p >= lock.start), lock.start);
@@ -1137,9 +1206,10 @@ export class Pipeline {
     this.nextAttempt = Math.max(this.count + 1, this.listenFrom + Math.round(this.options.windows[0] * this.fe));
     this.nextRefresh = Infinity;
     this.nextReading = Infinity;
+    if (this.sounds) this.sounds.reset(this.count);
     const t = this.toSeconds(this.count);
     this.events.push({ type: 'status', state: 'listening', reason, bph: null, cyclesAveraged: null, t });
-    this.events.push({ type: 'readings', t, window: null, windowStart: null, windowSeconds: null, signal: null, irregular: false, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
+    this.events.push({ type: 'readings', t, window: null, windowStart: null, windowSeconds: null, signal: null, irregular: false, sounds: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
   }
 
   /**
@@ -1198,7 +1268,7 @@ export class Pipeline {
       signal.z[type] = recent.length ? median(recent.map((d) => d.z)) : null;
       signal.cycles[type] = ty.K;
     }
-    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], windowStart: this.toSeconds(from), windowSeconds: span / this.fe, signal, irregular: lock.irregular, ...r };
+    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], windowStart: this.toSeconds(from), windowSeconds: span / this.fe, signal, irregular: lock.irregular, sounds: this.sounds ? this.sounds.report(lock.irregular, this.halfway()) : null, ...r };
   }
 
   emitReadings() {

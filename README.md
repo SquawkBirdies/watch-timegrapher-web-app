@@ -7,8 +7,9 @@ real-time trace.
 **Status: milestone 7 of 9.** The timegrapher listens to the phone's microphone. It can also be
 driven by a simulated watch, by three demo recordings or by a recording of your own. It measures
 continuously, or saves a reading for each of the six positions a watch is checked in. Milestone
-8, amplitude and a beat error measured from the unlock, is under way: the first two of its six
-steps are in the code, and nothing of it shows in the app yet.
+8, amplitude and a beat error measured from the unlock, is under way: the first three of its six
+steps are in the code. The app now reads both while it measures, but its screen does not show
+them yet; a line of fine print on the Signal card says what reading them costs.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
 the timegrapher replaying the three demo recordings in milestone 5, a live measurement of the
@@ -109,13 +110,16 @@ against 3.8 dB in the Omega's capture and 11.8 dB in the ETA's. Made as loud as 
 read about 0 ms against 0.50, as the app's own Swiss-lever reading does. Its README gives the
 method, its checks, and its limits.
 
-Milestone 8 brings that method into the app, for both escapements, in six steps. The first two
+Milestone 8 brings that method into the app, for both escapements, in six steps. The first three
 are in. `js/dsp/sounds.js` averages each beat type's envelopes around its timestamps and finds
 the sounds in the averaged beat. `js/dsp/amplitude.js` takes the first as the unlock, chooses the
 lock for both beats together, and gives the beat error from the unlocks and the amplitude, each
-with a scatter and a verdict on whether it may be shown. So far this runs only on a whole
-recording, when `analyze` is given a lift angle (`{ liftAngle: 36 }`, or a fifth argument to
-`tools/run-analysis.js`). The real-time pipeline does not use it, and the app shows none of it.
+with a scatter and a verdict on whether it may be shown. `js/dsp/soundstage.js` does the same in
+the real-time pipeline, on the beats heard since the lock. Each runs when a lift angle is given:
+`analyze` with `{ liftAngle: 36 }` (a fifth argument to `tools/run-analysis.js`), the pipeline
+with the same option (a seventh argument to `tools/run-stream.js`). The app gives its pipeline
+the lift angle from the settings, so the readings are made while it measures; the screen that
+shows them is the fourth step.
 
 | Recording, first channel, whole | Beat error from the unlocks | Amplitude | Unlock to lock, tick and tock | May be shown |
 | --- | --- | --- | --- | --- |
@@ -144,8 +148,58 @@ How a reading is made and judged:
   250° in 40 s the plain average reads 264.6°, 5.4° low, and would show it; lined up, 269.8°.
   `{ sounds: { lineUp: 'never' } }` gives the plain average and `'always'` lines every sound up.
 
+In real time the stage works like this:
+
+- **What it keeps.** The envelopes of the six bands from 5 kHz up, as the filter bank made them
+  and before the clean-up, for the last 60 to 64 s: 18.5 MB. When a reading starts, each
+  confident beat's stretch is cut out of them at its timestamp's own place.
+- **Which beats.** Those heard since the lock appeared, at most the last 60 s of them, and only
+  beats that were timed alone. The beats of the 8 s of audio a lock is found in are left out, so
+  that a reading rests on nothing from before the watch was placed, as the six-position log
+  asks. A lost lock clears everything.
+- **When.** The first reading starts when each beat type has 30 s of beats. The next start 5 s
+  apart while the beats still reach back less than a minute, and 10 s apart after that.
+- **How its computing is spread.** A reading with its 200 draws takes from half a second to
+  several seconds of computing, and the same thread has audio to keep up with. So a reading is
+  taken a few milliseconds at a time, for at most half of the time that passes, and after it the
+  stage rests for half as long as the reading took. A reading that costs 3 s of computing appears
+  6 s after it started, and describes the beats up to its start. The draws come in the same
+  order however the steps are spread, so the reading is the same.
+- **What it reports,** with the readings every second: the amplitude and the beat error from the
+  unlocks, each with its scatter, or nothing and the reason: waiting for beats, timestamps that
+  average several cycles, no reading, or held back by a gate. A watch the pipeline finds
+  irregular loses its beat error at once and keeps its amplitude; a beat halfway between the tick
+  and the tock blanks both. A new lift angle blanks both until they have been read again with it,
+  which starts in the next audio block. The averaged beat sent to the screen carries marks where
+  the unlock and the lock start, while an amplitude is shown.
+
+| In real time, each reading finished at once | Lock | First reading | Read |
+| --- | --- | --- | --- |
+| Omega 3861, Safari capture, co-axial, 36° | 8.1 s | 38.8 s, from 30 s of beats | reliably shown from 49 s, with 41 s of beats; at the end 0.31 ± 0.04 ms and 288.4 ± 1.0° from 51 s of beats |
+| Simulated lever, 0.50 ms and 270°, at 50° | 8.1 s | 38.8 s | 0.49 ± 0.01 ms and 269.6 ± 0.2°, shown from the first reading |
+| ETA 2836-2, Safari capture | 8.1 s | none: the capture is 30 s long | |
+| The three Voice Memos recordings | | none: timestamps that each average several cycles | a dash, with that reason |
+
+The times are those of the readings event that first carried the reading. In the app a reading
+appears later by twice its computing, as below.
+
+With 30 to 40 s of its beats, 4 to 10% of the Omega's draws lose its faint unlock, against the
+5% a reading is allowed: read every second, it was shown twice in ten and held back eight times,
+then shown every time from 41 s of beats on. So the first number of a watch like it can appear,
+give way to a dash and come back. What was read was 0.30 to 0.34 ms and 288° to 290° throughout.
+Read from the beats before the lock as well, the same capture would have had its first reading
+at 30.6 s instead of 38.8 s, and been reliably shown from 37.8 s instead of 49 s
+(`sounds: { sinceLock: false }`).
+
 What has been checked, on a computer:
 
+- **The real-time stage against the whole-recording one.** Fed a made-up watch block by block,
+  it gives the reading the whole-recording stage gives of the same beats, to rounding, also once
+  the envelopes it keeps have been moved up in their buffer. Spread over the audio by a clock the
+  test keeps, a reading with every sound lined up is the same to the last digit as one finished
+  at once. In the pipeline, a simulated lever's events are the same whether the audio comes in
+  chunks of 1,024 or 4,096 samples, and its timestamps, rate and beat error are the same with
+  the stage as without. So are those of the six recordings.
 - **Against the prototype.** Given each beat where the prototype puts it, and the prototype's
   own draws, the port gives every one of the 200 resampled readings within 2 hundred-millionths
   of a millisecond of the prototype's on envelopes made as the app makes them
@@ -176,16 +230,37 @@ The limits so far:
 - **The gates limit a reading's scatter, not its error,** as the co-axial shown 0.14 ms off
   says. A stated scatter counts how the beats differ within the reading, and nothing else.
 - **A stretch under 20 s has one block and nothing to line up on.** A made-up watch of 15 s
-  whose amplitude falls by 36° reads it 6° low and shows it. The real-time step will read 30 s
-  of beats or more.
-- **It is not quick yet.** On a computer a reading of 60 s of beats takes about half a second
-  when no sound moves and 5 to 10 s when two or three are lined up, since every draw then lines
-  its own beats up again. The real-time step has to fit that beside the pipeline.
+  whose amplitude falls by 36° reads it 6° low and shows it. In real time a reading has 30 s of
+  beats or more.
+- **Nothing for the first 30 s after a lock,** and for a watch whose unlock is as faint as the
+  Omega's, nothing steady before about 40 s. Each lost lock starts that wait again.
+- **A reading is not quick, and it is not fresh.** On a computer, in Node, a reading of 60 s of
+  beats takes 0.4 to 0.9 s of computing when no sound moves, 4 s when two are lined up (the
+  Omega's capture) and 8 s when three are, at 28,800 vph, since every draw then lines its own
+  beats up again; about 30% less than before this step, with the same numbers. In Chrome on the
+  same computer a steady lever's readings took 1.0 to 1.2 s of computing every 10 s, and a
+  simulated co-axial with two sounds lined up 4 to 6 s over 9 to 12 s, with a reading every 18 s.
+  The whole pipeline then used about 20% and about 40% of real time, against 8% without the
+  stage. The Omega's capture had its first reading, 2.8 s of computing, 6 s after it started. A
+  reading describes the beats up to the moment it started. No phone has timed this yet: on an
+  iPhone 17 Pro Max the pipeline alone took about 1.45 times as long as on this computer.
+- **Its memory:** 18.5 MB for the envelopes kept, and 8 to 14 MB more while a reading is worked
+  out. In Chrome the page's process held 10 to 25 MB more with the stage than without, at about
+  300 MB. Not measured in Safari.
 - **Every beat must be timed alone.** When a beat type's timestamps each average several cycles
   there is no reading, as decided on 25 November. That leaves out all three Voice Memos
   recordings, the ETA's because its ticks average two cycles.
-- **At 44.1 kHz the band from 18 kHz is still dropped,** and most of the Omega's unlock lies in
-  it. Keeping it, cut to 18 to 20.7 kHz, comes with the real-time step.
+- **Audio at 44.1 kHz was tested only on conversions.** The filter bank now keeps its top band
+  there, cut to 18 to 20.7 kHz, where it used to drop it, since most of the Omega's unlock lies
+  in it. On the Omega's capture converted to 44.1 kHz the stage read nothing before and reads
+  0.34 ± 0.04 ms and 289 ± 1° now, against 0.34 ± 0.04 ms and 288 ± 1° at 48 kHz. The timing uses
+  the band too, so readings at 44.1 kHz move a little: the ETA's rate from 1.71 to 1.69 s/day and
+  its beat error from 0.302 to 0.310 ms, and its beat error from the unlocks from 0.14 to
+  0.25 ms, against 0.275 ms at 48 kHz; converted with a low-pass at 20 kHz, 0.14 to 0.15 ms. The
+  Omega's rate stays at 0.41 s/day. No capture was made at 44.1 kHz. At 48 kHz nothing changes.
+  A band is cut to fit only when at least half of it is left, so 16 kHz audio keeps its four
+  bands.
+- **The screen does not show any of it yet.** That is the fourth step.
 - **Not checked against a timing machine.** That the first sound is the unlock in both
   co-axial beats is a reading of the patents, and the Omega 3861's 36° lift angle comes from a
   forum post; each degree of it moves the amplitude by about 8°.
@@ -535,12 +610,16 @@ Browsers allow the microphone only on secure pages, so the app cannot be opened 
 file. [docs/hosting.md](docs/hosting.md) explains how to set up the site, how to host your own
 copy, and how to test on a computer.
 
-`index.html` is the timegrapher. Its header shows rate, beat error and (once it is measured)
-amplitude, with the beat rate, lift angle and averaging window under them, and dashes instead of
+`index.html` is the timegrapher. Its header shows rate, beat error and a place for the amplitude,
+which stays a dash until the fourth step of milestone 8, with the beat rate, lift angle and
+averaging window under them, and dashes instead of
 stale numbers when there is no lock or the microphone is interrupted. When the watch runs irregularly, a warning below them says
 by how much its beats wander from one to the next. Below are the trace, one dot per beat in milliseconds ahead
 of an ideal clock with low-confidence beats dimmed; a signal meter with advice; and the averaged
-tick and tock. The source can be the microphone, a simulated watch whose rate, beat error, beat
+tick and tock. Under the meter a line of fine print gives the input level and the share of real
+time the analysis uses. For now it also says how often the sounds inside the beats have been
+read, what the latest reading cost in computing and in time, and whether its amplitude and beat
+error could be shown; the numbers themselves are not on the screen yet. The source can be the microphone, a simulated watch whose rate, beat error, beat
 variability and loudness can be changed while it runs, one of the three test recordings, or a
 recording chosen from the phone, replayed at real speed or faster. A switch above the readings
 chooses continuous measuring or the six-position log (see [Six positions](#six-positions)).
@@ -573,13 +652,14 @@ times the pipeline on 60 s of a simulated watch.
 Requires Node 22 or later. There is nothing to install.
 
 ```
-npm test             # about eleven minutes on a fast computer
+npm test             # about fifteen minutes on a fast computer
 npm run typecheck    # needs TypeScript (tsc) on the path
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54    # whole recording
 node tools/run-analysis.js tests/fixtures/omega-3861-safari.wav 0 0 0 36   # with a lift angle
 node tools/run-analysis.js tests/fixtures/omega-3861-safari.wav 0 0 0 36 never   # plain average
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54      # real time, in chunks
 node tools/run-stream.js tests/fixtures/omega-3861.wav 2 60 0 0 21600   # beat rate given
+node tools/run-stream.js tests/fixtures/omega-3861-safari.wav 0 0 4096 0 0 36   # with a lift angle
 ```
 
 ## Layout
@@ -600,6 +680,8 @@ js/dsp/estimate.js     rate and beat error from the timestamps; the escapement s
 js/dsp/sounds.js       each beat type's averaged beat and the sounds in it (milestone 8)
 js/dsp/amplitude.js    the unlock and the lock; beat error from the unlocks and amplitude, with
                        their scatter, the gates and the lining up (milestone 8)
+js/dsp/soundstage.js   the same in real time: the envelopes kept, the beats read since the
+                       lock, each reading spread over the audio blocks (milestone 8)
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
 js/dsp/tracker.js      Kalman beat tracker
 js/dsp/pipeline.js     real-time pipeline: listening, tracking, lock lost
