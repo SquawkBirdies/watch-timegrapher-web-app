@@ -9,9 +9,10 @@ driven by a simulated watch, by three demo recordings or by a recording of your 
 continuously, or saves a reading for each of the six positions a watch is checked in.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
-the timegrapher replaying the three demo recordings in milestone 5, and a live measurement of
-the Omega in milestone 6), and in Chrome on a computer at phone size, where the microphone was
-also tested with a recording played in as a simulated microphone.
+the timegrapher replaying the three demo recordings in milestone 5, a live measurement of the
+Omega in milestone 6, and a six-position run of the Omega and the theme setting in milestone 7),
+and in Chrome on a computer at phone size, where the microphone was also tested with a recording
+played in as a simulated microphone.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -392,8 +393,10 @@ new reading replaces the old. Any source can be saved from, the simulator and re
 included, and a reading still on the screen after Stop can be saved, once per run.
 
 Each row keeps the rate with its statistical uncertainty, the beat error or why there is none,
-the window the reading was made over ("Over a 20 s window") and the number of beats behind the
-rate. Below the rows, the summary gives the average rate, the spread (fastest minus slowest position) and the
+the window the reading was made over ("Over a 20 s window") and what the rate was measured from:
+the number of beats ("120 beats"), or, for a faint watch whose timestamps each average several
+tick-tock cycles, the number of timestamps and cycles ("33 timestamps of up to 8 cycles"). Below
+the rows, the summary gives the average rate, the spread (fastest minus slowest position) and the
 largest beat error with its position. A reading whose rate is uncertain by more than ±1 s/day is
 marked and left out of the average and the spread, and a line says so; its beat error still
 counts. No uncertainty is given for the average: each position's ± is statistical only, and a
@@ -420,8 +423,17 @@ In the automated tests, on the ETA's Safari capture, a simulated watch and the O
 capture alike, the lock appears at 8.07 s and a reading can be saved from 28.55 s with the 20 s
 window (20.36 s when the window was counted from the start of the lock's audio). With a 40 s
 window the Omega's capture can be saved from 49.03 s and not before, and the reading records the
-40 s; a window changed to 60 s waits until the lock has lasted 60 s. Nothing in this mode has
-been tested on the iPhone yet.
+40 s; a window changed to 60 s waits until the lock has lasted 60 s.
+
+On the iPhone 17 Pro Max with iOS 27.2, on 25 November 2026, the Omega was measured in all six
+positions in co-axial mode with the 20 s window: +2.1 ± 0.1 s/day dial up, +1.7 ± 0.07 dial down,
+−0.8 ± 0.1 crown up, −1.6 ± 0.1 crown down, +0.5 ± 0.09 crown left and −1.5 ± 0.06 crown right.
+The summary read an average of +0.1 s/day and a spread of 3.7 s/day, dial up fastest and crown
+down slowest. Dial down and crown up waited for windows lengthened to 24 and 32 s, as their ticks
+were fainter and averaged over several cycles. Crown up's 33 timestamps were shown as "33 beats";
+since 26 November a reading's count names the cycles averaged, and readings saved before then,
+which did not record them, show "33 timestamps". The log was still there after Safari was quit and
+opened again.
 
 Known limits of the six-position log:
 
@@ -457,8 +469,10 @@ The theme is Auto by default, which follows the phone's light or dark setting, o
 whatever the phone is set to. It changes at once, the charts and the browser's bars included, and
 a stored choice is applied before the page is first drawn, so the screen never shows the phone's
 theme first. In Chrome at phone size, each choice gave the expected colours under both phone
-settings and came back after a reload. The audio diagnostic and the browser check still follow
-the phone.
+settings and came back after a reload. On the iPhone on 25 November, Auto looked as before, Dark
+and Light switched the whole screen at once, the choice was kept with no flash of the other theme
+after Safari was quit and opened again, and Auto followed the phone's setting when it changed. The
+audio diagnostic and the browser check still follow the phone.
 
 `check.html` checks the browser: secure connection, microphone access, audio worklets, screen
 wake lock, and whether the signal pipeline loads.

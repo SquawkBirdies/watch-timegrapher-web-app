@@ -73,6 +73,7 @@ function reading(rate, rateSd, beatErrorMs, more = {}) {
     beatErrorGap: beatErrorMs === null ? 'unmeasured' : null,
     irregular: false,
     beats: 160,
+    cycles: [1, 1],
     windowSeconds: 20,
     seconds: 19.9,
     bph: 28800,
@@ -142,6 +143,7 @@ test('a saved reading keeps the rate, its uncertainty, the beat error and the be
   // 28,800 vph is 8 beats a second: about 160 in a 20 s window, ticks and tocks together.
   assert.ok(saved.beats >= 150 && saved.beats <= 162, `${saved.beats} beats`);
   assert.equal(saved.windowSeconds, 20, 'made over the 20 s window');
+  assert.deepEqual(saved.cycles, [1, 1], 'every beat timed on its own');
   assert.ok(saved.seconds > 19.5 && saved.seconds <= 20, `timestamps span ${saved.seconds} s`);
   assert.match(describeReading(saved).detail, /^Over a 20 s window · \d+ beats$/);
   assert.equal(saved.savedAt, '2026-11-25T12:00:00.000Z');
@@ -228,6 +230,12 @@ test('a reading too uncertain to count is marked and left out of the average and
   assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownDown)).detail, /beat error not measurable/);
   // A faint watch's lengthened window is given in minutes and seconds.
   assert.match(describeReading(reading(1, 0.2, 0.1, { windowSeconds: 153.5 })).detail, /^Over a 2 min 34 s window/);
+  // Its timestamps average several cycles each, so they are not counted as beats.
+  const counted = (/** @type {Partial<PositionReading>} */ more) => describeReading(reading(1, 0.2, 0.1, { beats: 33, ...more })).detail.split(' · ')[1];
+  assert.equal(counted({ cycles: [8, 8] }), '33 timestamps of 8 cycles');
+  assert.equal(counted({ cycles: [1, 8] }), '33 timestamps of up to 8 cycles');
+  assert.equal(counted({ cycles: [1, null] }), '33 beats', 'a type not timed does not count');
+  assert.equal(counted({ cycles: null }), '33 timestamps', 'not known for readings saved before 26 November');
 });
 
 test('the summary says what it lacks: no positions, one position, co-axial beat error', () => {
@@ -263,6 +271,12 @@ test('the log comes back from storage as it was saved, and anything invalid in i
   log = withReading(log, 'dialUp', reading(2, 0.08, 0.15));
   log = withReading(log, 'crownLeft', reading(-3.5, 0.2, null, { escapement: 'coaxial', beatErrorGap: 'coaxial', irregular: true }));
   assert.deepEqual(cleanLog(JSON.parse(JSON.stringify(log))), log);
+  // A reading saved before the cycles were kept comes back with them unknown.
+  const older = JSON.parse(JSON.stringify(log));
+  delete older.readings.dialUp.cycles;
+  assert.equal(/** @type {PositionReading} */ (cleanLog(older).readings.dialUp).cycles, null);
+  older.readings.dialUp.cycles = [0, 2.5];
+  assert.equal(/** @type {PositionReading} */ (cleanLog(older).readings.dialUp).cycles, null, 'invalid cycles are dropped, not the reading');
   const stored = JSON.parse(JSON.stringify(log));
   stored.readings.dialDown = { rate: 'fast', rateSd: 0.1 };
   stored.readings.crownUp = { ...reading(1, -1, 0.1) };
