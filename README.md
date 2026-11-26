@@ -5,17 +5,17 @@ microphone. It measures rate (seconds per day) and beat error (milliseconds) and
 real-time trace.
 
 **Status: milestone 7 of 9.** The timegrapher listens to the phone's microphone. It can also be
-driven by a simulated watch, by three demo recordings or by a recording of your own. It measures
+driven by a simulated watch, by two demo recordings or by a recording of your own. It measures
 continuously, or saves a reading for each of the six positions a watch is checked in. Milestone
 8, amplitude and a beat error measured from the unlock, is under way: the first three of its six
 steps are in the code. The app now reads both while it measures, but its screen does not show
 them yet; a line of fine print on the Signal card says what reading them costs.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
-the timegrapher replaying the three demo recordings in milestone 5, a live measurement of the
-Omega in milestone 6, and a six-position run of the Omega and the theme setting in milestone 7),
-and in Chrome on a computer at phone size, where the microphone was also tested with a recording
-played in as a simulated microphone.
+the timegrapher replaying its three demo recordings of the time, all made with Voice Memos, in
+milestone 5, a live measurement of the Omega in milestone 6, and a six-position run of the Omega
+and the theme setting in milestone 7), and in Chrome on a computer at phone size, where the
+microphone was also tested with a recording played in as a simulated microphone.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -630,12 +630,39 @@ tick and tock. Under the meter a line of fine print gives the input level and th
 time the analysis uses. For now it also says how often the sounds inside the beats have been
 read, what the latest reading cost in computing and in time, and whether its amplitude and beat
 error could be shown; the numbers themselves are not on the screen yet. The source can be the microphone, a simulated watch whose rate, beat error, beat
-variability and loudness can be changed while it runs, one of the three test recordings, or a
+variability and loudness can be changed while it runs, one of two demo recordings, or a
 recording chosen from the phone, replayed at real speed or faster. A switch above the readings
 chooses continuous measuring or the six-position log (see [Six positions](#six-positions)).
 Settings (beat rate, escapement, lift angle, mains frequency, averaging window, theme), the
 chosen microphone, the mode, the six-position log and whether the magnetism notice has been read
 are kept on the device.
+
+The two demo recordings are the ETA's and the Omega's Safari captures among the [test
+recordings](#test-recordings): what the phone's microphone gave Safari, so the sounds inside their
+beats can be read as a live watch's are. They replaced the three Voice Memos recordings, which
+allow no such reading. A demo plays with its own watch's escapement and lift angle, 50° for the ETA
+and 36° for the Omega, whatever the settings, and the line under the readings shows the lift angle
+in use. A lift angle set in Settings while a demo plays replaces the demo's for the rest of that
+run; a demo never changes the stored setting. A demo also plays only the first channel of its
+capture, as the microphone gives it to the app. The second channel is silent: it changes no
+reading, and playing it nearly doubled the pipeline's computing (in Node, without the stage, about
+10% of real time against 5% for the Omega's capture, and 13% against 7% for the ETA's). Both were
+decided on 26 November. Two limits follow from the captures' lengths:
+
+- **The ETA's 30 s are too short for an amplitude.** A reading needs 30 s of beats after the lock,
+  which comes at 8 s. The demo shows rate and beat error only, until a longer capture is recorded.
+- **The Omega's 60 s leave time for three readings on a computer,** the first about 45 s in and the
+  last just before the end. A slower phone may fit two.
+
+In Chrome on a computer, with nothing changed in Settings, the ETA demo ran at 50° and ended at
++1.7 ± 0.05 s/day and 0.31 ms, with the analysis at 8% of real time. The Omega demo ran at 36° and
+ended at +0.9 ± 0.09 s/day over its last 20 s, with the analysis at 19% of real time. It was read
+three times: the first reading was on the screen about 45 s after Start, after 2.2 s of computing
+over 4.4 s, and could be shown; the second was held back, more than 5% of its draws having lost the
+unlock; the third, 3.1 s of computing over 6.2 s, could be shown. Setting the lift angle to 40°
+during the ETA demo changed the line under the readings to 40° at once, and the next start of the
+demo was at 50° again, with the setting still as stored. The new demos have not been tried on a
+phone.
 
 The theme is Auto by default, which follows the phone's light or dark setting, or Light or Dark
 whatever the phone is set to. It changes at once, the charts and the browser's bars included, and
@@ -735,7 +762,8 @@ tests and in the app's background worker.
 - `eta-2836-2-safari.wav` (30 s) and `omega-3861-safari.wav` (60 s) were saved by the audio
   diagnostic in Safari on an iPhone 17 Pro Max with iOS 27.2, on 14 November 2026, with the
   browser's voice processing off. They are stereo with a silent second channel, as Safari
-  delivered the phone's mono microphone.
+  delivered the phone's mono microphone. These two are also the app's demo recordings, which
+  play the first channel only.
 - `no-watch-safari.wav` is the null case: 60 s of a quiet room with no watch near the phone,
   saved the same way later, by which time the diagnostic kept only the first channel.
 
