@@ -3,10 +3,11 @@
 A prototype, written on 16 November 2026. It is not part of the app and changes nothing the app
 shows. The investigation behind it is written up in a separate Claude Doc kept by the owner.
 
-Milestone 8 ports it into the app step by step. Since 26 November its plain average (`--plain`)
-is in `js/dsp/sounds.js` and `js/dsp/amplitude.js`, which were checked against it sound by sound
-on envelopes made as the app makes them (`--app`); the app's README gives the numbers. Lining the
-beats up again, the resamples and the gates are still only here.
+Milestone 8 ports it into the app step by step. Since 26 November `js/dsp/sounds.js` and
+`js/dsp/amplitude.js` hold its readings, its lining up, its resamples and its gates, checked
+against it draw by draw on envelopes made as the app makes them (`--app`); the app's README gives
+the numbers. The check with the beats on the trend of their timestamps, the naming of the beats
+and the slow filter for the amplitude over time are still only here.
 
 ## The idea
 

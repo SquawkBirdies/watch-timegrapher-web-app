@@ -1,16 +1,19 @@
-// Command-line check: node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle]
+// Command-line check:
+//   node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle] [lineUp] [resamples]
 // Prints the readings the offline pipeline produces for a recording. With a lift angle in
 // degrees it also prints what the sounds inside each beat give: the beat error from the unlocks
-// and the amplitude. Give 0 for endSeconds to read to the end, and 0 for bph to have the beat
-// rate detected.
+// and the amplitude, with their scatter over the resamples and whether each may be shown. Give
+// 0 for endSeconds to read to the end, and 0 for bph to have the beat rate detected. lineUp is
+// `moved` (the default: beats are lined up again on the sounds whose 10 s blocks show them
+// moving), `always` or `never`; resamples is 200 unless given, and 0 gives the reading alone.
 
 import { readWav } from '../tests/helpers/wav.js';
 import { analyze } from '../js/dsp/offline.js';
-import { MIN_BEATS } from '../js/dsp/amplitude.js';
+import { MIN_BEATS, BLOCK_SECONDS, MAX_SHIFT_SCATTER_MS } from '../js/dsp/amplitude.js';
 
-const [path, start, end, bph, liftAngle] = process.argv.slice(2);
-if (!path) {
-  console.error('usage: node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle]');
+const [path, start, end, bph, liftAngle, lineUp, resamples] = process.argv.slice(2);
+if (!path || (lineUp && !['moved', 'always', 'never'].includes(lineUp))) {
+  console.error('usage: node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle] [moved|always|never] [resamples]');
   process.exit(1);
 }
 
@@ -21,7 +24,7 @@ if (!path) {
  */
 function describeSounds(s) {
   const [lo, hi] = s.liftLimitsMs;
-  const lines = [`sounds inside the beats at ${s.liftAngle} degrees of lift (plain average: no scatter, no gates yet)`];
+  const lines = [`sounds inside the beats at ${s.liftAngle} degrees of lift`];
   /** @type {Record<import('../js/dsp/amplitude.js').NoReading, string>} */
   const reasons = {
     'few-beats': `too few beats timed: ${s.counts[0]} ticks and ${s.counts[1]} tocks, against at least ${MIN_BEATS} of each`,
@@ -31,6 +34,17 @@ function describeSounds(s) {
     'no-pair': 'no two sounds the same time after the first in both beats',
     'lift-range': `time from first sound to lock (${(s.refusedLiftMs || []).map((v) => v.toFixed(1)).join(' and ')} ms) outside ${lo.toFixed(1)} to ${hi.toFixed(1)} ms`,
     'no-middle-sound': 'nothing between the first sound and the lock in a beat, so the first may be the impulse',
+    'lined-few-blocks': 'lined up, a sound was placed in fewer than two blocks',
+    'lined-lost': 'a sound was lost in the lined-up average',
+    'lined-far': 'a lined-up sound is too far from where the plain average put it',
+  };
+  /** @type {Record<import('../js/dsp/amplitude.js').Held, string>} */
+  const held = {
+    unchecked: 'no resamples to check it',
+    failing: 'too many resamples do not find the sounds',
+    irregular: 'the watch runs irregularly',
+    halfway: 'a beat lies halfway between the tick and the tock, so the beat rate is half the watch\'s own',
+    scatter: 'the resamples scatter too far',
   };
   if (s.beats && s.weights && s.timestampGapMs !== null) {
     lines.push(`  ${s.counts[0]} ticks and ${s.counts[1]} tocks averaged; the tocks' timestamps ${signed(s.timestampGapMs, 3)} ms from midway; believable unlock to lock ${lo.toFixed(1)} to ${hi.toFixed(1)} ms`);
@@ -39,14 +53,32 @@ function describeSounds(s) {
       for (const e of b.sounds) lines.push(`  ${j === 0 ? 'tick' : 'tock'} sound: starts ${signed(e.onsetMs, 2)} ms, loudest ${signed(e.peakMs, 2)} ms, ${e.levelDb.toFixed(1)} dB over the noise of the average`);
     });
   }
+  const lining = s.lining;
+  if (lining) {
+    const tests = lining.moved
+      ? ': ' + lining.moved.map((type, j) => type.map((m, k) => `${j === 0 ? 'tick' : 'tock'} ${k === 0 ? 'unlock' : 'lock'} ` +
+        (Number.isNaN(m.chi2) ? 'not tested' : `${m.moved ? 'moves' : 'steady'} (${m.chi2.toFixed(1)} against ${m.limit.toFixed(1)} on ${m.dof})`)).join(', ')).join(', ')
+      : '';
+    if (lining.state === 'steady') lines.push(`  not lined up again, no sound moved over ${lining.blocks} blocks of ${BLOCK_SECONDS} s${tests}`);
+    else if (lining.state === 'few-blocks') lines.push(`  not lined up again, a sound was placed in fewer than two blocks of ${BLOCK_SECONDS} s${tests}`);
+    else lines.push(`  lined up again on ${lining.blocks} blocks of ${BLOCK_SECONDS} s` + (lining.leftOut ? `, leaving out ${lining.leftOut} shift${lining.leftOut === 1 ? '' : 's'} that scattered by more than ${MAX_SHIFT_SCATTER_MS} ms` : '') + tests);
+  }
   if (s.why !== null) {
     lines.push(`  no reading: ${reasons[s.why]}`);
     return lines;
   }
   if (s.unlockGapMs === null || s.lockGapMs === null || !s.liftMs || s.amplitude === null || !s.amplitudes || s.unlockDb === null) return lines;
-  lines.push(`  beat error from the unlocks ${Math.abs(s.unlockGapMs).toFixed(2)} ms (the tock's unlock ${signed(s.unlockGapMs, 3)} ms from midway); the locks ${signed(s.lockGapMs, 2)} ms`);
-  lines.push(`  unlock to lock: tick ${s.liftMs[0].toFixed(2)} ms, tock ${s.liftMs[1].toFixed(2)} ms, ratio ${(s.liftMs[0] / s.liftMs[1]).toFixed(3)}`);
-  lines.push(`  amplitude ${s.amplitude.toFixed(0)} degrees (tick alone ${s.amplitudes[0].toFixed(0)}, tock alone ${s.amplitudes[1].toFixed(0)}); the weaker unlock stands ${s.unlockDb.toFixed(1)} dB over the noise of the average`);
+  const sd = s.scatter;
+  /** @param {number|undefined} v @param {number} digits */
+  const pm = (v, digits) => (v === undefined ? '' : ` +- ${v.toFixed(digits)}`);
+  /** @param {import('../js/dsp/amplitude.js').Held|null} why */
+  const back = (why) => (why === null ? '' : `  [held back: ${held[why]}]`);
+  lines.push(`  beat error from the unlocks ${Math.abs(s.unlockGapMs).toFixed(2)}${pm(sd?.unlockGapMs, 2)} ms (the tock's unlock ${signed(s.unlockGapMs, 3)} ms from midway)${back(s.beatErrorHeld)}`);
+  lines.push(`  gap between the locks ${signed(s.lockGapMs, 2)}${pm(sd?.lockGapMs, 2)} ms`);
+  lines.push(`  unlock to lock: tick ${s.liftMs[0].toFixed(2)}${pm(sd?.liftMs[0], 2)} ms, tock ${s.liftMs[1].toFixed(2)}${pm(sd?.liftMs[1], 2)} ms, ratio ${(s.liftMs[0] / s.liftMs[1]).toFixed(3)}`);
+  lines.push(`  amplitude ${s.amplitude.toFixed(0)}${pm(sd?.amplitude, 0)} degrees (tick alone ${s.amplitudes[0].toFixed(0)}, tock alone ${s.amplitudes[1].toFixed(0)})${back(s.amplitudeHeld)}`);
+  lines.push((s.failing === null || s.otherSound === null ? '  ' : `  resamples in which the sounds were not found: ${(100 * s.failing).toFixed(1)}% (another sound in ${(100 * s.otherSound).toFixed(1)}%); `) +
+    `the weaker unlock stands ${s.unlockDb.toFixed(1)} dB over the noise of the average`);
   return lines;
 }
 
@@ -59,7 +91,8 @@ const r = analyze(wav.channels, wav.sampleRate, {
   startSeconds: start ? Number(start) : 0,
   endSeconds: Number(end) ? Number(end) : undefined,
   bph: Number(bph) ? Number(bph) : undefined,
-  liftAngle: liftAngle ? Number(liftAngle) : undefined,
+  liftAngle: Number(liftAngle) ? Number(liftAngle) : undefined,
+  sounds: { lineUp: /** @type {'moved'|'always'|'never'|undefined} */ (lineUp || undefined), resamples: resamples === undefined ? undefined : Number(resamples) },
 });
 const elapsed = (performance.now() - t0) / 1000;
 for (const a of r.acquisition) console.log(`  candidate ${a.bph} bph: best ${a.ppm.toFixed(1)} ppm, stat ${a.stat.toFixed(1)}, z ${a.z.toFixed(1)}, second cluster z ${a.secondZ.toFixed(1)}`);

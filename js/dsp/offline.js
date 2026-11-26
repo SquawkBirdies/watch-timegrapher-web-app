@@ -8,7 +8,7 @@ import { acquire, chooseCandidate, refinePeriod, STANDARD_RATES } from './acquir
 import { buildTemplate, buildSplitTemplates, findClusters } from './template.js';
 import { trackBeats, medianZ, LAG_MS } from './timing.js';
 import { alignBeats, continueBeats } from './irregular.js';
-import { summarize } from './estimate.js';
+import { summarize, halfwayBeat } from './estimate.js';
 import { medfilt } from './mathutil.js';
 import { soundRows } from './sounds.js';
 import { measureSounds } from './amplitude.js';
@@ -55,14 +55,14 @@ export { MAX_OFFSET_SD_MS, MIN_SIMILARITY, MAX_SCATTER_MS } from './estimate.js'
  * Analyse a recording.
  * @param {ArrayLike<number>[]} channels one array of samples per channel
  * @param {number} sampleRate
- * @param {{humHz?: number, bph?: number, startSeconds?: number, endSeconds?: number, bands?: number[][], escapement?: import('./estimate.js').Escapement, timing?: TimingOptions, liftAngle?: number}} [options]
+ * @param {{humHz?: number, bph?: number, startSeconds?: number, endSeconds?: number, bands?: number[][], escapement?: import('./estimate.js').Escapement, timing?: TimingOptions, liftAngle?: number, sounds?: import('./amplitude.js').ReadOptions}} [options]
  *   `bands` replaces the filter bank's band edges in hertz; `escapement` as in `summarize`;
  *   `timing` as in `trackBeats`; with `liftAngle`, in degrees, the sounds inside each beat are
- *   read too (`sounds` in the result)
+ *   read too (`sounds` in the result), as the `sounds` options say
  * @returns {Analysis}
  */
 export function analyze(channels, sampleRate, options = {}) {
-  const { humHz = 60, bph: forcedBph, startSeconds = 0, endSeconds, bands, escapement, timing, liftAngle } = options;
+  const { humHz = 60, bph: forcedBph, startSeconds = 0, endSeconds, bands, escapement, timing, liftAngle, sounds: reading } = options;
   const from = Math.max(0, Math.round(startSeconds * sampleRate));
   const to = Math.min(channels[0].length, endSeconds === undefined ? Infinity : Math.round(endSeconds * sampleRate));
   const audio = channels.map((c) => Float32Array.from(/** @type {any} */ (c).subarray ? /** @type {any} */ (c).subarray(from, to) : Array.prototype.slice.call(c, from, to)));
@@ -83,7 +83,15 @@ export function analyze(channels, sampleRate, options = {}) {
   // place in them is `toSeconds` undone, without Cleanup's delay.
   /** @param {number} t */
   const toRaw = (t) => (t * sampleRate - from - (dec - 1) / 2) / dec;
-  const sounds = liftAngle === undefined ? null : measureSounds(soundRows(bank, raw), fe, result.beats, result.bph, liftAngle, toRaw);
+  // What the earlier stages know of the watch decides what may be shown: an irregular watch
+  // has no one beat error, and a beat halfway between the tick and the tock means the beat rate
+  // is half the watch's own. `summarize` looks for that beat only in Swiss-lever mode, where
+  // its own beat error needs it; here it matters for either escapement.
+  const sounds = liftAngle === undefined ? null : measureSounds(soundRows(bank, raw), fe, result.beats, result.bph, liftAngle, toRaw, {
+    irregular: result.irregular,
+    halfway: result.locked && halfwayBeat(result.template, result.clusters, fe).found,
+    ...reading,
+  });
   return { sampleRate, ...result, sounds };
 }
 
