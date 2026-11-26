@@ -183,7 +183,9 @@ export class Measurement {
 /**
  * The same event with its times moved later by `dt` seconds. A live measurement restarts the
  * pipeline after an interruption, and the pipeline counts time from its own start; this places
- * the new segment's events after the gap on the run's timeline.
+ * the new segment's events after the gap on the run's timeline. Every time an event carries
+ * moves, because they are compared with one another: the six-position log sets where a
+ * reading's audio begins against when the lock appeared, which comes from a status event.
  * @param {PipelineEvent} e
  * @param {number} dt
  * @returns {PipelineEvent}
@@ -194,7 +196,13 @@ export function shiftEvent(e, dt) {
   if (e.type === 'beats') return { ...e, beats: e.beats.map((b) => ({ ...b, t: b.t + dt })), replaceFrom: e.replaceFrom === null ? null : e.replaceFrom + dt };
   if (e.type === 'readings') {
     const sounds = e.sounds && e.sounds.window ? { ...e.sounds, window: /** @type {[number, number]} */ ([e.sounds.window[0] + dt, e.sounds.window[1] + dt]) } : e.sounds;
-    return { ...e, t: e.t + dt, window: e.window === null ? null : [e.window[0] + dt, e.window[1] + dt], sounds };
+    return {
+      ...e,
+      t: e.t + dt,
+      window: e.window === null ? null : [e.window[0] + dt, e.window[1] + dt],
+      windowStart: e.windowStart === null ? null : e.windowStart + dt,
+      sounds,
+    };
   }
   return { ...e, t: e.t + dt };
 }

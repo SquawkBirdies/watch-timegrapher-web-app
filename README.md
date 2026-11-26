@@ -497,10 +497,13 @@ delivers it at 44.1 kHz), the live reading after 50 s was +6.9 s/day and 0.40 ms
 itself, streamed through the pipeline, reads +6.88 s/day and 0.38 ms at the same point, and the
 saved minute replayed under Your file read +6.9 s/day and 0.40 ms. With 3 s of digital silence
 inserted into the recording at 40 s, the app showed the interruption, resumed when the sound
-came back and locked again 9 s later. The automated tests drive the same code with a stand-in
-for the microphone: a simulated watch cut off for 2 s gives no readings during the gap, no
-confident dots in it and a fresh lock after it, and its saved minute matches the analysed audio
-sample for sample and replays to the same reading within 0.1 s/day.
+came back and locked again 9 s later. The automated tests drive the same code with a stand-in for
+the microphone: a simulated watch cut off for 2 s gives no readings during the gap, no confident
+dots in it and a fresh lock after it, and its saved minute matches the analysed audio sample for
+sample and replays to the same reading within 0.1 s/day. In six-position mode a reading can be
+saved a full window after that fresh lock: 20.5 s after it in the tests, and in Chrome, with the
+same simulated watch played in as the microphone, "Ready to save as Dial up" came 20 s after the
+lock at 36 s, at +12.0 ± 0.1 s/day against a true +12.
 
 On the iPhone 17 Pro Max with iOS 27.2, on 17 November 2026, the Omega was measured live in
 co-axial mode and the run stopped before a minute. The live reading was +0.8 ± 0.09 s/day over
@@ -553,7 +556,8 @@ heard since the lock, none from before the watch was placed or while it settled.
 continuous mode also uses the beats timed in the stretch the lock was found in, about the 8 s
 before "Locked".) The window is the one set in the settings (10, 20, 40 or 60 s), or longer when a
 faint watch's ticks are averaged over several cycles, so a reading always runs for the longer of
-the two. A lost lock starts the count again. The button "Save as Dial up" becomes available then:
+the two. A lost lock starts the count again, and so does a microphone interruption, from the lock
+found when the sound is back. The button "Save as Dial up" becomes available then:
 with the default 20 s window and a lock after 8 s, about 28.5 s after Start. Saving stops the run,
 leaves the saved reading on the screen and suggests the next position without a reading. Tapping
 a row chooses the position the next reading is saved as, to skip one or to measure one again; a
