@@ -178,7 +178,8 @@ In real time the stage works like this:
 | Omega 3861, Safari capture, co-axial, 36° | 8.1 s | 38.8 s, from 30 s of beats | reliably shown from 49 s, with 41 s of beats; at the end 0.31 ± 0.04 ms and 288.4 ± 1.0° from 51 s of beats |
 | Simulated lever, 0.50 ms and 270°, at 50° | 8.1 s | 38.8 s | 0.49 ± 0.01 ms and 269.6 ± 0.2°, shown from the first reading |
 | ETA 2836-2, Safari capture | 8.1 s | none: the capture is 30 s long | |
-| The three Voice Memos recordings | | none: timestamps that each average several cycles | a dash, with that reason |
+| ETA 2836-2, Voice Memos recording | 8.1 s | 38.8 s | no reading for its first minute: the first sound found comes at no believable time before the lock (`lift-range`), 0.05 s of computing a try; then its timestamps average cycles |
+| The two Omega 3861 Voice Memos recordings | 52 s and 12 s | none: timestamps that each average several cycles | a dash, with that reason |
 
 The times are those of the readings event that first carried the reading. In the app a reading
 appears later by twice its computing, as below.
