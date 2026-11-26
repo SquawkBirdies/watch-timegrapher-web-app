@@ -7,8 +7,10 @@ import { synthesizeWatch } from '../audio/simulator.js';
 /**
  * @typedef {Object} Load
  * @property {number} audioSeconds audio processed so far
- * @property {number} busySeconds computing time spent on it
+ * @property {number} busySeconds computing time spent on it, stage 10's readings included
  * @property {number} longestSeconds longest time spent on a single chunk
+ * @property {import('./soundstage.js').StageLoad|null} stage the part of the computing spent on
+ *   stage 10's readings, the sounds inside each beat; null when that stage is not running
  */
 
 export class Session {
@@ -41,7 +43,7 @@ export class Session {
 
   /** @returns {Load} */
   load() {
-    return { audioSeconds: this.audioSeconds, busySeconds: this.busySeconds, longestSeconds: this.longestSeconds };
+    return { audioSeconds: this.audioSeconds, busySeconds: this.busySeconds, longestSeconds: this.longestSeconds, stage: this.pipeline.sounds ? this.pipeline.sounds.load() : null };
   }
 }
 
@@ -51,6 +53,7 @@ export class Session {
  * @property {number} audioSeconds
  * @property {number} busySeconds
  * @property {number} longestSeconds
+ * @property {import('./soundstage.js').StageLoad|null} stage
  * @property {number} speed audio seconds per computing second
  * @property {number|null} lockedAt seconds of audio before the first lock
  * @property {number|null} rate final rate reading
@@ -59,15 +62,16 @@ export class Session {
 
 /**
  * Time the real-time pipeline on simulated audio of a clear 28,800 vph watch at +12 s/day with
- * a 0.30 ms beat error. Generating the audio is not timed.
- * @param {{seconds?: number, sampleRate?: number, channelCount?: number, chunk?: number}} [options]
+ * a 0.30 ms beat error. Generating the audio is not timed. The pipeline runs as the app runs
+ * it, stage 10 included, which takes its share of the time while it has a reading to work out.
+ * @param {{seconds?: number, sampleRate?: number, channelCount?: number, chunk?: number, liftAngle?: number}} [options]
  * @returns {BenchmarkResult}
  */
 export function benchmark(options = {}) {
-  const { seconds = 60, sampleRate = 48000, channelCount = 1, chunk = 4096 } = options;
+  const { seconds = 60, sampleRate = 48000, channelCount = 1, chunk = 4096, liftAngle = 52 } = options;
   const watch = synthesizeWatch({ bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds, sampleRate, seed: 1 });
   const channels = watch.channels.slice(0, channelCount);
-  const session = new Session(sampleRate, channels.length);
+  const session = new Session(sampleRate, channels.length, { liftAngle });
   /** @type {number|null} */
   let lockedAt = null;
   /** @type {import('./pipeline.js').ReadingsEvent|null} */

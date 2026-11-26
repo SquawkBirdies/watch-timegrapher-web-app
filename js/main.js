@@ -3,7 +3,7 @@
 // in real time for the simulator and recordings; the worker's events update the measurement
 // model, and the screen is redrawn from the model.
 
-import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
+import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
 import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
 import { ScreenWake } from './ui/wake.js';
@@ -313,7 +313,7 @@ async function start() {
     id,
     sampleRate: source.sampleRate,
     channelCount: kind === 'simulator' ? 1 : /** @type {RecordingSource} */ (source).channelCount,
-    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: thisRun.escapement, averagingSeconds: settings.averagingSeconds },
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: thisRun.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: settings.liftAngle },
   });
   player = new Player(source, {
     speed: thisRun.kind === 'simulator' ? 1 : speed,
@@ -459,7 +459,7 @@ function beginLiveSession(r, offset) {
     id: sessionId,
     sampleRate: r.sampleRate,
     channelCount: 1,
-    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds },
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: settings.liftAngle },
   });
   schedule();
 }
@@ -654,6 +654,8 @@ function render() {
   const levels = [];
   if (src.running && inputPeak > 0) levels.push(`Input peak ${(20 * Math.log10(inputPeak)).toFixed(0).replace('-', '−')} dBFS`);
   if (load && load.audioSeconds > 1) levels.push(`analysis uses ${((100 * load.busySeconds) / load.audioSeconds).toFixed(0)}% of real time`);
+  const stage = load ? stageNote(load.stage, tracking && r ? r.sounds : null) : '';
+  if (stage) levels.push(stage);
   ui.levels.textContent = levels.join(' · ');
 
   // Averaged beat.
@@ -1079,9 +1081,11 @@ ui.settingsForm.addEventListener('change', () => {
   if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
     restart();
   } else if (run && run.running) {
-    /** @type {{averagingSeconds?: number, escapement?: Escapement}} */
+    /** @type {{averagingSeconds?: number, escapement?: Escapement, liftAngle?: number}} */
     const changes = {};
     if (settings.averagingSeconds !== before.averagingSeconds) changes.averagingSeconds = settings.averagingSeconds;
+    // The sounds inside the beats are read again with the new lift angle.
+    if (settings.liftAngle !== before.liftAngle) changes.liftAngle = settings.liftAngle;
     if (settings.escapement !== before.escapement) {
       changes.escapement = settings.escapement;
       run.escapement = settings.escapement;

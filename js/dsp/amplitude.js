@@ -26,8 +26,8 @@
 
 import { median, mean, std, seededRandom, chiSquaredQuantile } from './mathutil.js';
 import {
-  STRETCH_BEFORE_S, STRETCH_AFTER_S, stackBeats, stretchMs, samplesBefore, toColumns, shiftedColumns, bandMeans, energyWeights, mixBands,
-  findSounds, smoothForMatching, shiftOf,
+  STRETCH_BEFORE_S, STRETCH_AFTER_S, stackBeats, stretchMs, samplesBefore, rankBand, shiftedBandMeans, bandMeans, energyWeights, mixBands,
+  findSounds, smoothForMatching, shiftOf, MAX_SHIFT_MS, MATCH_SMOOTH_MS,
 } from './sounds.js';
 
 /**
@@ -221,7 +221,10 @@ export const LINED_NEAR_MS = 1;
  * @property {Float64Array|null} ms time of each sample of the averaged beats, in milliseconds from the timestamp
  * @property {Float64Array|null} weights the bands' weights
  * @property {[AveragedBeat, AveragedBeat]|null} beats the averaged tick and tock
- * @property {Pair|null} pair
+ * @property {Pair|null} pair the unlock and the lock chosen in the plain average
+ * @property {[[number, number], [number, number]]|null} places for the tick and the tock, where
+ *   the unlock and the lock start, in milliseconds from the timestamp: the places the readings
+ *   rest on, which are the lined-up ones when the beats were lined up again
  * @property {[number, number]|null} refusedLiftMs with `lift-range`, the times that were refused
  * @property {number|null} unlockGapMs how much later than midway between the ticks' unlocks the
  *   tocks' unlocks fall; its size is the beat error
@@ -327,14 +330,14 @@ export function pairBeats(tick, tock, bph, liftAngle) {
 }
 
 /**
- * A reading with nothing in it yet.
+ * A reading with nothing in it yet, or one that was not made.
  * @param {number} bph
  * @param {number} liftAngle
- * @param {[number, number]} counts
+ * @param {[number, number]} counts each type's beats
  * @param {NoReading|null} why
  * @returns {SoundsReading}
  */
-function noReading(bph, liftAngle, counts, why) {
+export function noReading(bph, liftAngle, counts, why) {
   const limits = liftLimits(bph, liftAngle);
   return {
     liftAngle,
@@ -347,6 +350,7 @@ function noReading(bph, liftAngle, counts, why) {
     weights: null,
     beats: null,
     pair: null,
+    places: null,
     refusedLiftMs: null,
     unlockGapMs: null,
     beatErrorMs: null,
@@ -445,9 +449,14 @@ function interpolate(at, x, y) {
  *   up on
  * @param {number} resamples times each block's beats are drawn again for its shifts' scatter
  * @param {(n: number) => Int32Array} draw
- * @returns {[BlockShifts, BlockShifts]}
+ * @param {[[boolean, boolean], [boolean, boolean]]|null} [wanted] for the tick and the tock,
+ *   whether the unlock's shifts are wanted and whether the lock's are; all four when absent. A
+ *   shift not wanted is not a number, and only the parts of each block's averaged beat that the
+ *   wanted ones are matched in are worked out: a resample of lined-up beats needs the shifts of
+ *   the sounds it lines up and no others
+ * @returns {Generator<void, [BlockShifts, BlockShifts], void>} pausing after each of those draws
  */
-function blockShifts(m, drawn, starts, resamples, draw) {
+function* blockShifts(m, drawn, starts, resamples, draw, wanted = null) {
   const given = starts !== null;
   const members = [0, 1].map((j) => drawn[j] ?? Int32Array.from({ length: m.columns[j].count }, (_, i) => i));
   if (!starts) {
@@ -463,10 +472,29 @@ function blockShifts(m, drawn, starts, resamples, draw) {
     for (let a = first; a + BLOCK_SECONDS <= last + 0.5; a += BLOCK_SECONDS) starts.push(a);
   }
   const inBlock = starts.map((a) => [0, 1].map((j) => members[j].filter((i) => m.times[j][i] >= a && m.times[j][i] < a + BLOCK_SECONDS)));
+  // The instants of each type's averaged beat that a match reads: the quiet stretch, which gives
+  // each band its level, and around each wanted sound as far as it is looked for, with the
+  // samples the smoothing reaches into.
+  const dt = m.ms[1] - m.ms[0];
+  const reach = Math.round(MAX_SHIFT_MS / dt) + Math.max(1, Math.round(MATCH_SMOOTH_MS / dt));
+  const only = [0, 1].map((j) => {
+    const mask = new Uint8Array(m.ms.length);
+    mask.fill(1, 0, m.quiet);
+    for (const k of [0, 1]) {
+      if (wanted && !wanted[j][k]) continue;
+      const from = Math.max(0, samplesBefore(m.ms, m.windows[j][k][0]) - reach);
+      const to = Math.min(mask.length, samplesBefore(m.ms, m.windows[j][k][1]) + reach);
+      if (to > from) mask.fill(1, from, to);
+    }
+    return mask;
+  });
   /** @param {0|1} j @param {ArrayLike<number>} beats */
-  const curveOf = (j, beats) => smoothForMatching(mixBands(bandMeans(m.columns[j], m.quiet, beats).excess, m.weights), m.ms);
-  return /** @type {[BlockShifts, BlockShifts]} */ ([0, 1].map((j) => {
-    const type = /** @type {0|1} */ (j);
+  const curveOf = (j, beats) => smoothForMatching(mixBands(bandMeans(m.columns[j], m.quiet, beats, only[j]).excess, m.weights), m.ms);
+  /** @param {0|1} j @param {0|1} k */
+  const want = (j, k) => !wanted || wanted[j][k];
+  /** @type {BlockShifts[]} */
+  const out = [];
+  for (const type of /** @type {(0|1)[]} */ ([0, 1])) {
     /** @type {number[]} */
     const mids = [];
     /** @type {[number[], number[]]} */
@@ -485,22 +513,31 @@ function blockShifts(m, drawn, starts, resamples, draw) {
       }
       const beats = inBlock[b][type];
       mids.push(starts[b] + 0.5 * BLOCK_SECONDS);
+      if (!want(type, 0) && !want(type, 1)) {
+        for (const k of [0, 1]) {
+          shifts[k].push(NaN);
+          scatter[k].push(NaN);
+        }
+        continue;
+      }
       const curve = curveOf(type, beats);
-      for (const k of [0, 1]) shifts[k].push(shiftOf(m.templates[type], curve, m.ms, m.windows[type][k][0], m.windows[type][k][1]) ?? NaN);
+      for (const k of /** @type {(0|1)[]} */ ([0, 1])) shifts[k].push(want(type, k) ? shiftOf(m.templates[type], curve, m.ms, m.windows[type][k][0], m.windows[type][k][1]) ?? NaN : NaN);
       if (!resamples) continue;
       /** @type {[number[], number[]]} */
       const got = [[], []];
       for (let r = 0; r < resamples; r++) {
         const again = curveOf(type, draw(beats.length).map((i) => beats[i]));
-        for (const k of [0, 1]) {
-          const v = shiftOf(m.templates[type], again, m.ms, m.windows[type][k][0], m.windows[type][k][1]);
+        for (const k of /** @type {(0|1)[]} */ ([0, 1])) {
+          const v = want(type, k) ? shiftOf(m.templates[type], again, m.ms, m.windows[type][k][0], m.windows[type][k][1]) : null;
           if (v !== null) got[k].push(v);
         }
+        yield;
       }
       for (const k of [0, 1]) scatter[k].push(got[k].length >= BLOCK_PLACED * resamples ? std(got[k]) : NaN);
     }
-    return { mids, shifts: [Float64Array.from(shifts[0]), Float64Array.from(shifts[1])], scatter: resamples ? [Float64Array.from(scatter[0]), Float64Array.from(scatter[1])] : null };
-  }));
+    out.push({ mids, shifts: [Float64Array.from(shifts[0]), Float64Array.from(shifts[1])], scatter: resamples ? [Float64Array.from(scatter[0]), Float64Array.from(scatter[1])] : null });
+  }
+  return [out[0], out[1]];
 }
 
 /**
@@ -586,17 +623,45 @@ function readingsOf(places, gapMs) {
 }
 
 /**
+ * Why each reading is not to be shown, from its resamples and from what the earlier stages
+ * know of the watch. The first reason that applies is the one given: sounds that are often not
+ * found leave nothing to say about the watch, and what the pipeline knows of the watch comes
+ * before the scatter of a reading it would not show anyway.
+ * @param {Pick<SoundsReading, 'amplitude'|'failing'|'scatter'>} reading one with its resamples
+ *   counted
+ * @param {boolean} irregular the pipeline found the watch's beats falling at scattered times
+ * @param {boolean} halfway the pipeline found a beat halfway between the tick and the tock
+ * @returns {{beatError: Held|null, amplitude: Held|null}} null for a reading to show, and for
+ *   one that was never made
+ */
+export function heldBack(reading, irregular, halfway) {
+  if (reading.amplitude === null) return { beatError: null, amplitude: null };
+  if (reading.failing === null) return { beatError: 'unchecked', amplitude: 'unchecked' };
+  const failing = reading.failing > MAX_FAILING;
+  if (!reading.scatter) return failing ? { beatError: 'failing', amplitude: 'failing' } : { beatError: 'unchecked', amplitude: 'unchecked' };
+  return {
+    beatError: failing ? 'failing' : irregular ? 'irregular' : halfway ? 'halfway' : reading.scatter.unlockGapMs > MAX_BEAT_ERROR_SCATTER_MS ? 'scatter' : null,
+    amplitude: failing ? 'failing' : halfway ? 'halfway' : reading.scatter.amplitude > MAX_AMPLITUDE_SCATTER ? 'scatter' : null,
+  };
+}
+
+/**
  * The readings of the ticks' and the tocks' stacked beats, with their scatter and whether they
- * may be shown.
- * @param {[TypeBeats, TypeBeats]} beats the ticks and the tocks
+ * may be shown: `readBeats`, as steps that can be taken a few at a time. A reading with its 200
+ * draws takes from half a second to several seconds of computing, and the real-time pipeline
+ * has audio to keep up with meanwhile. Each step is a piece of the work a few milliseconds
+ * long. The draws come in the same order however the steps are spread, so the result is the
+ * same.
+ * @param {[TypeBeats, TypeBeats]} beats the ticks and the tocks; they must not change until the
+ *   last step is taken
  * @param {number} envelopeRate envelope sample rate in hertz
  * @param {number} timestampGapMs from `timestampGap`
  * @param {number} bph
  * @param {number} liftAngle
  * @param {ReadOptions} [options]
- * @returns {SoundsReading}
+ * @returns {Generator<void, SoundsReading, void>}
  */
-export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, options = {}) {
+export function* readBeatsSteps(beats, envelopeRate, timestampGapMs, bph, liftAngle, options = {}) {
   const { resamples = RESAMPLES, lineUp = 'moved', seed = 1, irregular = false, halfway = false, each } = options;
   const stacks = [beats[0].stack, beats[1].stack];
   const out = noReading(bph, liftAngle, [stacks[0].count, stacks[1].count], null);
@@ -609,7 +674,19 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
   const [shortest, longest] = out.liftLimitsMs;
   const random = seededRandom(seed);
   const draw = options.draw ?? ((/** @type {number} */ n) => Int32Array.from({ length: n }, () => Math.floor(random() * n)));
-  const columns = /** @type {[BeatColumns, BeatColumns]} */ ([toColumns(stacks[0]), toColumns(stacks[1])]);
+  // Each instant's beats are ranked once, for every average of these beats that follows.
+  /** @type {BeatColumns[]} */
+  const ranked = [];
+  for (const stack of stacks) {
+    /** @type {Uint16Array[]} */
+    const order = [];
+    for (let b = 0; b < stack.bands.length; b++) {
+      order.push(rankBand(stack, b));
+      yield;
+    }
+    ranked.push({ bands: stack.bands, count: stack.count, length: stack.length, order });
+  }
+  const columns = /** @type {[BeatColumns, BeatColumns]} */ ([ranked[0], ranked[1]]);
 
   // The plain average of all the beats: its mixture of bands and its choice of unlock and lock
   // stand for everything that follows.
@@ -625,6 +702,7 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
   const { pair, why, refusedLiftMs } = pairBeats(averaged[0].sounds, averaged[1].sounds, bph, liftAngle);
   if (!pair) return { ...out, why, refusedLiftMs };
   out.pair = pair;
+  yield;
 
   /** @param {0|1} j @param {Int32Array|null} d the averaged beat of the beats drawn, or of all */
   const curveOf = (j, d) => mixBands(bandMeans(columns[j], quiet, d ?? undefined).excess, weights);
@@ -635,9 +713,9 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
   });
   /**
    * Where a draw of the beats puts the sounds, or why it finds none.
-   * @type {(d0: Int32Array|null, d1: Int32Array|null) => Places | NoReading}
+   * @type {(d0: Int32Array|null, d1: Int32Array|null) => Generator<void, Places | NoReading, void>}
    */
-  let read = (d0, d1) => {
+  let read = function* (d0, d1) {
     const found = pairBeats(findSounds(curveOf(0, d0), ms, quiet).sounds, findSounds(curveOf(1, d1), ms, quiet).sounds, bph, liftAngle);
     return found.pair ? placesOf(found.pair) : /** @type {NoReading} */ (found.why);
   };
@@ -659,7 +737,7 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
     };
     // Each block's beats are drawn again for the scatter of its shifts: the test for a moving
     // sound rests on it, and so does leaving out a shift that took another sound.
-    const blocks = blockShifts(matching, [null, null], null, BLOCK_RESAMPLES, draw);
+    const blocks = yield* blockShifts(matching, [null, null], null, BLOCK_RESAMPLES, draw);
     const measured = /** @type {[BlockShifts, BlockShifts]} */ (blocks.map((b) => ({ ...b, shifts: [b.shifts[0].slice(), b.shifts[1].slice()] })));
     const starts = blocks[0].mids.map((mid) => mid - 0.5 * BLOCK_SECONDS);
     const moved = lineUp === 'moved' ? movedSounds(blocks) : null;
@@ -679,6 +757,8 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
     };
     /** @param {0|1} j @param {0|1} k whether this sound's beats are lined up again */
     const linedUp = (j, k) => !moved || moved[j][k].moved;
+    /** @type {[[boolean, boolean], [boolean, boolean]]} */
+    const lined = [[linedUp(0, 0), linedUp(0, 1)], [linedUp(1, 0), linedUp(1, 1)]];
     const shifts = beatShifts(withoutLeftOut(blocks), matching.times, moved);
     /** @type {LiningUp} */
     const lining = { state: 'lined', blocks: starts.length, shifts: measured, leftOut: 0, moved };
@@ -691,7 +771,7 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
     } else {
       // Where the plain average put each sound; the lined-up sound is looked for near it.
       const near = whole.at;
-      read = (d0, d1) => {
+      read = function* (d0, d1) {
         const d = [d0, d1];
         let use = shifts;
         if (d0 && d1) {
@@ -699,9 +779,10 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
           // blocks, and the drawn beats lined up on them. A wrong shift moves a lined-up sound
           // one way and the mean shift added back the other, so drawing the shifts alone, with
           // the beats left as the whole set lined them up, would overstate the scatter.
-          const again = beatShifts(withoutLeftOut(blockShifts(matching, [d0, d1], starts, 0, draw)), [Array.from(d0, (i) => matching.times[0][i]), Array.from(d1, (i) => matching.times[1][i])], moved);
+          const again = beatShifts(withoutLeftOut(yield* blockShifts(matching, [d0, d1], starts, 0, draw, lined)), [Array.from(d0, (i) => matching.times[0][i]), Array.from(d1, (i) => matching.times[1][i])], moved);
           if (!again) return 'lined-few-blocks';
           use = again;
+          yield;
         }
         /** @type {[[number, number], [number, number]]} */
         const at = [[0, 0], [0, 0]];
@@ -711,8 +792,12 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
           let unshifted = null;
           for (const k of /** @type {(0|1)[]} */ ([0, 1])) {
             let curve;
-            if (linedUp(j, k)) curve = mixBands(bandMeans(shiftedColumns(stacks[j], d[j], use[j][k], envelopeRate), quiet).excess, weights);
-            else curve = unshifted ??= curveOf(j, d[j]);
+            if (linedUp(j, k)) {
+              curve = mixBands(shiftedBandMeans(stacks[j], d[j], use[j][k], envelopeRate, quiet).excess, weights);
+              yield;
+            } else {
+              curve = unshifted ??= curveOf(j, d[j]);
+            }
             const { sounds } = findSounds(curve, ms, quiet);
             if (!sounds.length) return 'lined-lost';
             let nearest = sounds[0];
@@ -727,13 +812,14 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
         if (!at.every(([unlock, lock]) => shortest <= lock - unlock && lock - unlock <= longest)) return 'lift-range';
         return { at, unlockDb };
       };
-      const lined = read(null, null);
-      if (typeof lined === 'string') return { ...out, why: lined };
-      whole = lined;
+      const linedPlaces = yield* read(null, null);
+      if (typeof linedPlaces === 'string') return { ...out, why: linedPlaces };
+      whole = linedPlaces;
     }
   }
 
   const reading = readingsOf(whole, timestampGapMs);
+  out.places = whole.at;
   out.unlockGapMs = reading.unlockGapMs;
   out.beatErrorMs = Math.abs(reading.unlockGapMs);
   out.lockGapMs = reading.lockGapMs;
@@ -754,7 +840,8 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
   for (let r = 0; r < resamples; r++) {
     const d0 = draw(stacks[0].count);
     const d1 = draw(stacks[1].count);
-    const places = read(d0, d1);
+    const places = yield* read(d0, d1);
+    yield;
     if (typeof places === 'string') {
       if (each) each(places);
       continue;
@@ -778,39 +865,49 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
   // reading exactly at the limit over it.
   out.failing = (resamples - found) / resamples;
   out.otherSound = other / resamples;
-  if (found < MIN_RESAMPLES_KEPT) {
-    if (out.failing > MAX_FAILING) out.beatErrorHeld = out.amplitudeHeld = 'failing';
-    return out;
-  }
-  out.scatter = { unlockGapMs: std(kept.unlockGapMs), lockGapMs: std(kept.lockGapMs), liftMs: [std(kept.tick), std(kept.tock)], amplitude: std(kept.amplitude) };
-  // The first reason that applies is the one given: sounds that are often not found leave
-  // nothing to say about the watch, and what the pipeline knows of the watch comes before the
-  // scatter of a reading it would not show anyway.
-  const failing = out.failing > MAX_FAILING;
-  out.beatErrorHeld = failing ? 'failing' : irregular ? 'irregular' : halfway ? 'halfway' : out.scatter.unlockGapMs > MAX_BEAT_ERROR_SCATTER_MS ? 'scatter' : null;
-  out.amplitudeHeld = failing ? 'failing' : halfway ? 'halfway' : out.scatter.amplitude > MAX_AMPLITUDE_SCATTER ? 'scatter' : null;
+  if (found >= MIN_RESAMPLES_KEPT) out.scatter = { unlockGapMs: std(kept.unlockGapMs), lockGapMs: std(kept.lockGapMs), liftMs: [std(kept.tick), std(kept.tock)], amplitude: std(kept.amplitude) };
+  const held = heldBack(out, irregular, halfway);
+  out.beatErrorHeld = held.beatError;
+  out.amplitudeHeld = held.amplitude;
   out.showBeatError = out.beatErrorHeld === null;
   out.showAmplitude = out.amplitudeHeld === null;
   return out;
 }
 
 /**
- * The sounds' readings for a stretch of audio whose beats have been timed: the whole-recording
- * entry. Only beats the pipeline timed alone are read. When a beat type's timestamps each
- * average several cycles there is no reading: placing such beats on the trend of their
- * timestamps read simulated watches 0.04 ms high on average and 1.6 times their stated scatter.
- * @param {Float32Array[]} rows the envelope of each band the sounds are read from, before
- *   Cleanup (`soundRows` in js/dsp/sounds.js): clipping and equal weights hid the Omega's unlock
+ * The readings of the ticks' and the tocks' stacked beats, with their scatter and whether they
+ * may be shown, in one call.
+ * @param {[TypeBeats, TypeBeats]} beats the ticks and the tocks
  * @param {number} envelopeRate envelope sample rate in hertz
- * @param {BeatSeries[]} beats the ticks' and the tocks' timestamps
- * @param {number} bph beat rate in beats per hour
- * @param {number} liftAngle lift angle in degrees
- * @param {(seconds: number) => number} toPosition where a time lies in `rows`, in samples and
- *   fractions of one
+ * @param {number} timestampGapMs from `timestampGap`
+ * @param {number} bph
+ * @param {number} liftAngle
  * @param {ReadOptions} [options]
  * @returns {SoundsReading}
  */
-export function measureSounds(rows, envelopeRate, beats, bph, liftAngle, toPosition, options = {}) {
+export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, options = {}) {
+  const steps = readBeatsSteps(beats, envelopeRate, timestampGapMs, bph, liftAngle, options);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/**
+ * The timed beats of a stretch of envelope, stacked for reading. Only beats the pipeline timed
+ * alone are read. When a beat type's timestamps each average several cycles there is nothing to
+ * stack: placing such beats on the trend of their timestamps read simulated watches 0.04 ms
+ * high on average and 1.6 times their stated scatter.
+ * @param {Float32Array[]} rows the envelope of each band the sounds are read from, before
+ *   Cleanup (`soundRows` in js/dsp/sounds.js): clipping and equal weights hid the Omega's unlock
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @param {Pick<BeatSeries, 'K'|'t'|'n'|'ok'>[]} beats the ticks' and the tocks' timestamps
+ * @param {(seconds: number) => number} toPosition where a time lies in `rows`, in samples and
+ *   fractions of one
+ * @returns {{beats: [TypeBeats, TypeBeats], gapMs: number, why: null} | {why: 'few-beats'|'averaged', counts: [number, number]}}
+ *   the stacked beats, copied out of `rows`, and the gap between the two types' timestamps; or
+ *   why there are none, with each type's confident timestamps counted
+ */
+export function timedBeats(rows, envelopeRate, beats, toPosition) {
   /** @type {[number[], number[]]} */
   const t = [[], []];
   /** @type {[number[], number[]]} */
@@ -825,8 +922,8 @@ export function measureSounds(rows, envelopeRate, beats, bph, liftAngle, toPosit
   }
   const before = Math.floor(STRETCH_BEFORE_S * envelopeRate);
   const after = Math.floor(STRETCH_AFTER_S * envelopeRate);
-  if (Math.min(t[0].length, t[1].length) < MIN_BEATS) return noReading(bph, liftAngle, [t[0].length, t[1].length], 'few-beats');
-  if (beats[0].K > 1 || beats[1].K > 1) return noReading(bph, liftAngle, [t[0].length, t[1].length], 'averaged');
+  if (Math.min(t[0].length, t[1].length) < MIN_BEATS) return { why: 'few-beats', counts: [t[0].length, t[1].length] };
+  if (beats[0].K > 1 || beats[1].K > 1) return { why: 'averaged', counts: [t[0].length, t[1].length] };
   const { gapMs, slope } = timestampGap(t, n);
   const stacked = /** @type {[TypeBeats, TypeBeats]} */ ([0, 1].map((j) => {
     const stack = stackBeats(rows, t[j].map(toPosition), before, after);
@@ -836,5 +933,25 @@ export function measureSounds(rows, envelopeRate, beats, bph, liftAngle, toPosit
       residualMs: Float64Array.from(stack.kept, (i) => (t[j][i] - slope * n[j][i]) * 1e3),
     };
   }));
-  return readBeats(stacked, envelopeRate, gapMs, bph, liftAngle, options);
+  return { beats: stacked, gapMs, why: null };
+}
+
+/**
+ * The sounds' readings for a stretch of audio whose beats have been timed: the whole-recording
+ * entry.
+ * @param {Float32Array[]} rows the envelope of each band the sounds are read from, as for
+ *   `timedBeats`
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @param {BeatSeries[]} beats the ticks' and the tocks' timestamps
+ * @param {number} bph beat rate in beats per hour
+ * @param {number} liftAngle lift angle in degrees
+ * @param {(seconds: number) => number} toPosition where a time lies in `rows`, in samples and
+ *   fractions of one
+ * @param {ReadOptions} [options]
+ * @returns {SoundsReading}
+ */
+export function measureSounds(rows, envelopeRate, beats, bph, liftAngle, toPosition, options = {}) {
+  const timed = timedBeats(rows, envelopeRate, beats, toPosition);
+  if (timed.why !== null) return noReading(bph, liftAngle, timed.counts, timed.why);
+  return readBeats(timed.beats, envelopeRate, timed.gapMs, bph, liftAngle, options);
 }

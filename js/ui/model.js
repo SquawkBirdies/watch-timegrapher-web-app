@@ -192,7 +192,10 @@ export function shiftEvent(e, dt) {
   if (dt === 0) return e;
   if (e.type === 'status') return { ...e, t: e.t + dt };
   if (e.type === 'beats') return { ...e, beats: e.beats.map((b) => ({ ...b, t: b.t + dt })), replaceFrom: e.replaceFrom === null ? null : e.replaceFrom + dt };
-  if (e.type === 'readings') return { ...e, t: e.t + dt, window: e.window === null ? null : [e.window[0] + dt, e.window[1] + dt] };
+  if (e.type === 'readings') {
+    const sounds = e.sounds && e.sounds.window ? { ...e.sounds, window: /** @type {[number, number]} */ ([e.sounds.window[0] + dt, e.sounds.window[1] + dt]) } : e.sounds;
+    return { ...e, t: e.t + dt, window: e.window === null ? null : [e.window[0] + dt, e.window[1] + dt], sounds };
+  }
   return { ...e, t: e.t + dt };
 }
 
@@ -356,6 +359,27 @@ export function irregularWarning(readings) {
  * @property {boolean} [interrupted] the microphone is interrupted
  * @property {boolean} [resumed] the microphone came back after an interruption
  */
+
+/**
+ * The fine print on the computing that reading the sounds inside the beats takes: the beat
+ * error from the unlocks and the amplitude, which are not on the screen yet. It is there so that
+ * the cost can be read off a phone.
+ * @param {import('../dsp/soundstage.js').StageLoad|null} stage the stage's computing so far
+ * @param {import('../dsp/soundstage.js').SoundsReport|null} sounds what the latest readings carry
+ * @returns {string} empty when the stage is not running or has not finished a reading
+ */
+export function stageNote(stage, sounds) {
+  if (!stage || stage.readings === 0 || stage.lastSeconds === null || stage.lastAudioSeconds === null) return '';
+  let result = '';
+  if (sounds && sounds.detail) {
+    if (sounds.detail.why !== null) result = `, no reading (${sounds.detail.why})`;
+    else if (sounds.amplitude !== null && sounds.beatErrorMs !== null) result = ', both to show';
+    else if (sounds.amplitude !== null) result = `, amplitude to show, beat error held back (${sounds.beatErrorWhy})`;
+    else if (sounds.beatErrorMs !== null) result = `, beat error to show, amplitude held back (${sounds.amplitudeWhy})`;
+    else result = `, held back (${sounds.amplitudeWhy})`;
+  }
+  return `amplitude read ${stage.readings} time${stage.readings === 1 ? '' : 's'}, last in ${stage.lastSeconds.toFixed(1)} s of computing over ${stage.lastAudioSeconds.toFixed(1)} s${result}`;
+}
 
 /**
  * One line of advice under the signal meter.

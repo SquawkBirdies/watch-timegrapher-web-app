@@ -68,8 +68,9 @@ test('21,600 vph with a mains buzz almost in step with the watch: -8 s/day, 0.80
 
 test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a longer history, with the readings window lengthened to match', () => {
   const w = synthesizeWatch({ bph: 18000, rate: 45, beatOffsetMs: 0, gain: 0.45, seconds: 100, seed: 3 });
-  // The averaging window is left at its 20 s default: it must lengthen by itself.
-  const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { historySeconds: 80 } });
+  // The averaging window is left at its 20 s default: it must lengthen by itself. A lift angle
+  // is given, so the stage that reads the sounds inside each beat is there.
+  const r = stream(w.channels, w.sampleRate, { chunk: 1024, options: { historySeconds: 80, liftAngle: 52, sounds: { share: Infinity } } });
   assert.ok(r.status.length > 0 && r.status.every((s) => s.state === 'tracking'), 'locked and stayed locked');
   assert.equal(r.status[0].bph, 18000, 'not mistaken for 36,000 vph');
   const last = r.last;
@@ -100,6 +101,12 @@ test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a long
   const saved = takeReading(last, { bph: 18000, escapement: 'lever', source: 'Simulator', now: new Date() });
   assert.ok(saved && saved.cycles && Math.max(...saved.cycles.map((k) => k || 1)) === K, `cycles ${saved?.cycles}`);
   assert.match(describeReading(saved).detail, /\d+ timestamps of (up to )?\d+ cycles/);
+  // No single beat's place is known, so the sounds inside the beats are not read: a dash for
+  // the amplitude and for the beat error from the unlocks, and why, for as long as that lasts.
+  const stage = /** @type {NonNullable<typeof r.pipeline.sounds>} */ (r.pipeline.sounds);
+  assert.equal(stage.load().readings, 0);
+  const averagedReadings = r.readings.filter((x) => x.signal && x.signal.cycles.some((c) => (c || 1) > 1));
+  assert.ok(averagedReadings.length > 30 && averagedReadings.every((x) => x.sounds && x.sounds.amplitude === null && x.sounds.beatErrorMs === null && x.sounds.amplitudeWhy === 'averaged' && x.sounds.beatErrorWhy === 'averaged'), 'a dash, and why');
   assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
 });
 
@@ -130,12 +137,16 @@ test('when the ticking stops the readings are blanked, and the lock returns with
     synthesizeWatch({ ...watch, gain: 0, seconds: 20, seed: 6 }),
     synthesizeWatch({ ...watch, seconds: 25, seed: 7 }),
   ]);
-  const r = stream(audio, 48000, { chunk: 256 });
+  const r = stream(audio, 48000, { chunk: 256, options: { liftAngle: 52, sounds: { share: Infinity } } });
   const lost = r.status.find((s) => s.state === 'listening');
   assert.ok(lost, 'the lock was dropped');
   assert.ok(lost.t > 20 && lost.t < 30, `dropped at ${lost.t.toFixed(1)} s, within 10 s of the watch stopping`);
   const blank = r.readings.find((x) => x.t >= lost.t);
   assert.ok(blank && blank.rate === null && blank.beatErrorMs === null, 'readings blanked');
+  // With a lift angle given, the stage that reads the sounds inside the beats goes blank with
+  // them, and neither lock lasts the 30 s it waits for.
+  assert.equal(blank.sounds, null);
+  assert.ok(r.readings.filter((x) => x.window !== null).every((x) => x.sounds && x.sounds.amplitudeWhy === 'waiting' && x.sounds.detail === null), 'waiting, under both locks');
   assert.ok(!r.status.some((s) => s.state === 'tracking' && s.t > lost.t && s.t < 40), 'no lock on the silence');
   assert.ok(!r.beats.some((b) => b.t > lost.t && b.t < 40), 'no beats reported once the lock was dropped');
   const back = r.status.find((s) => s.state === 'tracking' && s.t > 40);

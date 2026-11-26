@@ -469,6 +469,11 @@ test('events move to the run timeline, and an interruption blanks the readings b
   const readings = /** @type {any} */ ({ type: 'readings', t: 9, window: [1, 9], rate: 4 });
   assert.deepEqual(/** @type {any} */ (shiftEvent(readings, 3)).window, [4, 12]);
   assert.equal(/** @type {any} */ (shiftEvent({ ...readings, window: null }, 3)).window, null);
+  // The beats a reading of the sounds rests on move with the rest.
+  const withSounds = { ...readings, sounds: { amplitude: 288, window: [2, 8] } };
+  assert.deepEqual(/** @type {any} */ (shiftEvent(withSounds, 3)).sounds, { amplitude: 288, window: [5, 11] });
+  assert.equal(/** @type {any} */ (shiftEvent({ ...readings, sounds: null }, 3)).sounds, null);
+  assert.deepEqual(/** @type {any} */ (shiftEvent({ ...readings, sounds: { amplitude: null, window: null } }, 3)).sounds, { amplitude: null, window: null });
   assert.equal(/** @type {any} */ (shiftEvent(/** @type {any} */ ({ type: 'waveform', t: 9, from: -0.01, to: 0.01 }), 3)).t, 12);
 
   const m = new Measurement();

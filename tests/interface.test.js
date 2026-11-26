@@ -11,7 +11,7 @@ import { synthesizeWatch, WatchStream } from '../js/audio/simulator.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, stateText, irregularWarning } from '../js/ui/model.js';
 import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 import { readiness } from '../js/ui/positions.js';
@@ -91,6 +91,37 @@ test('the averaging window and the escapement can change while measuring', () =>
   assert.ok(longer.every((e) => e.windowSeconds === 60 && !readiness(true, e, 60, lock).ready), 'a 60 s window waits for 60 s of lock');
   const covered = readiness(true, c, 60, lock).covered;
   assert.ok(Math.abs(covered - (c.t - /** @type {number} */ (lock))) < 1e-9 && covered < 60, `covered ${covered.toFixed(2)} s`);
+});
+
+test('the lift angle reaches the stage that reads the sounds inside the beats, which runs only when one is given', () => {
+  const without = new Pipeline(48000, 1);
+  assert.equal(without.sounds, null);
+  without.setOptions({ liftAngle: 40 });
+  assert.equal(without.sounds, null, 'a pipeline made without a lift angle stays without the stage');
+  const pipeline = new Pipeline(48000, 1, { liftAngle: 52 });
+  assert.ok(pipeline.sounds && pipeline.sounds.liftAngle === 52);
+  // Six bands from 5 kHz up, of the first channel, at 48 kHz and at 44.1 kHz.
+  assert.equal(pipeline.sounds.rows.length, 6);
+  assert.equal(/** @type {NonNullable<Pipeline['sounds']>} */ (new Pipeline(44100, 2, { liftAngle: 52 }).sounds).rows.length, 6);
+  pipeline.setOptions({ liftAngle: 36.5 });
+  assert.equal(pipeline.sounds.liftAngle, 36.5);
+  assert.equal(pipeline.sounds.report(false, false).liftAngle, 36.5);
+  // Nothing is locked, so nothing is reported for the change.
+  assert.deepEqual(pipeline.push([new Float32Array(4096)]), []);
+});
+
+test('the fine print says what the stage costs, and whether its latest reading may be shown', () => {
+  /** @type {import('../js/dsp/soundstage.js').StageLoad} */
+  const load = { seconds: 7.5, readings: 3, lastSeconds: 3.14, lastAudioSeconds: 8.4, longestStepSeconds: 0.01 };
+  /** @param {Partial<import('../js/dsp/soundstage.js').SoundsReport>} over @param {string|null} [why] */
+  const sounds = (over, why = null) => /** @type {import('../js/dsp/soundstage.js').SoundsReport} */ ({ amplitude: null, beatErrorMs: null, amplitudeWhy: null, beatErrorWhy: null, detail: { why }, ...over });
+  assert.equal(stageNote(null, null), '', 'no stage');
+  assert.equal(stageNote({ ...load, readings: 0, lastSeconds: null, lastAudioSeconds: null }, sounds({ detail: null })), '', 'no reading yet');
+  assert.equal(stageNote(load, null), 'amplitude read 3 times, last in 3.1 s of computing over 8.4 s');
+  assert.equal(stageNote({ ...load, readings: 1 }, sounds({ amplitude: 288, beatErrorMs: 0.3 })), 'amplitude read 1 time, last in 3.1 s of computing over 8.4 s, both to show');
+  assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'irregular' })), /amplitude to show, beat error held back \(irregular\)$/);
+  assert.match(stageNote(load, sounds({ amplitudeWhy: 'failing', beatErrorWhy: 'failing' })), /, held back \(failing\)$/);
+  assert.match(stageNote(load, sounds({ amplitudeWhy: 'no-pair', beatErrorWhy: 'no-pair' }, 'no-pair')), /, no reading \(no-pair\)$/);
 });
 
 test('a lock sends the averaged tick and tock, each peaking at its timestamp', () => {

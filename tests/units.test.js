@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { median, percentile, medfilt, robustLine, quickselect, parabolicOffset } from '../js/dsp/mathutil.js';
 import { Cascade, bandpassSections } from '../js/dsp/biquad.js';
-import { FilterBank } from '../js/dsp/filterbank.js';
+import { FilterBank, DEFAULT_BANDS, fittedBands } from '../js/dsp/filterbank.js';
 import { Cleanup } from '../js/dsp/cleanup.js';
 import { chooseCandidate, acquire, acquireFast } from '../js/dsp/acquire.js';
 import { synthesizeWatch } from '../js/audio/simulator.js';
@@ -64,10 +64,20 @@ test('band-pass filter passes its band and rejects low frequencies', () => {
   assert.ok(high < -25, `12 kHz gain ${high.toFixed(1)} dB`);
 });
 
-test('filter bank drops bands above the Nyquist limit', () => {
-  assert.equal(new FilterBank(48000, 2).rowCount, 18, 'all nine bands at 48 kHz, two channels');
-  assert.equal(new FilterBank(44100, 1).rowCount, 8, 'the band to 22.5 kHz is dropped at 44.1 kHz');
+test('the filter bank keeps the bands below 0.47 of the sample rate, and cuts the top one to fit at 44.1 kHz', () => {
+  const full = new FilterBank(48000, 2);
+  assert.equal(full.rowCount, 18, 'all nine bands at 48 kHz, two channels');
+  assert.deepEqual(full.bands, DEFAULT_BANDS, 'as they are');
+  // Until milestone 8 the band to 22.5 kHz was dropped at 44.1 kHz. The Omega 3861's unlock
+  // sounds mostly above 18 kHz, so the band is kept there as far as it fits.
+  const cd = new FilterBank(44100, 1);
+  assert.equal(cd.rowCount, 9);
+  assert.deepEqual(cd.bands.slice(0, 8), DEFAULT_BANDS.slice(0, 8));
+  assert.deepEqual(cd.bands[8], [18000, 0.47 * 44100], '18 to 20.7 kHz');
+  // Less than half of a band left is not worth a band: at 16 kHz, 7 to 7.5 kHz.
   assert.equal(new FilterBank(16000, 1).rowCount, 4, 'Bluetooth-rate audio keeps the bands below 7.5 kHz');
+  assert.deepEqual(fittedBands([[1000, 2000], [2000, 4000], [4000, 8000]], 10000), [[1000, 2000], [2000, 4000]], '0.7 of 4 kHz left: dropped');
+  assert.deepEqual(fittedBands([[1000, 2000], [2000, 4000], [4000, 8000]], 13000), [[1000, 2000], [2000, 4000], [4000, 6110]], '2.1 of 4 kHz left: cut');
   assert.equal(new FilterBank(48000, 1).envelopeRate, 12000);
 });
 

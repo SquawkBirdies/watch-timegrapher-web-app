@@ -18,11 +18,12 @@ bear on your task. The design plan is a separate Claude Doc kept by the owner, L
 ## Commands
 
 ```
-npm test                 # all tests, about eleven minutes; Node 22 or later, nothing to install
+npm test                 # all tests, about fifteen minutes; Node 22 or later, nothing to install
 npm run typecheck        # tsc over js/ with the strict settings in jsconfig.json
 node --test tests/live.test.js                                      # one file
 node --test --test-name-pattern="basket case" tests/irregular.test.js   # matching tests
 node tools/run-stream.js tests/fixtures/eta-2836-2.wav 2 54         # real-time pipeline, printed
+node tools/run-stream.js tests/fixtures/omega-3861-safari.wav 0 0 4096 0 0 36   # with a lift angle
 node tools/run-analysis.js tests/fixtures/eta-2836-2.wav 2 54       # whole-recording analysis
 python3 -m http.server 8000          # the app at http://localhost:8000, where the microphone works
 ```
@@ -52,6 +53,10 @@ Both `npm` commands must pass before a pull request.
   than streaming it again.
 - Some tests also run the earlier behaviour through switches (`timing: { preferNear: false }` or
   `{ followScatter: false }`) to show why a change was made.
+- The pipeline reads the sounds inside the beats (`js/dsp/soundstage.js`) only when it is given a
+  lift angle, and spreads each reading's computing by the clock. A test that gives one also sets
+  `sounds: { share: Infinity }`, which finishes every reading in the audio block it starts in, or
+  gives the stage a clock of its own, so that the result does not depend on the computer.
 - `tests/fixtures/` holds only recordings Lawrence made; the README describes each. Add one only
   when he asks, byte for byte as saved apart from any metadata, and check first that it holds
   nothing but the audio format and the samples.

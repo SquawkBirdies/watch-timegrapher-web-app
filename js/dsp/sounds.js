@@ -37,9 +37,11 @@ export const MAX_SHIFT_MS = 1.5;
 export const STRONG_MATCH = 0.5;
 
 /**
- * Every beat's stretch of envelope, band by band.
+ * Every beat's stretch of envelope, band by band. The beats lie side by side, as averaging
+ * reads them: sample k of beat i is at k * count + i.
  * @typedef {Object} BeatStack
- * @property {Float32Array[]} bands one array per band: the beats' stretches, one after another
+ * @property {Float32Array[]} bands one array per band: instant after instant of the stretch,
+ *   each with every beat's value there
  * @property {number} count beats held
  * @property {number} length samples in a stretch
  * @property {number} before samples of a stretch that lie before the beat's timestamp
@@ -47,8 +49,8 @@ export const STRONG_MATCH = 0.5;
  */
 
 /**
- * Stacked beats turned for averaging: at each instant of the stretch, every beat's value side
- * by side.
+ * Beats to average: at each instant of the stretch, every beat's value side by side, and
+ * perhaps their ranking.
  * @typedef {Object} BeatColumns
  * @property {Float32Array[]} bands one array per band: instant after instant, each with `count` values
  * @property {number} count beats held
@@ -68,15 +70,30 @@ export const STRONG_MATCH = 0.5;
  */
 
 /**
- * The envelope rows the sounds are read from, out of a filter bank's output: the first
- * channel's bands from SOUND_BANDS_FROM_HZ up. The first channel is the one the prototype was
- * checked on; Safari delivers the iPhone's microphone there.
+ * Which of a filter bank's output rows the sounds are read from: the first channel's bands from
+ * SOUND_BANDS_FROM_HZ up. The first channel is the one the prototype was checked on; Safari
+ * delivers the iPhone's microphone there.
+ * @param {import('./filterbank.js').FilterBank} bank
+ * @returns {number[]} places in the bank's output
+ */
+export function soundRowIndices(bank) {
+  /** @type {number[]} */
+  const picked = [];
+  bank.rows.forEach((row, i) => {
+    if (row.channel === 0 && bank.bands[row.band][0] >= SOUND_BANDS_FROM_HZ) picked.push(i);
+  });
+  return picked;
+}
+
+/**
+ * The envelope rows the sounds are read from, out of a filter bank's output (see
+ * `soundRowIndices`).
  * @param {import('./filterbank.js').FilterBank} bank
  * @param {Float32Array[]} rows the bank's output, before Cleanup
  * @returns {Float32Array[]}
  */
 export function soundRows(bank, rows) {
-  return rows.filter((_, i) => bank.rows[i].channel === 0 && bank.bands[bank.rows[i].band][0] >= SOUND_BANDS_FROM_HZ);
+  return soundRowIndices(bank).map((i) => rows[i]);
 }
 
 /**
@@ -98,18 +115,19 @@ export function stackBeats(rows, positions, before, after) {
   for (let i = 0; i < positions.length; i++) {
     if (positions[i] - before >= 0 && positions[i] + after < total - 1) kept.push(i);
   }
+  const count = kept.length;
   const bands = rows.map((row) => {
-    const out = new Float32Array(kept.length * length);
-    for (let b = 0; b < kept.length; b++) {
+    const out = new Float32Array(count * length);
+    for (let b = 0; b < count; b++) {
       const pos = positions[kept[b]];
       const whole = Math.floor(pos);
       const frac = pos - whole;
       const from = whole - before;
-      for (let k = 0; k < length; k++) out[b * length + k] = row[from + k] * (1 - frac) + row[from + k + 1] * frac;
+      for (let k = 0; k < length; k++) out[k * count + b] = row[from + k] * (1 - frac) + row[from + k + 1] * frac;
     }
     return out;
   });
-  return { bands, count: kept.length, length, before, kept: Int32Array.from(kept) };
+  return { bands, count, length, before, kept: Int32Array.from(kept) };
 }
 
 /**
@@ -138,48 +156,76 @@ export function samplesBefore(ms, untilMs) {
 }
 
 /**
- * Stacked beats turned so that each instant's values lie side by side, as averaging reads them,
- * and ranked at each instant. The ranking is made once and serves every resample of the same
- * beats: the values a draw leaves out are then found at the two ends of the ranking.
- * @param {BeatStack} stack at most 65,535 beats
- * @returns {BeatColumns}
+ * One band's beats ranked at each instant.
+ * @param {Pick<BeatStack, 'bands'|'count'|'length'>} stack at most 65,535 beats
+ * @param {number} b the band
+ * @returns {Uint16Array} at each instant, the beats in rising order of their value there
  */
-export function toColumns(stack) {
+export function rankBand(stack, b) {
   const { count, length } = stack;
-  const bands = stack.bands.map((rows) => {
-    const out = new Float32Array(count * length);
-    for (let i = 0; i < count; i++) for (let k = 0; k < length; k++) out[k * count + i] = rows[i * length + k];
-    return out;
-  });
+  const band = stack.bands[b];
   const current = new Uint16Array(count);
-  const order = bands.map((band) => {
-    const ranked = new Uint16Array(count * length);
-    for (let i = 0; i < count; i++) current[i] = i;
-    for (let k = 0; k < length; k++) {
-      const base = k * count;
-      // An insertion sort that starts from the instant before's ranking: an envelope changes
-      // little from one sample to the next, so most beats are already near their place.
-      for (let i = 1; i < count; i++) {
-        const beat = current[i];
-        const v = band[base + beat];
-        let p = i;
-        while (p > 0 && band[base + current[p - 1]] > v) {
-          current[p] = current[p - 1];
-          p--;
-        }
-        current[p] = beat;
+  const ranked = new Uint16Array(count * length);
+  for (let i = 0; i < count; i++) current[i] = i;
+  for (let k = 0; k < length; k++) {
+    const base = k * count;
+    // An insertion sort that starts from the instant before's ranking: an envelope changes
+    // little from one sample to the next, so most beats are already near their place.
+    for (let i = 1; i < count; i++) {
+      const beat = current[i];
+      const v = band[base + beat];
+      let p = i;
+      while (p > 0 && band[base + current[p - 1]] > v) {
+        current[p] = current[p - 1];
+        p--;
       }
-      ranked.set(current, base);
+      current[p] = beat;
     }
-    return ranked;
-  });
-  return { bands, count, length, order };
+    ranked.set(current, base);
+  }
+  return ranked;
 }
 
 /**
- * Chosen beats of a stack, each read a little later, turned for averaging. A beat read s
- * milliseconds later has a sound that comes s late in it lined up with the others. Past either
- * end of its stretch a beat keeps its end value.
+ * Stacked beats ranked at each instant. The ranking is made once and serves every resample of
+ * the same beats: the values a draw leaves out are then found at the two ends of the ranking.
+ * @param {BeatStack} stack at most 65,535 beats
+ * @returns {BeatColumns} the stack's own values, with their ranking
+ */
+export function toColumns(stack) {
+  return { bands: stack.bands, count: stack.count, length: stack.length, order: stack.bands.map((_, b) => rankBand(stack, b)) };
+}
+
+/**
+ * Where each beat taken is read from when it is read a little later: for each, the whole
+ * samples and the fraction of one it is read later by, and the instants of the stretch whose
+ * two neighbours both lie inside it. Before them the beat's first value stands, after them its
+ * last.
+ * @param {number} length samples in a stretch
+ * @param {number} count beats taken
+ * @param {ArrayLike<number>} shiftMs how much later each is read, in milliseconds
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @returns {{whole: Int32Array, frac: Float64Array, inside: Int32Array, until: Int32Array}}
+ */
+function readLater(length, count, shiftMs, envelopeRate) {
+  const whole = new Int32Array(count);
+  const frac = new Float64Array(count);
+  const inside = new Int32Array(count);
+  const until = new Int32Array(count);
+  for (let i = 0; i < count; i++) {
+    const samples = (shiftMs[i] * envelopeRate) / 1e3;
+    whole[i] = Math.floor(samples);
+    frac[i] = samples - whole[i];
+    inside[i] = Math.min(length, Math.max(0, -whole[i]));
+    until[i] = Math.max(inside[i], Math.min(length, length - 1 - whole[i]));
+  }
+  return { whole, frac, inside, until };
+}
+
+/**
+ * Chosen beats of a stack, each read a little later. A beat read s milliseconds later has a
+ * sound that comes s late in it lined up with the others. Past either end of its stretch a beat
+ * keeps its end value.
  * @param {BeatStack} stack
  * @param {ArrayLike<number>|null} draw the beats to take, by their place in the stack; all when null
  * @param {ArrayLike<number>} shiftMs how much later each beat taken is read, in milliseconds
@@ -188,30 +234,175 @@ export function toColumns(stack) {
  */
 export function shiftedColumns(stack, draw, shiftMs, envelopeRate) {
   const { length } = stack;
-  const count = draw ? draw.length : stack.count;
+  const all = stack.count;
+  const count = draw ? draw.length : all;
   const last = length - 1;
-  const bands = stack.bands.map(() => new Float32Array(count * length));
-  for (let i = 0; i < count; i++) {
-    const from = (draw ? draw[i] : i) * length;
-    const samples = (shiftMs[i] * envelopeRate) / 1e3;
-    const whole = Math.floor(samples);
-    const frac = samples - whole;
-    // The instants whose two neighbours both lie inside the stretch; outside them the beat's
-    // end value stands.
-    const inside = Math.min(length, Math.max(0, -whole));
-    const until = Math.max(inside, Math.min(length, last - whole));
-    for (let b = 0; b < bands.length; b++) {
-      const rows = stack.bands[b];
-      const out = bands[b];
-      const first = rows[from];
-      const end = rows[from + last];
+  const { whole, frac, inside, until } = readLater(length, count, shiftMs, envelopeRate);
+  const bands = stack.bands.map((rows) => {
+    const out = new Float32Array(count * length);
+    for (let i = 0; i < count; i++) {
+      const beat = draw ? draw[i] : i;
+      const first = rows[beat];
+      const end = rows[last * all + beat];
+      const at = whole[i] * all + beat;
+      const f = frac[i];
       let k = 0;
-      for (; k < inside; k++) out[k * count + i] = first;
-      for (; k < until; k++) out[k * count + i] = rows[from + k + whole] * (1 - frac) + rows[from + k + whole + 1] * frac;
+      for (; k < inside[i]; k++) out[k * count + i] = first;
+      for (; k < until[i]; k++) out[k * count + i] = rows[k * all + at] * (1 - f) + rows[(k + 1) * all + at] * f;
       for (; k < length; k++) out[k * count + i] = end;
     }
-  }
+    return out;
+  });
   return { bands, count, length, order: null };
+}
+
+/**
+ * The averaged beat of each band, as `bandMeans` gives it, of chosen beats each read a little
+ * later: `bandMeans(shiftedColumns(...), quiet)` without the copy of every beat in between. Each
+ * resample of a lined-up sound reads every one of its beats at a new place, and that copy with
+ * its average was most of the computing of such a reading. A resample draws about a third of
+ * its beats more than once, and a beat drawn again is read at the same place, so each beat is
+ * read once and counted as often as it was drawn.
+ * @param {BeatStack} stack
+ * @param {ArrayLike<number>|null} draw the beats to take, by their place in the stack, any of
+ *   them more than once; all when null
+ * @param {ArrayLike<number>} shiftMs how much later each beat taken is read, in milliseconds; a
+ *   beat taken more than once has the same shift each time
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @param {number} quiet samples at the start of the stretch that lie before any of the beat's sounds
+ * @returns {{excess: Float64Array[], levels: Float64Array}} as from `bandMeans`
+ */
+export function shiftedBandMeans(stack, draw, shiftMs, envelopeRate, quiet) {
+  const { length } = stack;
+  const all = stack.count;
+  const n = draw ? draw.length : all;
+  const cut = Math.floor(TRIM * n);
+  const kept = n - 2 * cut;
+  // Each beat taken, once, with how often it was drawn and the shift it is read at.
+  const seen = new Int32Array(all).fill(-1);
+  const beats = new Int32Array(Math.min(n, all));
+  const times = new Int32Array(Math.min(n, all));
+  const shifts = new Float64Array(Math.min(n, all));
+  let unique = 0;
+  for (let i = 0; i < n; i++) {
+    const beat = draw ? draw[i] : i;
+    if (seen[beat] < 0) {
+      seen[beat] = unique;
+      beats[unique] = beat;
+      shifts[unique] = shiftMs[i];
+      unique++;
+    }
+    times[seen[beat]]++;
+  }
+  const { whole, frac, inside, until } = readLater(length, unique, shifts, envelopeRate);
+  // The instants at which every beat is read between two of its own samples.
+  let allFrom = 0;
+  let allUntil = length;
+  const at = new Int32Array(unique);
+  for (let u = 0; u < unique; u++) {
+    if (inside[u] > allFrom) allFrom = inside[u];
+    if (until[u] < allUntil) allUntil = until[u];
+    at[u] = whole[u] * all + beats[u];
+  }
+  if (allUntil < allFrom) allUntil = allFrom;
+  const rest = Float64Array.from(frac, (f) => 1 - f);
+  // The `cut` lowest values seen so far, and the `cut` highest, each rising.
+  const low = new Float64Array(cut);
+  const high = new Float64Array(cut);
+  const levels = new Float64Array(stack.bands.length);
+  /** @type {Float64Array[]} */
+  const excess = [];
+  for (let b = 0; b < stack.bands.length; b++) {
+    const rows = stack.bands[b];
+    const lastRow = (length - 1) * all;
+    const m = new Float64Array(length);
+    for (let k = 0; k < length; k++) {
+      const base = k * all;
+      const plain = k >= allFrom && k < allUntil;
+      let sum = 0;
+      let held = 0;
+      // With nothing to leave out, no value is ever below the one or above the other.
+      let lowTop = cut > 0 ? Infinity : -Infinity;
+      let highFloor = cut > 0 ? -Infinity : Infinity;
+      for (let u = 0; u < unique; u++) {
+        // The value is rounded as `shiftedColumns` stores it, so the two agree to the last digit.
+        let v;
+        if (plain || (k >= inside[u] && k < until[u])) v = Math.fround(rows[base + at[u]] * rest[u] + rows[base + all + at[u]] * frac[u]);
+        else v = k < inside[u] ? rows[beats[u]] : rows[lastRow + beats[u]];
+        const c = times[u];
+        sum += c * v;
+        if (held < cut) {
+          // The first `cut` values are both the lowest and the highest seen so far.
+          let again = 0;
+          for (; again < c && held < cut; again++) {
+            let p = held;
+            while (p > 0 && low[p - 1] > v) {
+              low[p] = low[p - 1];
+              high[p] = high[p - 1];
+              p--;
+            }
+            low[p] = v;
+            high[p] = v;
+            held++;
+          }
+          if (held < cut) continue;
+          lowTop = low[cut - 1];
+          highFloor = high[0];
+          // What is left of this value's draws is weighed like any later value.
+          for (; again < c; again++) {
+            if (v < lowTop) {
+              let p = cut - 1;
+              while (p > 0 && low[p - 1] > v) {
+                low[p] = low[p - 1];
+                p--;
+              }
+              low[p] = v;
+              lowTop = low[cut - 1];
+            }
+            if (v > highFloor) {
+              let p = 0;
+              while (p + 1 < cut && high[p + 1] < v) {
+                high[p] = high[p + 1];
+                p++;
+              }
+              high[p] = v;
+              highFloor = high[0];
+            }
+          }
+          continue;
+        }
+        if (v < lowTop) {
+          for (let again = 0; again < c && v < lowTop; again++) {
+            let p = cut - 1;
+            while (p > 0 && low[p - 1] > v) {
+              low[p] = low[p - 1];
+              p--;
+            }
+            low[p] = v;
+            lowTop = low[cut - 1];
+          }
+        }
+        if (v > highFloor) {
+          for (let again = 0; again < c && v > highFloor; again++) {
+            let p = 0;
+            while (p + 1 < cut && high[p + 1] < v) {
+              high[p] = high[p + 1];
+              p++;
+            }
+            high[p] = v;
+            highFloor = high[0];
+          }
+        }
+      }
+      for (let j = 0; j < cut; j++) sum -= low[j] + high[j];
+      m[k] = sum / kept;
+    }
+    const level = median(m.subarray(0, quiet));
+    levels[b] = level;
+    for (let k = 0; k < length; k++) m[k] = m[k] / level - 1;
+    excess.push(m);
+  }
+  return { excess, levels };
 }
 
 /**
@@ -228,10 +419,12 @@ export function shiftedColumns(stack, draw, shiftMs, envelopeRate) {
  * @param {number} quiet samples at the start of the stretch that lie before any of the beat's sounds
  * @param {ArrayLike<number>} [draw] the beats to average, by their place in the columns, any of
  *   them more than once; all when absent
+ * @param {Uint8Array} [only] when given, the instants to work out: 1 for each one wanted, which
+ *   must include the quiet stretch. The others are left as they are, at -1, and must not be read
  * @returns {{excess: Float64Array[], levels: Float64Array}} each band's averaged beat, divided
  *   by its quiet level and less 1, and those quiet levels
  */
-export function bandMeans(columns, quiet, draw) {
+export function bandMeans(columns, quiet, draw, only) {
   const { length, count, order } = columns;
   const n = draw ? draw.length : count;
   const cut = Math.floor(TRIM * n);
@@ -256,6 +449,7 @@ export function bandMeans(columns, quiet, draw) {
       // A few beats out of many are summed one by one; most of them, in one sweep with their counts.
       const sparse = 2 * n < count;
       for (let k = 0; k < length; k++) {
+        if (only && !only[k]) continue;
         const base = k * count;
         let sum = 0;
         if (sparse && draw) for (let i = 0; i < n; i++) sum += band[base + draw[i]];
@@ -276,6 +470,7 @@ export function bandMeans(columns, quiet, draw) {
       }
     } else {
       for (let k = 0; k < length; k++) {
+        if (only && !only[k]) continue;
         const base = k * count;
         let sum = 0;
         let i = 0;

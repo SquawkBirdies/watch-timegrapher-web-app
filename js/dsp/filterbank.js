@@ -4,10 +4,10 @@
 import { Cascade, bandpassSections } from './biquad.js';
 
 /**
- * Default band edges in hertz. Bands that do not fit below the Nyquist limit are dropped, so at
- * 44.1 kHz the top band goes, and at 48 kHz all nine are used. The two bands above 14.5 kHz
- * were added after the first iPhone captures: Safari delivers tick sound up to 22.5 kHz, and
- * using it made the ticks 1.2 to 2.2 times clearer.
+ * Default band edges in hertz. At 48 kHz all nine fit below the limit of BAND_TOP times the
+ * sample rate. At 44.1 kHz the top band reaches past it and is cut to 18 to 20.7 kHz. The two
+ * bands above 14.5 kHz were added after the first iPhone captures: Safari delivers tick sound up
+ * to 22.5 kHz, and using it made the ticks 1.2 to 2.2 times clearer.
  */
 export const DEFAULT_BANDS = [
   [1500, 2500],
@@ -20,6 +20,35 @@ export const DEFAULT_BANDS = [
   [14500, 18000],
   [18000, 22500],
 ];
+
+/** No band reaches above this share of the sample rate, a little under the Nyquist limit. */
+export const BAND_TOP = 0.47;
+/**
+ * A band that reaches past the limit is cut to fit when at least this share of it lies below,
+ * and dropped otherwise. The Omega 3861's unlock sounds mostly above 18 kHz: with the top band
+ * dropped at 44.1 kHz, as it was until milestone 8, its beat error from the unlocks and its
+ * amplitude could not be read at that rate at all. Half of a band is asked for so that a sliver
+ * is not kept: at 16 kHz the band from 7 kHz would be 0.5 kHz wide.
+ */
+export const MIN_BAND_SHARE = 0.5;
+
+/**
+ * The bands a filter bank uses at a sample rate: those that fit below BAND_TOP times the rate,
+ * and one that reaches past it cut to fit, when enough of it is left.
+ * @param {number[][]} bands band edges in hertz
+ * @param {number} sampleRate
+ * @returns {number[][]}
+ */
+export function fittedBands(bands, sampleRate) {
+  const top = BAND_TOP * sampleRate;
+  /** @type {number[][]} */
+  const out = [];
+  for (const [lo, hi] of bands) {
+    if (hi < top) out.push([lo, hi]);
+    else if (top - lo >= MIN_BAND_SHARE * (hi - lo)) out.push([lo, top]);
+  }
+  return out;
+}
 
 /**
  * Streaming filter bank. Each call to `process` accepts the next chunk of audio and returns the
@@ -40,7 +69,7 @@ export class FilterBank {
     /** Envelope sample rate in hertz. */
     this.envelopeRate = sampleRate / this.decimation;
     /** Bands in use. */
-    this.bands = bands.filter(([, hi]) => hi < 0.47 * sampleRate);
+    this.bands = fittedBands(bands, sampleRate);
     /** @type {{band: number, channel: number, filter: Cascade, acc: number}[]} */
     this.rows = [];
     for (let b = 0; b < this.bands.length; b++) {

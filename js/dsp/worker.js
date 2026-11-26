@@ -5,7 +5,8 @@
 //   {type: 'start', id, sampleRate, channelCount, options}
 //                                                         begin a session; id is optional
 //   {type: 'chunk', channels}                             audio for the session
-//   {type: 'settings', changes}                           averaging window or escapement changed
+//   {type: 'settings', changes}                           averaging window, escapement or lift
+//                                                         angle changed
 //   {type: 'stop'}                                        end the session
 //   {type: 'benchmark', options}                          time the pipeline on simulated audio
 // Messages out:

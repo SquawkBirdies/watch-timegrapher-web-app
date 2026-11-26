@@ -8,6 +8,7 @@ import { runningMedian } from '../../js/dsp/timing.js';
  * @typedef {import('../../js/dsp/pipeline.js').StatusEvent} StatusEvent
  * @typedef {import('../../js/dsp/pipeline.js').ReadingsEvent} ReadingsEvent
  * @typedef {import('../../js/dsp/pipeline.js').Beat} Beat
+ * @typedef {import('../../js/dsp/pipeline.js').WaveformEvent} WaveformEvent
  */
 
 /**
@@ -15,7 +16,7 @@ import { runningMedian } from '../../js/dsp/timing.js';
  * @param {number} sampleRate
  * @param {{options?: import('../../js/dsp/pipeline.js').PipelineOptions, chunk?: number, from?: number, to?: number, each?: (pipeline: Pipeline) => void}} [how]
  *   `each` is called after every chunk, to watch the pipeline's state as it goes
- * @returns {{status: StatusEvent[], readings: ReadingsEvent[], last: ReadingsEvent|null, beats: Beat[], audioSeconds: number, elapsedSeconds: number, pipeline: Pipeline}}
+ * @returns {{status: StatusEvent[], readings: ReadingsEvent[], last: ReadingsEvent|null, beats: Beat[], waveforms: WaveformEvent[], audioSeconds: number, elapsedSeconds: number, pipeline: Pipeline}}
  */
 export function stream(channels, sampleRate, how = {}) {
   const { options = {}, chunk = 128, from = 0, to = channels[0].length, each } = how;
@@ -26,11 +27,14 @@ export function stream(channels, sampleRate, how = {}) {
   const readings = [];
   /** @type {Beat[]} */
   let beats = [];
+  /** @type {WaveformEvent[]} */
+  const waveforms = [];
   const t0 = performance.now();
   for (let i = from; i < to; i += chunk) {
     for (const e of pipeline.push(channels.map((c) => c.subarray(i, Math.min(to, i + chunk))))) {
       if (e.type === 'status') status.push(e);
       else if (e.type === 'readings') readings.push(e);
+      else if (e.type === 'waveform') waveforms.push(e);
       else if (e.type === 'beats') {
         const cut = e.replaceFrom;
         if (cut !== null) beats = beats.filter((b) => b.t < cut);
@@ -39,7 +43,7 @@ export function stream(channels, sampleRate, how = {}) {
     }
     if (each) each(pipeline);
   }
-  return { status, readings, last: readings.length ? readings[readings.length - 1] : null, beats, audioSeconds: (to - from) / sampleRate, elapsedSeconds: (performance.now() - t0) / 1000, pipeline };
+  return { status, readings, last: readings.length ? readings[readings.length - 1] : null, beats, waveforms, audioSeconds: (to - from) / sampleRate, elapsedSeconds: (performance.now() - t0) / 1000, pipeline };
 }
 
 /**
