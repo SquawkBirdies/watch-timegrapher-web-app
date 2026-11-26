@@ -14,6 +14,7 @@ import { Player } from './audio/player.js';
 import { LiveInput } from './audio/live.js';
 import { listMicrophones } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
+import { POSITION_ICONS } from './ui/position-icons.js';
 import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, isUncertain, emptyLog, isPosition } from './ui/positions.js';
 import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES } from './store.js';
 
@@ -95,6 +96,7 @@ const ui = {
   positions: $('positions'),
   positionsCount: $('positions-count'),
   positionStep: $('position-step'),
+  positionStepIcon: $('position-step-icon'),
   savePosition: /** @type {HTMLButtonElement} */ ($('save-position')),
   positionList: $('position-list'),
   sumAverage: $('sum-average'),
@@ -740,6 +742,12 @@ function renderPositions(tracking, src) {
     ready: canSave,
     rateSd: r ? r.rateSd : null,
   });
+  // The drawing beside the instruction is of the position to measure next.
+  if (ui.positionStepIcon.dataset.position !== (target || '')) {
+    ui.positionStepIcon.dataset.position = target || '';
+    ui.positionStepIcon.innerHTML = target ? POSITION_ICONS[target] : '';
+  }
+  ui.positionStepIcon.hidden = !target;
   const count = Object.keys(log.readings).length;
   ui.positionsCount.textContent = `${count} of ${POSITIONS.length} saved`;
   for (const { id } of POSITIONS) {
@@ -968,8 +976,8 @@ for (const button of modeButtons) {
 }
 
 /**
- * A row of the log for each position: a choice of which position to measure next, its name and
- * its saved reading.
+ * A row of the log for each position: a choice of which position to measure next, a drawing of
+ * the position, its name and its saved reading.
  * @typedef {HTMLLabelElement & {input: HTMLInputElement, reading: HTMLElement, detail: HTMLElement}} PositionRow
  */
 /** @type {Record<PositionId, PositionRow>} */
@@ -992,7 +1000,11 @@ for (const p of POSITIONS) {
   reading.className = 'reading';
   title.append(name, reading);
   const detail = document.createElement('span');
-  row.append(input, title, detail);
+  const icon = document.createElement('span');
+  icon.className = 'position-icon';
+  // Markup from js/ui/position-icons.js, not from the user.
+  icon.innerHTML = POSITION_ICONS[p.id];
+  row.append(input, icon, title, detail);
   Object.assign(row, { input, reading, detail });
   ui.positionList.append(row);
   positionRows[p.id] = row;
