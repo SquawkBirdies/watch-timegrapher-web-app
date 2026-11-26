@@ -8,6 +8,7 @@ import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
 import { ScreenWake } from './ui/wake.js';
 import { offerFile, stampedName } from './ui/save.js';
+import { applyTheme } from './ui/theme.js';
 import { WatchStream } from './audio/simulator.js';
 import { decodeRecording, RecordingSource } from './audio/file-source.js';
 import { Player } from './audio/player.js';
@@ -114,6 +115,7 @@ const ui = {
 };
 
 let settings = loadSettings();
+applyTheme(settings.theme);
 /** @typedef {'microphone'|'simulator'|'demo'|'file'} SourceKind */
 /** @type {SourceKind} */
 let tab = 'microphone';
@@ -1060,6 +1062,7 @@ function showSettings() {
   set('liftAngle', settings.liftAngle);
   set('humHz', settings.humHz);
   set('averagingSeconds', settings.averagingSeconds);
+  set('theme', settings.theme);
   ui.settingsRestart.hidden = !(run && run.running);
 }
 
@@ -1071,6 +1074,8 @@ ui.settingsForm.addEventListener('change', () => {
   // Settings kept elsewhere on the screen (the microphone) are not in this form.
   settings = clean({ ...before, ...values });
   saveSettings(settings);
+  // The theme changes at once; the charts are drawn again with its colours below.
+  if (settings.theme !== before.theme) applyTheme(settings.theme);
   if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
     restart();
   } else if (run && run.running) {

@@ -1,5 +1,6 @@
-/* The timegrapher's screen. Light and dark follow the phone's setting. The tick and tock colours
-   are the validated pair of the plan's figures (blue and orange), stepped for each mode. */
+/* The timegrapher's screen. Light and dark follow the phone's setting, unless one is chosen in
+   the settings. The tick and tock colours are the validated pair of the plan's figures (blue and
+   orange), stepped for each mode. */
 :root {
   --bg: #f4f6f9;
   --surface: #ffffff;
@@ -19,8 +20,11 @@
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
+
+/* Dark: when the phone is set to dark and no theme was chosen in the settings, or when dark
+   was chosen. The two blocks must hold the same colours; a test checks that they do. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1217;
     --surface: #171b23;
     --ink: #e3e7ef;
@@ -37,6 +41,23 @@
     --warn: #f3c56b;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1217;
+  --surface: #171b23;
+  --ink: #e3e7ef;
+  --muted: #a3acbe;
+  --faint: #6f788a;
+  --line: #2a313e;
+  --grid: #232935;
+  --accent: #93abff;
+  --accent-ink: #0f1217;
+  --tick: #3987e5;
+  --tock: #d95926;
+  --dim: #4a5262;
+  --good: #5fcf96;
+  --warn: #f3c56b;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }

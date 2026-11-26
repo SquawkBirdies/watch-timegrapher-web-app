@@ -2,6 +2,7 @@
 // that turns events into trace points and words, the simulator that runs without end, the
 // recording decoder and the pacing of sources. Drawing itself is checked in a browser.
 
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -11,7 +12,7 @@ import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
 import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stateText, irregularWarning } from '../js/ui/model.js';
-import { clean, DEFAULTS } from '../js/store.js';
+import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 import { readiness } from '../js/ui/positions.js';
 
@@ -409,6 +410,32 @@ test('stored settings are checked, and anything invalid falls back to the defaul
     magnetNoticeSeen: false,
     saveMinutes: 1,
     mode: 'continuous',
+    theme: 'auto',
   });
   assert.deepEqual(clean({ bph: 12345, escapement: 'tourbillon', liftAngle: 5, humHz: 55, averagingSeconds: 15 }), DEFAULTS);
+});
+
+test('the theme follows the phone unless light or dark is chosen, and both ways of reaching dark give the same colours', () => {
+  assert.equal(DEFAULTS.theme, 'auto');
+  assert.equal(clean({ theme: 'light' }).theme, 'light');
+  assert.equal(clean({ theme: 'dark' }).theme, 'dark');
+  assert.equal(clean({ theme: 'blue' }).theme, 'auto');
+  // The style sheet's dark colours come twice: for the phone's dark setting with no theme chosen,
+  // and for dark chosen. They must be the same, and cover every colour the light theme sets.
+  const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+  const block = (/** @type {RegExp} */ re) => {
+    const m = re.exec(css);
+    assert.ok(m, `found ${re}`);
+    return m[1].split(';').map((d) => d.trim()).filter(Boolean).sort();
+  };
+  const light = block(/^:root \{([^}]*)\}/m);
+  const phoneDark = block(/@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{([^}]*)\}/);
+  const chosenDark = block(/^:root\[data-theme="dark"\] \{([^}]*)\}/m);
+  assert.deepEqual(chosenDark, phoneDark);
+  const names = (/** @type {string[]} */ ds) => ds.map((d) => d.split(':')[0]).filter((n) => n !== '--font' && n !== '--mono');
+  assert.deepEqual(names(phoneDark), names(light));
+  // index.html applies a stored choice before the page is drawn, from where the settings are kept.
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes(`localStorage.getItem('${SETTINGS_KEY}')`), 'index.html reads the settings key');
+  assert.ok(html.indexOf('dataset.theme') < html.indexOf('css/app.css'), 'before the style sheet loads');
 });

@@ -7,6 +7,16 @@
 <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1217" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:,">
+<script>
+  // The theme chosen in the settings, applied before the page is first drawn so that it never
+  // shows in the phone's own theme first. js/ui/theme.js applies later changes.
+  try {
+    const theme = JSON.parse(localStorage.getItem('timegrapher.settings.v1') || '{}').theme;
+    if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+  } catch {
+    // Storage unavailable: the page follows the phone.
+  }
+</script>
 <link rel="stylesheet" href="css/app.css">
 <title>Watch Timegrapher Web App</title>
 </head>
@@ -260,6 +270,14 @@
       <label for="set-avg">Averaging window</label>
       <select id="set-avg" name="averagingSeconds"></select>
       <p class="note">Longer is steadier; shorter follows changes sooner. Faint ticks lengthen it automatically.</p>
+    </div>
+    <div class="field">
+      <label for="set-theme">Theme</label>
+      <select id="set-theme" name="theme">
+        <option value="auto">Auto (follows the phone)</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
     </div>
     <p class="note" id="settings-restart" hidden>Changing the beat rate or mains frequency restarts the measurement.</p>
     <div class="actions"><button class="primary" value="done">Done</button></div>
