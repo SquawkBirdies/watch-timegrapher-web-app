@@ -637,28 +637,32 @@ Settings (beat rate, escapement, lift angle, mains frequency, averaging window, 
 chosen microphone, the mode, the six-position log and whether the magnetism notice has been read
 are kept on the device.
 
-The two demo recordings are the ETA's and the Omega's Safari captures among the
-[test recordings](#test-recordings): what the phone's microphone gave Safari, so the sounds inside
-their beats can be read as a live watch's are. They replaced the three Voice Memos recordings,
-which allow no such reading. A demo plays as its own watch's escapement whatever the setting,
-with the lift angle from the settings, and with both its channels, the second of them silent.
-Two limits follow from the captures themselves:
+The two demo recordings are the ETA's and the Omega's Safari captures among the [test
+recordings](#test-recordings): what the phone's microphone gave Safari, so the sounds inside their
+beats can be read as a live watch's are. They replaced the three Voice Memos recordings, which
+allow no such reading. A demo plays with its own watch's escapement and lift angle, 50° for the ETA
+and 36° for the Omega, whatever the settings, and the line under the readings shows the lift angle
+in use. A lift angle set in Settings while a demo plays replaces the demo's for the rest of that
+run; a demo never changes the stored setting. A demo also plays only the first channel of its
+capture, as the microphone gives it to the app. The second channel is silent: it changes no
+reading, and playing it nearly doubled the pipeline's computing (in Node, without the stage, about
+10% of real time against 5% for the Omega's capture, and 13% against 7% for the ETA's). Both were
+decided on 26 November. Two limits follow from the captures' lengths:
 
-- **The ETA's 30 s are too short for an amplitude.** A reading needs 30 s of beats after the
-  lock, which comes at 8 s. The demo shows rate and beat error only.
-- **The Omega's is read only with the lift angle set to 36°,** its own. At the default 52° each
-  try ends with no reading (`lift-range`). At 36° its 60 s leave time for three readings on a
-  computer, the last of them arriving just before the end.
+- **The ETA's 30 s are too short for an amplitude.** A reading needs 30 s of beats after the lock,
+  which comes at 8 s. The demo shows rate and beat error only, until a longer capture is recorded.
+- **The Omega's 60 s leave time for three readings on a computer,** the first about 45 s in and the
+  last just before the end. A slower phone may fit two.
 
-In Chrome on a computer the ETA demo ended at +1.7 ± 0.05 s/day and 0.31 ms, with the analysis at
-14% of real time. The Omega demo ended at +0.9 ± 0.09 s/day over its last 20 s, with the analysis
-at 11% of real time at 52° and 24% at 36°. At 36° it was read three times: the first reading was
-on the screen about 46 s after Start, after 2.1 s of computing over 4.3 s, and could be shown;
-the second was held back, more than 5% of its draws having lost the unlock; the third, 3.2 s of
-computing over 6.4 s, could be shown. The silent channel is analysed like the first and changes
-no reading, but it costs computing: in Node the pipeline without the stage takes about 10% of
-real time for the Omega's capture with it and about 5% without, and about 13% and 7% for the
-ETA's. The new demos have not been tried on a phone.
+In Chrome on a computer, with nothing changed in Settings, the ETA demo ran at 50° and ended at
++1.7 ± 0.05 s/day and 0.31 ms, with the analysis at 8% of real time. The Omega demo ran at 36° and
+ended at +0.9 ± 0.09 s/day over its last 20 s, with the analysis at 19% of real time. It was read
+three times: the first reading was on the screen about 45 s after Start, after 2.2 s of computing
+over 4.4 s, and could be shown; the second was held back, more than 5% of its draws having lost the
+unlock; the third, 3.1 s of computing over 6.2 s, could be shown. Setting the lift angle to 40°
+during the ETA demo changed the line under the readings to 40° at once, and the next start of the
+demo was at 50° again, with the setting still as stored. The new demos have not been tried on a
+phone.
 
 The theme is Auto by default, which follows the phone's light or dark setting, or Light or Dark
 whatever the phone is set to. It changes at once, the charts and the browser's bars included, and
@@ -758,7 +762,8 @@ tests and in the app's background worker.
 - `eta-2836-2-safari.wav` (30 s) and `omega-3861-safari.wav` (60 s) were saved by the audio
   diagnostic in Safari on an iPhone 17 Pro Max with iOS 27.2, on 14 November 2026, with the
   browser's voice processing off. They are stereo with a silent second channel, as Safari
-  delivered the phone's mono microphone. These two are also the app's demo recordings.
+  delivered the phone's mono microphone. These two are also the app's demo recordings, which
+  play the first channel only.
 - `no-watch-safari.wav` is the null case: 60 s of a quiet room with no watch near the phone,
   saved the same way later, by which time the diagnostic kept only the first channel.
 

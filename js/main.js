@@ -31,10 +31,11 @@ import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAG
  * The two watch recordings among the repository's test fixtures that Safari saved from the
  * phone's microphone, served from the same site. They are what the microphone gives the app, so
  * the sounds inside their beats can be read, which the Voice Memos recordings do not allow.
+ * Each carries its watch's escapement and lift angle, which the readings of those sounds need.
  */
 const DEMOS = [
-  { id: 'eta', name: 'ETA 2836-2', detail: 'Swiss lever escapement. 30 s, 12 MB.', url: 'tests/fixtures/eta-2836-2-safari.wav', escapement: /** @type {Escapement} */ ('lever') },
-  { id: 'omega', name: 'Omega 3861', detail: 'Co-axial escapement. 60 s, 23 MB.', url: 'tests/fixtures/omega-3861-safari.wav', escapement: /** @type {Escapement} */ ('coaxial') },
+  { id: 'eta', name: 'ETA 2836-2', detail: 'Swiss lever escapement, lift angle 50°. 30 s, 12 MB.', url: 'tests/fixtures/eta-2836-2-safari.wav', escapement: /** @type {Escapement} */ ('lever'), liftAngle: 50 },
+  { id: 'omega', name: 'Omega 3861', detail: 'Co-axial escapement, lift angle 36°. 60 s, 23 MB.', url: 'tests/fixtures/omega-3861-safari.wav', escapement: /** @type {Escapement} */ ('coaxial'), liftAngle: 36 },
 ];
 
 /** Seconds of trace shown while a source runs. */
@@ -142,6 +143,8 @@ let target = nextPosition(log);
  * @property {number|null} duration seconds, for recordings
  * @property {number} sampleRate
  * @property {Escapement} escapement
+ * @property {number} liftAngle degrees: the setting's, or a demo watch's own. A change of the
+ *   setting replaces it, during the run and after it
  * @property {boolean} running
  * @property {boolean} ended the source has no more audio
  * @property {boolean} finished the recording reached its end and the pipeline has heard all of it
@@ -233,7 +236,11 @@ async function loadDemo(demo, id) {
     bytes.set(p, at);
     at += p.length;
   }
-  const recording = await decodeRecording(bytes.buffer);
+  const decoded = await decodeRecording(bytes.buffer);
+  // Safari saved the phone's one microphone as two channels, the second of them silent. A demo
+  // plays the first alone, as the microphone gives it to the app: the silent one changes no
+  // reading and nearly doubles the pipeline's computing.
+  const recording = { ...decoded, channels: [decoded.channels[0]] };
   demoCache.set(demo.id, recording);
   return recording;
 }
@@ -265,7 +272,7 @@ async function start() {
         seed: Math.floor(Math.random() * 2 ** 31),
       });
       source = simulator;
-      next = newRun('simulator', 'Simulator', null, simulator.sampleRate, settings.escapement);
+      next = newRun('simulator', 'Simulator', null, simulator.sampleRate, settings.escapement, settings.liftAngle);
       next.running = true;
     } else {
       simulator = null;
@@ -274,15 +281,18 @@ async function start() {
       let name;
       /** @type {Escapement} */
       let escapement = settings.escapement;
+      let liftAngle = settings.liftAngle;
       if (kind === 'demo') {
         const demo = DEMOS.find((d) => d.id === demoId) || DEMOS[0];
+        // The demo watch's escapement and lift angle are known, whatever the settings for the
+        // user's own watch.
+        escapement = demo.escapement;
+        liftAngle = demo.liftAngle;
         loading = 'Downloading';
-        run = newRun('demo', demo.name, null, 48000, escapement);
+        run = newRun('demo', demo.name, null, 48000, escapement, liftAngle);
         schedule();
         recording = await loadDemo(demo, id);
         name = demo.name;
-        // The demo watch's escapement is known, whatever the setting for the user's own watch.
-        escapement = demo.escapement;
       } else {
         if (!userFile) {
           problem = 'Choose a recording first.';
@@ -294,7 +304,7 @@ async function start() {
       }
       if (id !== sessionId) return;
       source = new RecordingSource(recording);
-      next = newRun(kind, name, recording.duration, recording.sampleRate, escapement);
+      next = newRun(kind, name, recording.duration, recording.sampleRate, escapement, liftAngle);
       next.running = true;
     }
   } catch (error) {
@@ -316,7 +326,7 @@ async function start() {
     id,
     sampleRate: source.sampleRate,
     channelCount: kind === 'simulator' ? 1 : /** @type {RecordingSource} */ (source).channelCount,
-    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: thisRun.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: settings.liftAngle },
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: thisRun.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: thisRun.liftAngle },
   });
   player = new Player(source, {
     speed: thisRun.kind === 'simulator' ? 1 : speed,
@@ -353,10 +363,11 @@ async function start() {
  * @param {number|null} duration
  * @param {number} sampleRate
  * @param {Escapement} escapement
+ * @param {number} liftAngle degrees
  * @returns {Run}
  */
-function newRun(kind, name, duration, sampleRate, escapement) {
-  return { kind, name, duration, sampleRate, escapement, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
+function newRun(kind, name, duration, sampleRate, escapement, liftAngle) {
+  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
 }
 
 /**
@@ -371,7 +382,7 @@ async function startMicrophone(id) {
     schedule();
     return;
   }
-  const thisRun = newRun('microphone', 'Microphone', null, 48000, settings.escapement);
+  const thisRun = newRun('microphone', 'Microphone', null, 48000, settings.escapement, settings.liftAngle);
   const input = new LiveInput({
     onAudio: (channels) => {
       if (live !== input || !thisRun.running) return;
@@ -462,7 +473,7 @@ function beginLiveSession(r, offset) {
     id: sessionId,
     sampleRate: r.sampleRate,
     channelCount: 1,
-    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: settings.liftAngle },
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: r.liftAngle },
   });
   schedule();
 }
@@ -620,7 +631,9 @@ function render() {
           : 'not measurable here'
         : '';
   const bph = m.bph || settings.bph;
-  const parts = [bph ? `${formatBph(bph)} vph` : 'Beat rate automatic', `lift ${settings.liftAngle}°`, `${settings.averagingSeconds} s window`];
+  // A demo runs with its own watch's lift angle, so the one shown is the run's.
+  const lift = run ? run.liftAngle : settings.liftAngle;
+  const parts = [bph ? `${formatBph(bph)} vph` : 'Beat rate automatic', `lift ${lift}°`, `${settings.averagingSeconds} s window`];
   if (tracking && span > settings.averagingSeconds + 2) parts[2] = `window lengthened to ${Math.round(span)} s`;
   ui.sub.textContent = parts.join(' · ');
   // Irregular running: a warning in the readout, for as long as the latest readings say so.
@@ -1081,6 +1094,9 @@ ui.settingsForm.addEventListener('change', () => {
   saveSettings(settings);
   // The theme changes at once; the charts are drawn again with its colours below.
   if (settings.theme !== before.theme) applyTheme(settings.theme);
+  // A lift angle set now is the one meant from here on: it replaces a demo's own while the demo
+  // runs, and it is what the line under the readings shows once a run is over.
+  if (run && settings.liftAngle !== before.liftAngle) run.liftAngle = settings.liftAngle;
   if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
     restart();
   } else if (run && run.running) {
