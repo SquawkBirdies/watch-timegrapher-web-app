@@ -5,6 +5,7 @@ import { listMicrophones, openMicrophone } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
 import { offerFile } from './ui/save.js';
 import { Cascade, highpass, BUTTERWORTH4_Q } from './dsp/biquad.js';
+import { soundsReadout, soundsInWords, stageNote, beatName } from './ui/model.js';
 
 /**
  * @template {HTMLElement} T
@@ -25,6 +26,7 @@ const ui = {
   length: /** @type {HTMLSelectElement} */ ($('length')),
   mains: /** @type {HTMLSelectElement} */ ($('mains')),
   escapement: /** @type {HTMLSelectElement} */ ($('escapement')),
+  lift: /** @type {HTMLInputElement} */ ($('lift')),
   start: /** @type {HTMLButtonElement} */ ($('start')),
   stop: /** @type {HTMLButtonElement} */ ($('stop')),
   elapsed: $('elapsed'),
@@ -72,8 +74,26 @@ const worker = new Worker(new URL('./dsp/worker.js', import.meta.url), { type: '
  * @property {import('./dsp/pipeline.js').ReadingsEvent|null} readings
  * @property {import('./dsp/session.js').Load|null} load
  * @property {boolean} stopped
+ * @property {boolean} closing the worker has been asked for its last answer: the reading of the
+ *   beats' sounds it was working out when the recording ended, finished for the report
  * @property {import('./dsp/estimate.js').Escapement} escapement
+ * @property {number} liftAngle degrees, as given when the recording started
  */
+
+/** The lift angles the app's own settings allow, and the one it starts with. */
+const LIFT = { min: 30, max: 70, unknown: 52 };
+
+/**
+ * The lift angle in the field, kept to what the app allows; anything else becomes the angle
+ * for a watch whose own is unknown, and the field shows what was used.
+ * @returns {number}
+ */
+function liftAngle() {
+  const typed = Number(ui.lift.value);
+  const angle = ui.lift.value !== '' && Number.isFinite(typed) && typed >= LIFT.min && typed <= LIFT.max ? typed : LIFT.unknown;
+  ui.lift.value = String(angle);
+  return angle;
+}
 
 /** @type {Run|null} */
 let run = null;
@@ -178,7 +198,9 @@ async function start() {
     readings: null,
     load: null,
     stopped: false,
+    closing: false,
     escapement: ui.escapement.value === 'coaxial' ? 'coaxial' : 'lever',
+    liftAngle: liftAngle(),
   };
   recent = new Float32Array(Math.round(2 * run.sampleRate));
   recentAt = 0;
@@ -203,7 +225,7 @@ function onChunk(chunk) {
   if (r.channelCount === 0) {
     r.channelCount = channels.length;
     r.wallStart = performance.now() - (1000 * channels[0].length) / r.sampleRate;
-    worker.postMessage({ type: 'start', sampleRate: r.sampleRate, channelCount: r.channelCount, options: { humHz: Number(ui.mains.value), escapement: r.escapement } });
+    worker.postMessage({ type: 'start', sampleRate: r.sampleRate, channelCount: r.channelCount, options: { humHz: Number(ui.mains.value), escapement: r.escapement, liftAngle: r.liftAngle } });
   }
   const room = r.limitFrames - r.frames;
   if (channels[0].length > room) channels = channels.map((c) => c.subarray(0, room));
@@ -265,7 +287,14 @@ async function stop() {
 function finishIfDone() {
   const r = run;
   if (!r || !r.stopped || r.answered < r.sent) return;
-  worker.postMessage({ type: 'stop' });
+  if (!r.closing) {
+    // The worker ends its session with this answer, which is counted as a chunk's is.
+    r.closing = true;
+    r.sent++;
+    worker.postMessage({ type: 'finish' });
+    setStatus('Stopped. Finishing the measurement…');
+    return;
+  }
   ui.start.disabled = false;
   setStatus(r.state === 'tracking' ? `Stopped. The pipeline was tracking ${r.bph?.toLocaleString('en-US')} vph.` : 'Stopped. The pipeline did not lock on a watch.', r.state === 'tracking' ? 'tracking' : 'problem');
   ui.report.textContent = report();
@@ -279,7 +308,7 @@ worker.onmessage = (event) => {
     const r = run;
     if (!r) return;
     r.answered++;
-    r.load = m.load;
+    if (m.load) r.load = m.load;
     for (const e of /** @type {import('./dsp/pipeline.js').PipelineEvent[]} */ (m.events)) {
       if (e.type === 'status') {
         if (r.state === 'tracking' && e.state === 'listening') r.lockLost++;
@@ -306,11 +335,16 @@ worker.onmessage = (event) => {
   }
 };
 
-/** @param {import('./dsp/pipeline.js').ReadingsEvent} e */
+/**
+ * The latest reading in a line. The pipeline is given the lift angle, so it reads the sounds
+ * inside the beats as the app does: the amplitude and the beat error are the app's own, measured
+ * from each beat's first sound, with a dash and the reason until they can be shown.
+ * @param {import('./dsp/pipeline.js').ReadingsEvent} e
+ */
 function readingText(e) {
   if (e.rate === null) return 'No reading.';
-  const be = run && run.escapement === 'coaxial' ? 'no beat error for co-axial' : e.beatErrorMs === null ? 'beat error blank' : `beat error ${e.beatErrorMs.toFixed(2)} ms`;
-  return `Rate ${signed(e.rate)} s/day · ${be} · scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}`;
+  const sounds = soundsInWords(soundsReadout(true, e, run ? run.liftAngle : LIFT.unknown));
+  return `Rate ${signed(e.rate)} s/day · ${sounds.amplitude} · ${sounds.beatError} · scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}`;
 }
 
 // ---------------------------------------------------------------------------- drawing
@@ -366,7 +400,7 @@ function report() {
   const lines = ['Watch Timegrapher audio diagnostic (milestone 4)'];
   lines.push(`Browser: ${navigator.userAgent}`);
   lines.push(`Microphone: ${r.capture.label || 'unnamed'}`);
-  lines.push(`Escapement: ${r.escapement === 'coaxial' ? 'co-axial (beat error not shown)' : 'Swiss lever'}`);
+  lines.push(`Escapement: ${r.escapement === 'coaxial' ? 'co-axial' : 'Swiss lever'}, lift angle ${r.liftAngle}°`);
   const onOff = (/** @type {unknown} */ v) => (v ? 'on' : 'off');
   lines.push(`Requested: echo cancellation ${onOff(r.capture.requested.echoCancellation)}, noise suppression ${onOff(r.capture.requested.noiseSuppression)}, automatic gain ${onOff(r.capture.requested.autoGainControl)}`);
   const applied = Object.entries(r.capture.settings)
@@ -394,12 +428,26 @@ function report() {
     lines.push(`Pipeline: locked at ${r.lockedAt.toFixed(1)} s on ${r.bph?.toLocaleString('en-US') ?? '?'} vph, lock lost ${r.lockLost} time${r.lockLost === 1 ? '' : 's'}`);
     const e = r.readings;
     if (e) {
-      lines.push(`Last reading: rate ${signed(e.rate)} s/day${e.rateSd === null ? '' : ` (± ${e.rateSd.toFixed(2)})`}, beat error ${e.beatErrorMs === null ? 'blank' : e.beatErrorMs.toFixed(2) + ' ms'}, scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}, cycles averaged ${r.cycles ? r.cycles.map((k) => k ?? '–').join('/') : '–'}`);
+      // The recording is over: a reading that was still waiting for beats will not get them.
+      const sounds = soundsInWords(soundsReadout(true, e, r.liftAngle, false));
+      lines.push(`Last reading: rate ${signed(e.rate)} s/day${e.rateSd === null ? '' : ` (± ${e.rateSd.toFixed(2)})`}, ${sounds.amplitude}, ${sounds.beatError}, scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}, cycles averaged ${r.cycles ? r.cycles.map((k) => k ?? '–').join('/') : '–'}`);
+      const s = e.sounds;
+      if (s && s.liftMs) {
+        // Tick first once the pipeline has named it; until then in the order of its two beat types.
+        const first = e.tick === null ? 0 : e.tick;
+        lines.push(`Unlock to lock: ${s.liftMs[first].toFixed(2)} and ${s.liftMs[1 - first].toFixed(2)} ms, ${e.tick === null ? 'the beats not named' : `${beatName(first, e.tick)} first`}`);
+      }
+      // The gap between each beat's loudest sounds, which was the beat error before milestone 8.
+      lines.push(`Gap between the timed beats: ${e.beatErrorMs === null ? (r.escapement === 'coaxial' ? 'not reported for a co-axial' : 'blank') : e.beatErrorMs.toFixed(2) + ' ms'}`);
       if (e.beatErrorDetail) lines.push(`Tick-tock detail: offset ${e.beatErrorDetail.offsetMs.toFixed(2)} ms, uncertainty ${e.beatErrorDetail.offsetSdMs.toFixed(3)} ms, shape similarity ${e.beatErrorDetail.similarity.toFixed(2)}`);
     }
   }
   if (r.load && r.load.audioSeconds > 0) {
     lines.push(`Pipeline load: ${((100 * r.load.busySeconds) / r.load.audioSeconds).toFixed(1)}% of real time, longest single step ${(1000 * r.load.longestSeconds).toFixed(0)} ms`);
+    // What reading the sounds inside the beats cost, and the pipeline's own word for the
+    // reason when the latest reading is not shown.
+    const stage = stageNote(r.load.stage, r.readings ? r.readings.sounds : null);
+    if (stage) lines.push(`${stage[0].toUpperCase()}${stage.slice(1)}`);
   }
   if (benchText) lines.push(`Speed test: ${benchText}`);
   return lines.join('\n');
@@ -454,7 +502,7 @@ function showBenchmark(b) {
   benchText =
     `${b.audioSeconds.toFixed(0)} s of simulated audio (${b.channelCount} channel${b.channelCount === 1 ? '' : 's'}) took ${b.busySeconds.toFixed(1)} s, ` +
     `${b.speed.toFixed(1)} times faster than real time; longest single step ${(1000 * b.longestSeconds).toFixed(0)} ms; ` +
-    `locked at ${b.lockedAt === null ? 'never' : b.lockedAt.toFixed(1) + ' s'}; read ${signed(b.rate)} s/day and ${b.beatErrorMs === null ? 'no beat error' : b.beatErrorMs.toFixed(2) + ' ms'} (true +12.00 and 0.30)`;
+    `locked at ${b.lockedAt === null ? 'never' : b.lockedAt.toFixed(1) + ' s'}; read ${signed(b.rate)} s/day and ${b.beatErrorMs === null ? 'no gap' : b.beatErrorMs.toFixed(2) + ' ms'} between the timed beats (true +12.00 and 0.30)`;
   ui.benchResult.textContent = `${b.speed.toFixed(1)} times faster than real time. ${b.speed >= 3 ? 'This device keeps up comfortably.' : b.speed >= 1 ? 'This device keeps up, with little to spare.' : 'This device is too slow to keep up.'}`;
   if (!ui.results.hidden) ui.report.textContent = report();
 }

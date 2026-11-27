@@ -38,6 +38,7 @@ import { SCATTER_LIMIT_MS } from './irregular.js';
 import { BeatTracker } from './tracker.js';
 import { robustLine, median, mean, std, percentile } from './mathutil.js';
 import { SoundStage } from './soundstage.js';
+import { tickByGap, tickByLift } from './names.js';
 
 /**
  * @typedef {Object} PipelineOptions
@@ -104,7 +105,11 @@ import { SoundStage } from './soundstage.js';
  *   numbers and the reference points they had, so a tick stays a tick and the trace carries on
  * @typedef {{type: 'beats', beats: Beat[], replaceFrom: number|null}} BeatsEvent
  *   replaceFrom: when set, beats from that time on are superseded by this list
- * @typedef {{type: 'readings', t: number, window: [number, number]|null, windowStart: number|null, windowSeconds: number|null, signal: Signal|null, irregular: boolean, sounds: import('./soundstage.js').SoundsReport|null} & import('./estimate.js').Readings} ReadingsEvent
+ * @typedef {{type: 'readings', t: number, window: [number, number]|null, windowStart: number|null, windowSeconds: number|null, signal: Signal|null, irregular: boolean, sounds: import('./soundstage.js').SoundsReport|null, tick: 0|1|null} & import('./estimate.js').Readings} ReadingsEvent
+ *   Everything given for the two kinds of beat is in the order of their types, 0 then 1, as
+ *   the beats carry them: `fits`, the two entries of `signal`, the sign of `beatOffsetMs` and of
+ *   `beatErrorDetail.offsetMs` (how much later than midway between the beats of type 0 those of
+ *   type 1 fall), and everything in `sounds`.
  *   window: the first and last timestamp the readings use.
  *   windowStart: where the audio the readings draw on begins: `t` less the averaging window, or
  *   the start of the lock until the lock has lasted that long.
@@ -113,6 +118,10 @@ import { SoundStage } from './soundstage.js';
  *   irregular: true when the beats fall at scattered times; every timestamp is then one beat.
  *   sounds: the beat error from the unlocks and the amplitude, from the sounds inside each beat;
  *   null when no lift angle was given, and when the lock is lost
+ *   tick: which type of beat is the tick, once the readings have made it clear (see
+ *   js/dsp/names.js); null until then, and the two types are then beats without names. Once
+ *   given it stays for as long as the beat numbers carry on, through repeat analyses and
+ *   through a lock that carries on from one lost moments before.
  * @typedef {{type: 'waveform', t: number, rate: number, from: number, to: number, cycles: number, beats: AveragedBeat[], marks: [SoundMarks, SoundMarks]|null}} WaveformEvent
  *   The averaged tick and tock from the latest analysis. `rate` is the envelope sample rate;
  *   `from` and `to` are the window's ends in seconds relative to each beat's timestamp;
@@ -337,11 +346,17 @@ export class Pipeline {
     /** @type {null | {bph: number, nominalPeriod: number, start: number, length: number, period: number, template: Float32Array[], clusters: [number, number], types: BeatTypeState[], confirmed: boolean, blocks: number, blocksOk: number, irregular: boolean, continues: boolean, halfway: boolean|null}} */
     this.lock = null;
     /**
-     * The last lock lost, kept so that a new lock found soon after can carry on its beat numbers
-     * and reference points.
-     * @type {null | {bph: number, tracker: BeatTracker, dots: Dot[], lastTrusted: number}}
+     * The last lock lost, kept so that a new lock found soon after can carry on its beat numbers,
+     * its reference points and its beats' names.
+     * @type {null | {bph: number, tracker: BeatTracker, dots: Dot[], lastTrusted: number, tick: 0|1|null}}
      */
     this.lost = null;
+    /**
+     * Which type of beat is the tick, once the readings have made it clear; null until then.
+     * It belongs to the beat numbers: a lock that does not carry them on starts without names.
+     * @type {0|1|null}
+     */
+    this.tick = null;
     /** @type {BeatTracker|null} */
     this.tracker = null;
     /** @type {Dot[]} */
@@ -376,6 +391,8 @@ export class Pipeline {
      * @type {SoundStage|null}
      */
     this.sounds = this.options.liftAngle === undefined ? null : new SoundStage(this.bank, this.cleanup.delay, this.options.liftAngle, this.options.sounds);
+    /** The stage's version when its report last went out with the readings, once a second. */
+    this.soundsSent = -1;
   }
 
   /**
@@ -407,13 +424,19 @@ export class Pipeline {
   /**
    * Change the settings that can change while measuring: the averaging window, the escapement
    * and the lift angle. They apply from the next reading; a new lift angle blanks the beat error
-   * from the unlocks and the amplitude until they have been read again with it. Other settings
-   * need a new pipeline, and so does a lift angle for a pipeline that was made without one.
+   * from the unlocks and the amplitude until they have been read again with it. Another
+   * escapement names the tick by another rule, so the beats lose their names until that rule
+   * gives them. Other settings need a new pipeline, and so does a lift angle for a pipeline
+   * that was made without one.
    * @param {{averagingSeconds?: number, escapement?: import('./estimate.js').Escapement, liftAngle?: number}} changes
    */
   setOptions(changes) {
     if (changes.averagingSeconds !== undefined) this.options.averagingSeconds = changes.averagingSeconds;
-    if (changes.escapement !== undefined) this.options.escapement = changes.escapement;
+    if (changes.escapement !== undefined && changes.escapement !== this.options.escapement) {
+      this.options.escapement = changes.escapement;
+      this.tick = null;
+      if (this.lost) this.lost.tick = null;
+    }
     if (changes.liftAngle !== undefined && this.sounds) {
       this.options.liftAngle = changes.liftAngle;
       const before = this.sounds.version;
@@ -449,6 +472,30 @@ export class Pipeline {
         this.step();
       }
     }
+    const out = this.events;
+    this.events = [];
+    return out;
+  }
+
+  /**
+   * The audio has ended, at Stop or with a recording: finish the reading of the sounds inside
+   * the beats that is being worked out, and report it. During a run that reading is spread over
+   * the audio blocks that follow its start, so that the beats are still timed promptly; with no
+   * more blocks to come it would never be finished, and until 26 November 2026 it was dropped,
+   * so that a run could end on a dash while its last reading was a second from done. A reading
+   * finished since the readings last went out, which they do once a second, is reported here
+   * too. Either rests on beats heard before the end, as every reading does. No reading is
+   * started here, and nothing is reported when the stage has nothing new.
+   * @returns {PipelineEvent[]}
+   */
+  finish() {
+    const stage = this.sounds;
+    if (!stage || this.state !== 'tracking' || !this.lock) return [];
+    const before = stage.version;
+    stage.finish(this.count);
+    // The marks on the averaged beat follow the reading.
+    if (stage.version !== before) this.events.push(this.waveform());
+    if (stage.version !== this.soundsSent) this.emitReadings();
     const out = this.events;
     this.events = [];
     return out;
@@ -712,6 +759,9 @@ export class Pipeline {
       shift = resumed;
       earlier = this.lost.dots;
     }
+    // The names go with the beat numbers: a repeat analysis keeps them, a lock that carries on
+    // a lost one takes that lock's, and any other lock starts without.
+    if (!(previous && confirmed)) this.tick = resumed !== null && this.lost ? this.lost.tick : null;
     /** @type {Dot[]} */
     const dots = [];
     /** @type {BeatTypeState[]} */
@@ -1196,7 +1246,7 @@ export class Pipeline {
    * @param {string} reason
    */
   lose(reason) {
-    if (this.lock && this.lock.confirmed && this.tracker) this.lost = { bph: this.lock.bph, tracker: this.tracker, dots: this.dots, lastTrusted: this.lastTrusted };
+    if (this.lock && this.lock.confirmed && this.tracker) this.lost = { bph: this.lock.bph, tracker: this.tracker, dots: this.dots, lastTrusted: this.lastTrusted, tick: this.tick };
     this.state = 'listening';
     this.lock = null;
     this.tracker = null;
@@ -1209,7 +1259,7 @@ export class Pipeline {
     if (this.sounds) this.sounds.reset(this.count);
     const t = this.toSeconds(this.count);
     this.events.push({ type: 'status', state: 'listening', reason, bph: null, cyclesAveraged: null, t });
-    this.events.push({ type: 'readings', t, window: null, windowStart: null, windowSeconds: null, signal: null, irregular: false, sounds: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
+    this.events.push({ type: 'readings', t, window: null, windowStart: null, windowSeconds: null, signal: null, irregular: false, sounds: null, tick: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });
   }
 
   /**
@@ -1230,7 +1280,8 @@ export class Pipeline {
    * Readings over the averaging window, from the raw timestamps. The window reaches back no
    * further than the start of the current lock, and is lengthened for faint ticks (see
    * `averagingSpan`). Beats are grouped by type rather than by
-   * template cluster, because repeat analyses can number the clusters differently.
+   * template cluster, because repeat analyses can number the clusters differently. The first
+   * readings that make it clear name the tick (see `nameTick`).
    * @returns {ReadingsEvent | null}
    */
   readings() {
@@ -1258,6 +1309,15 @@ export class Pipeline {
     });
     const referenceGap = (lock.types[1].adjust - lock.types[0].adjust) / this.fe;
     const r = summarize(beats, lock.nominalPeriod, lock.template, lock.clusters, this.fe, this.options.escapement, referenceGap, lock.irregular);
+    // `summarize` compares the template's second cluster with its first. When the first holds
+    // the beats of type 1, what it gives for the two is turned round, so that the readings are
+    // in the order of the types whichever beat a repeat analysis happened to start on. Until
+    // 26 November 2026 they were not, and the offset's sign could flip within a run.
+    if (typeOf(0) === 1) {
+      r.fits = [r.fits[1], r.fits[0]];
+      if (r.beatOffsetMs !== null) r.beatOffsetMs = -r.beatOffsetMs;
+      if (r.beatErrorDetail) r.beatErrorDetail = { ...r.beatErrorDetail, offsetMs: -r.beatErrorDetail.offsetMs };
+    }
     /** @type {Signal} */
     const signal = { z: [null, null], cycles: [null, null] };
     for (let j = 0; j < 2; j++) {
@@ -1268,7 +1328,30 @@ export class Pipeline {
       signal.z[type] = recent.length ? median(recent.map((d) => d.z)) : null;
       signal.cycles[type] = ty.K;
     }
-    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], windowStart: this.toSeconds(from), windowSeconds: span / this.fe, signal, irregular: lock.irregular, sounds: this.sounds ? this.sounds.report(lock.irregular, this.halfway()) : null, ...r };
+    const sounds = this.sounds ? this.sounds.report(lock.irregular, this.halfway()) : null;
+    if (this.sounds) this.soundsSent = this.sounds.version;
+    if (this.tick === null) this.tick = this.nameTick(r, sounds, lock.irregular);
+    return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], windowStart: this.toSeconds(from), windowSeconds: span / this.fe, signal, irregular: lock.irregular, sounds, tick: this.tick, ...r };
+  }
+
+  /**
+   * Which type of beat is the tick, if these readings make it clear. A Swiss lever's tick is
+   * the beat followed by the longer gap between the timed beats, named only from an offset
+   * that a beat error could be read from: both types timed precisely and sounding alike, no
+   * beat halfway between them, and a watch that is not running irregularly. A co-axial's is
+   * the beat with the longer time from unlock to lock, named only from an amplitude that is
+   * shown.
+   * @param {import('./estimate.js').Readings} r in the order of the types
+   * @param {import('./soundstage.js').SoundsReport|null} sounds
+   * @param {boolean} irregular
+   * @returns {0|1|null}
+   */
+  nameTick(r, sounds, irregular) {
+    if (this.options.escapement === 'coaxial') {
+      return sounds && sounds.amplitude !== null && sounds.liftMs && sounds.liftSd ? tickByLift(sounds.liftMs, sounds.liftSd) : null;
+    }
+    if (irregular || r.beatOffsetMs === null || !r.beatErrorDetail) return null;
+    return tickByGap(r.beatOffsetMs, r.beatErrorDetail.offsetSdMs);
   }
 
   emitReadings() {

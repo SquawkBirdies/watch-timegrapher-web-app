@@ -130,6 +130,47 @@ export function traceScatter(beats, bph, type) {
 }
 
 /**
+ * Which of a synthetic watch's beats one of the pipeline's beat types holds. The simulator's
+ * beats alternate from its first, so the even ones are one kind and the odd ones the other; a
+ * positive beat offset puts the odd ones late, which leaves the longer gap after the even ones.
+ * @param {Beat[]} beats
+ * @param {Float64Array} beatTimes true time of every beat
+ * @param {0|1} type
+ * @returns {0|1|null} 0 when every confident single-beat timestamp of the type lies nearest an
+ *   even beat, 1 when nearest an odd one; null when there are none, or when they disagree
+ */
+export function parityOf(beats, beatTimes, type) {
+  const votes = [0, 0];
+  let k = 0;
+  for (const b of beats) {
+    if (b.type !== type || !b.ok || b.cycles !== 1) continue;
+    while (k + 1 < beatTimes.length && Math.abs(beatTimes[k + 1] - b.t) <= Math.abs(beatTimes[k] - b.t)) k++;
+    while (k > 0 && Math.abs(beatTimes[k - 1] - b.t) < Math.abs(beatTimes[k] - b.t)) k--;
+    votes[k % 2]++;
+  }
+  if (votes[0] > 0 && votes[1] === 0) return 0;
+  if (votes[1] > 0 && votes[0] === 0) return 1;
+  return null;
+}
+
+/**
+ * Which of a synthetic watch's beats the pipeline named the tick: its even beats or its odd
+ * ones. When the tick's own timestamps average several cycles, which puts them between its
+ * beats, the answer comes from the other type's.
+ * @param {{beats: Beat[], readings: ReadingsEvent[]}} run
+ * @param {Float64Array} beatTimes true time of every beat
+ * @returns {0|1|null} null when no reading named a tick, or when the beats do not say
+ */
+export function tickParity(run, beatTimes) {
+  const named = run.readings.find((x) => x.tick !== null);
+  if (!named || named.tick === null) return null;
+  const own = parityOf(run.beats, beatTimes, named.tick);
+  if (own !== null) return own;
+  const other = parityOf(run.beats, beatTimes, /** @type {0|1} */ (1 - named.tick));
+  return other === null ? null : /** @type {0|1} */ (1 - other);
+}
+
+/**
  * How closely the timestamps of one beat type follow when the beats really fell, for a
  * synthetic watch whose true beat times are known. Each timestamp is compared with the mean
  * true time of the cycles it averages; the comparison takes out one constant, the distance

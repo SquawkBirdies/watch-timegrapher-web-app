@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { synthesizeWatch } from '../js/audio/simulator.js';
 import { readiness, takeReading, describeReading } from '../js/ui/positions.js';
-import { stream, join, againstTruth } from './helpers/stream.js';
+import { stream, join, againstTruth, tickParity } from './helpers/stream.js';
 
 /**
  * @param {number|null} actual @param {number} expected @param {number} tolerance @param {string} what
@@ -33,15 +33,35 @@ function readingsWithinStatedUncertainty(r, rate) {
   }
 }
 
-/** The clear 28,800 vph watch, streamed once for the two tests that use it. */
-let clearRun = /** @type {ReturnType<typeof stream>|null} */ (null);
+/** The clear 28,800 vph watch, streamed once for the tests that use it. */
+let clearRun = /** @type {(ReturnType<typeof stream> & {watch: ReturnType<typeof synthesizeWatch>})|null} */ (null);
 const clear = () => {
   if (!clearRun) {
     const w = synthesizeWatch({ bph: 28800, rate: 12, beatOffsetMs: 0.3, gain: 1.6, seconds: 50, seed: 1 });
-    clearRun = stream(w.channels, w.sampleRate);
+    clearRun = { ...stream(w.channels, w.sampleRate), watch: w };
   }
   return clearRun;
 };
+
+/**
+ * A Swiss lever's tick is the beat followed by the longer gap. The simulator's odd beats fall
+ * late by its beat offset, so with a positive offset the longer gap follows its even beats, and
+ * with a negative one its odd beats. The name is given with the first reading of the lock and
+ * never changes, and the signed offset, counted from the tick, stays positive: before 26 November
+ * 2026 a new lock named whichever beat it began on, and the sign could flip within a run.
+ * @param {ReturnType<typeof stream>} r
+ * @param {Float64Array} beatTimes
+ * @param {0|1} parity which of the simulator's beats must be the tick
+ * @param {string} what
+ */
+function tickNamedAtTheLock(r, beatTimes, parity, what) {
+  const locked = r.readings.filter((x) => x.window !== null);
+  assert.ok(locked.length > 10 && locked[0].tick !== null, `${what}: named with the first reading`);
+  assert.ok(locked.every((x) => x.tick === locked[0].tick), `${what}: one name throughout`);
+  assert.equal(tickParity(r, beatTimes), parity, `${what}: the tick is the simulator's ${parity ? 'odd' : 'even'} beats`);
+  const signed = locked.filter((x) => x.beatOffsetMs !== null).map((x) => (x.tick === 0 ? 1 : -1) * /** @type {number} */ (x.beatOffsetMs));
+  assert.ok(signed.length > 10 && signed.every((v) => v > 0), `${what}: the tock falls late of midway in every reading`);
+}
 
 test('clear ticks at 28,800 vph: +12 s/day, 0.30 ms beat error, locked within 10 s', () => {
   const r = clear();
@@ -56,6 +76,11 @@ test('clear ticks at 28,800 vph: +12 s/day, 0.30 ms beat error, locked within 10
   readingsWithinStatedUncertainty(r, 12);
 });
 
+test('the tick is the beat followed by the longer gap, named with the first reading of the lock and kept', () => {
+  const r = clear();
+  tickNamedAtTheLock(r, r.watch.beatTimes, 0, 'a tock 0.3 ms late');
+});
+
 test('21,600 vph with a mains buzz almost in step with the watch: -8 s/day, 0.80 ms', () => {
   const w = synthesizeWatch({ bph: 21600, rate: -8, beatOffsetMs: -0.8, gain: 1.2, seconds: 50, seed: 2 });
   const r = stream(w.channels, w.sampleRate);
@@ -64,6 +89,8 @@ test('21,600 vph with a mains buzz almost in step with the watch: -8 s/day, 0.80
   near(r.last.rate, -8, 0.2, 'rate');
   near(r.last.beatErrorMs, 0.8, 0.05, 'beat error');
   readingsWithinStatedUncertainty(r, -8);
+  // Its odd beats fall 0.8 ms early, so the longer gap follows them: they are the ticks.
+  tickNamedAtTheLock(r, w.beatTimes, 1, 'a tock 0.8 ms early');
 });
 
 test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a longer history, with the readings window lengthened to match', () => {
@@ -101,6 +128,9 @@ test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a long
   const saved = takeReading(last, { bph: 18000, escapement: 'lever', source: 'Simulator', now: new Date() });
   assert.ok(saved && saved.cycles && Math.max(...saved.cycles.map((k) => k || 1)) === K, `cycles ${saved?.cycles}`);
   assert.match(describeReading(saved).detail, /\d+ timestamps of (up to )?\d+ cycles/);
+  // And it has no beat error or amplitude, for the pipeline's own reason.
+  assert.deepEqual([saved.beatErrorMs, saved.beatErrorGap, saved.amplitude, saved.amplitudeGap, saved.liftAngle], [null, 'averaged', null, 'averaged', 52]);
+  assert.match(describeReading(saved).detail, / · no beat error or amplitude: beats too faint$/);
   // No single beat's place is known, so the sounds inside the beats are not read: a dash for
   // the amplitude and for the beat error from the unlocks, and why, for as long as that lasts.
   const stage = /** @type {NonNullable<typeof r.pipeline.sounds>} */ (r.pipeline.sounds);
@@ -108,6 +138,8 @@ test('faint ticks at 18,000 vph: +45 s/day, found by averaging beats over a long
   const averagedReadings = r.readings.filter((x) => x.signal && x.signal.cycles.some((c) => (c || 1) > 1));
   assert.ok(averagedReadings.length > 30 && averagedReadings.every((x) => x.sounds && x.sounds.amplitude === null && x.sounds.beatErrorMs === null && x.sounds.amplitudeWhy === 'averaged' && x.sounds.beatErrorWhy === 'averaged'), 'a dash, and why');
   assert.ok(Math.abs(last.rate - 45) <= 3 * /** @type {number} */ (last.rateSd) + 0.1, `rate ${last.rate} ± ${last.rateSd}`);
+  // A watch in perfect beat has no longer gap to name its tick by: its beats stay without names.
+  assert.ok(r.readings.every((x) => x.tick === null), 'no tick named');
 });
 
 test('noise and mains buzz alone never give a lock', () => {
@@ -127,6 +159,7 @@ for (const [bph, rate] of /** @type {[number, number][]} */ ([[18000, -10], [198
     assert.ok(r.last);
     near(r.last.rate, rate, 0.2, 'rate');
     near(r.last.beatErrorMs, 0.5, 0.05, 'beat error');
+    tickNamedAtTheLock(r, w.beatTimes, 0, `${bph} vph`);
   });
 }
 
@@ -142,7 +175,7 @@ test('when the ticking stops the readings are blanked, and the lock returns with
   assert.ok(lost, 'the lock was dropped');
   assert.ok(lost.t > 20 && lost.t < 30, `dropped at ${lost.t.toFixed(1)} s, within 10 s of the watch stopping`);
   const blank = r.readings.find((x) => x.t >= lost.t);
-  assert.ok(blank && blank.rate === null && blank.beatErrorMs === null, 'readings blanked');
+  assert.ok(blank && blank.rate === null && blank.beatErrorMs === null && blank.tick === null, 'readings blanked');
   // With a lift angle given, the stage that reads the sounds inside the beats goes blank with
   // them, and neither lock lasts the 30 s it waits for.
   assert.equal(blank.sounds, null);
@@ -247,6 +280,14 @@ test('a lock found again soon after the ticking pauses carries on the beat numbe
     const swapped = againstTruth(afresh.beats, w.beatTimes, w.truePeriod, type);
     assert.ok(swapped.wrong > 20, `numbered afresh, type ${type}: ${swapped.wrong} more than 0.5 ms off`);
   }
+  // The names go with the beat numbers. The lock that carries on keeps the tick it had, the
+  // simulator's even beats, which the longer gap follows.
+  tickNamedAtTheLock(carried, w.beatTimes, 0, 'carried on');
+  // Numbered afresh, the new lock names its beats again by the same rule, and so calls the
+  // other type the tick: the type changed, the beat it names did not.
+  const names = (/** @type {typeof afresh} */ r, /** @type {boolean} */ late) => [...new Set(r.readings.filter((x) => x.window !== null && x.t > 40 === late).map((x) => x.tick))];
+  assert.deepEqual(names(afresh, false), [0]);
+  assert.deepEqual(names(afresh, true), [1]);
 });
 
 test('a beat rate given by the user is used without searching the others', () => {
@@ -286,6 +327,8 @@ test('a wrong beat rate from the user never gives a wrong rate or beat error', (
       if (actual === 36000) {
         assert.ok(read.length >= 10, `${actual} vph watch, told ${told}: ${read.length} readings`);
         assert.ok(read.some((x) => x.beatErrorDetail && x.beatErrorDetail.halfway), 'the beat halfway between was found');
+        // Both beats found are the watch's ticks, so there is no tick to name among them.
+        assert.ok(read.every((x) => x.tick === null), 'no tick named');
       }
       for (const x of read) {
         near(x.rate, rate, 1, `${actual} vph watch, told ${told}: rate at ${x.t.toFixed(1)} s`);

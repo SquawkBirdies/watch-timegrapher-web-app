@@ -11,6 +11,7 @@ import { alignBeats, continueBeats } from './irregular.js';
 import { summarize, halfwayBeat } from './estimate.js';
 import { medfilt } from './mathutil.js';
 import { soundRows } from './sounds.js';
+import { tickByGap, tickByLift } from './names.js';
 import { measureSounds } from './amplitude.js';
 
 /**
@@ -45,6 +46,10 @@ import { measureSounds } from './amplitude.js';
  * @property {[number, number]} clusters tick and tock positions in the template, in samples
  * @property {import('./amplitude.js').SoundsReading|null} sounds the beat error from the unlocks
  *   and the amplitude, from the sounds inside each beat; null unless a lift angle was given
+ * @property {0|1|null} tick which of the two beat series is the tick (see js/dsp/names.js): for
+ *   a Swiss lever the one followed by the longer gap, for a co-axial the one with the longer
+ *   time from unlock to lock, which needs a lift angle; null when the readings do not make
+ *   it clear. The series themselves stay as they are, the first called the tick
  */
 
 export { MAX_OFFSET_SD_MS, MIN_SIMILARITY, MAX_SCATTER_MS } from './estimate.js';
@@ -92,7 +97,14 @@ export function analyze(channels, sampleRate, options = {}) {
     halfway: result.locked && halfwayBeat(result.template, result.clusters, fe).found,
     ...reading,
   });
-  return { sampleRate, ...result, sounds };
+  /** @type {0|1|null} */
+  let tick = null;
+  if (escapement === 'coaxial') {
+    if (sounds && sounds.amplitude !== null && sounds.amplitudeHeld === null && sounds.liftMs && sounds.scatter) tick = tickByLift(sounds.liftMs, sounds.scatter.liftMs);
+  } else if (!result.irregular && result.beatOffsetMs !== null && result.beatErrorDetail) {
+    tick = tickByGap(result.beatOffsetMs, result.beatErrorDetail.offsetSdMs);
+  }
+  return { sampleRate, ...result, sounds, tick };
 }
 
 /**
@@ -106,7 +118,7 @@ export function analyze(channels, sampleRate, options = {}) {
  *   `accept` can reject the chosen beat rate before the costly stages run; `periodPpm` with `bph`
  *   skips the beat-rate search when the period is already known approximately; `timing` as in
  *   `trackBeats`
- * @returns {(Omit<Analysis, 'sampleRate' | 'sounds'> & {period: number, split: [Float32Array[], Float32Array[]] | null, tracks: import('./timing.js').BeatTrack[]}) | null}
+ * @returns {(Omit<Analysis, 'sampleRate' | 'sounds' | 'tick'> & {period: number, split: [Float32Array[], Float32Array[]] | null, tracks: import('./timing.js').BeatTrack[]}) | null}
  *   `split` holds the folded half templates, and is null when the analysis did not fold
  *   null when `accept` rejected the candidate
  */

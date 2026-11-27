@@ -1,7 +1,8 @@
 // The trace: one dot per beat, time across, milliseconds ahead of an ideal clock up the side,
 // like the paper strip of a bench timegrapher. A gaining watch climbs, a losing one falls, and
-// the gap between the tick line and the tock line is the beat error. Touching the trace shows
-// the value of the nearest dot; touching an empty part hides it again.
+// the ticks and the tocks each keep to a line of their own. Until the pipeline has named them,
+// both are drawn in one colour. Touching the trace shows the value of the nearest dot; touching
+// an empty part hides it again.
 
 import { prepare, chartColors } from './canvas.js';
 import { traceRange, ticks } from './model.js';
@@ -143,11 +144,12 @@ export class TraceView {
     ctx.beginPath();
     ctx.rect(PAD.left - 4, PAD.top - 4, width - PAD.left - PAD.right + 8, height - PAD.top - PAD.bottom + 8);
     ctx.clip();
-    // Low-confidence dots underneath, then tocks, then ticks.
+    // Low-confidence dots underneath, then beats without names, then tocks, then ticks.
     const layers = [
       { pick: (/** @type {TracePoint} */ p) => !p.ok, color: c.dim },
-      { pick: (/** @type {TracePoint} */ p) => p.ok && p.type === 1, color: c.tock },
-      { pick: (/** @type {TracePoint} */ p) => p.ok && p.type === 0, color: c.tick },
+      { pick: (/** @type {TracePoint} */ p) => p.ok && p.name === null, color: c.beat },
+      { pick: (/** @type {TracePoint} */ p) => p.ok && p.name === 'tock', color: c.tock },
+      { pick: (/** @type {TracePoint} */ p) => p.ok && p.name === 'tick', color: c.tick },
     ];
     for (const layer of layers) {
       ctx.fillStyle = layer.color;
@@ -177,13 +179,13 @@ export class TraceView {
       ctx.setLineDash([]);
       ctx.lineWidth = 2;
       ctx.strokeStyle = c.surface;
-      ctx.fillStyle = p.ok ? (p.type === 0 ? c.tick : c.tock) : c.dim;
+      ctx.fillStyle = !p.ok ? c.dim : p.name === 'tick' ? c.tick : p.name === 'tock' ? c.tock : c.beat;
       ctx.beginPath();
       ctx.arc(px, py, 5, 0, 2 * Math.PI);
       ctx.fill();
       ctx.stroke();
       const sign = p.y < 0 ? '−' : '+';
-      const label = `${p.t.toFixed(1)} s · ${p.type === 0 ? 'tick' : 'tock'}${p.ok ? '' : ' (low confidence)'} · ${sign}${Math.abs(p.y).toFixed(2)} ms`;
+      const label = `${p.t.toFixed(1)} s · ${p.name || 'beat'}${p.ok ? '' : ' (low confidence)'} · ${sign}${Math.abs(p.y).toFixed(2)} ms`;
       ctx.font = `600 12px ${c.font}`;
       const tw = ctx.measureText(label).width + 12;
       const bx = Math.min(width - PAD.right - tw, Math.max(PAD.left, px - tw / 2));

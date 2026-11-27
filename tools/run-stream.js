@@ -4,7 +4,7 @@
 // the beat-rate search. With a lift angle, in degrees, the sounds inside each beat are read too,
 // for the beat error from the unlocks and the amplitude; each reading then takes `share` of real
 // time, or is finished at once when no share is given, so that the output is the same on every
-// computer.
+// computer. One still in progress where the audio ends is finished there, as in the app.
 // Feeds a recording to the pipeline in small chunks and prints what it reports.
 
 import { readWav } from '../tests/helpers/wav.js';
@@ -32,15 +32,21 @@ let last = null;
 let lastPrinted = -Infinity;
 /** The end of the latest reading of the sounds that was printed. */
 let soundsPrinted = -Infinity;
+/** Which beat type the pipeline last said was the tick; undefined before any reading. */
+let tick = /** @type {0|1|null|undefined} */ (undefined);
 /** @param {number|null} v @param {number} digits */
 const fixed = (v, digits) => (v === null ? '-' : v.toFixed(digits));
-for (let i = from; i < to; i += size) {
-  const events = pipeline.push(wav.channels.map((c) => c.subarray(i, Math.min(to, i + size))));
+/** @param {import('../js/dsp/pipeline.js').PipelineEvent[]} events */
+const show = (events) => {
   for (const e of events) {
     if (e.type === 'status') console.log(`${e.t.toFixed(1).padStart(6)} s  ${e.state}${e.bph ? `, ${e.bph} bph, cycles averaged ${e.cyclesAveraged?.map((k) => k ?? '-').join('/')}` : ''} (${e.reason})`);
     if (e.type === 'beats') beats += e.beats.length;
     if (e.type === 'readings') {
       last = e;
+      if (e.window !== null && e.tick !== tick) {
+        tick = e.tick;
+        console.log(`${e.t.toFixed(1).padStart(6)} s  ${tick === null ? 'the beats have no names' : `the tick is beat type ${tick}`}`);
+      }
       if (e.t - lastPrinted >= 5 || e.rate === null) {
         lastPrinted = e.t;
         console.log(`${e.t.toFixed(1).padStart(6)} s  rate ${e.rate === null ? 'blank' : e.rate.toFixed(2) + ' +- ' + (e.rateSd ?? 0).toFixed(2) + ' s/d'}, beat error ${e.beatErrorMs === null ? 'blank' : e.beatErrorMs.toFixed(2) + ' ms'}, scatter ${e.jitterMs === null ? '-' : e.jitterMs.toFixed(3) + ' ms'}`);
@@ -60,7 +66,10 @@ for (let i = from; i < to; i += size) {
       }
     }
   }
-}
+};
+for (let i = from; i < to; i += size) show(pipeline.push(wav.channels.map((c) => c.subarray(i, Math.min(to, i + size)))));
+// As the app does where a recording ends: a reading of the sounds still in progress is finished.
+show(pipeline.finish());
 const elapsed = (performance.now() - t0) / 1000;
 const audio = (to - from) / wav.sampleRate;
 if (last) console.log(`final: rate ${last.rate === null ? 'blank' : last.rate.toFixed(2) + ' +- ' + (last.rateSd ?? 0).toFixed(2)}, beat error ${last.beatErrorMs === null ? 'blank' : last.beatErrorMs.toFixed(3)}, dots ${last.fits.map((f) => (f ? f.count : 0)).join('/')}`);

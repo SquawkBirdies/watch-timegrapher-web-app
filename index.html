@@ -48,7 +48,7 @@
       <div class="num" id="num-amplitude">
         <span class="k">Amplitude</span>
         <span class="v"><span id="amplitude">—</span><small>°</small></span>
-        <span class="why" id="amplitude-why">not yet measured</span>
+        <span class="why" id="amplitude-why"></span>
       </div>
       <div class="num" id="num-beat-error">
         <span class="k">Beat error</span>
@@ -57,6 +57,7 @@
       </div>
     </div>
     <div class="sub" id="sub"></div>
+    <p class="hint" id="lift-hint" role="status" hidden></p>
     <div class="alert" id="irregular" role="status" hidden>
       <strong>Irregular beat</strong>
       <span id="irregular-text"></span>
@@ -77,6 +78,7 @@
       <div class="num"><span class="k">Average rate</span><span class="v" id="sum-average">—</span><span class="why" id="sum-average-note"></span></div>
       <div class="num"><span class="k">Spread</span><span class="v" id="sum-spread">—</span><span class="why" id="sum-spread-note"></span></div>
       <div class="num"><span class="k">Largest beat error</span><span class="v" id="sum-beat-error">—</span><span class="why" id="sum-beat-error-note"></span></div>
+      <div class="num"><span class="k">Median amplitude</span><span class="v" id="sum-amplitude">—</span><span class="why" id="sum-amplitude-note"></span></div>
     </div>
     <p class="fine" id="sum-left-out" hidden></p>
     <div class="save-row">
@@ -88,12 +90,12 @@
   <section class="card" aria-labelledby="trace-title">
     <div class="card-head">
       <h2 id="trace-title">Trace</h2>
-      <div class="legend" aria-hidden="true">
+      <div class="legend" aria-hidden="true" id="trace-legend">
         <span><i class="tick"></i>tick</span><span><i class="tock"></i>tock</span><span><i class="dim"></i>low confidence</span>
       </div>
     </div>
     <canvas id="trace" role="img" aria-label="Trace of beat timings"></canvas>
-    <p class="caption" id="trace-caption">Milliseconds ahead of an ideal clock. A gaining watch climbs; the gap between the lines is the beat error. Touch a dot to read it.</p>
+    <p class="caption" id="trace-caption">Milliseconds ahead of an ideal clock. A gaining watch climbs. Touch a dot to read it.</p>
   </section>
 
   <section class="card" aria-labelledby="signal-title">
@@ -109,7 +111,7 @@
   <section class="card" aria-labelledby="wave-title">
     <div class="card-head">
       <h2 id="wave-title">Averaged beat</h2>
-      <div class="legend" aria-hidden="true"><span><i class="tick"></i>tick</span><span><i class="tock"></i>tock</span></div>
+      <div class="legend" aria-hidden="true" id="wave-legend"><span><i class="tick"></i>tick</span><span><i class="tock"></i>tock</span></div>
     </div>
     <canvas id="waveform" role="img" aria-label="Averaged tick and tock"></canvas>
     <p class="caption" id="wave-caption">Sound level above 1.5 kHz around the moment each beat is timed, averaged over many beats.</p>
@@ -147,7 +149,7 @@
     </div>
 
     <div class="panel" id="panel-simulator" role="tabpanel" aria-labelledby="tab-simulator" hidden>
-      <p class="note">A synthetic watch. Rate, beat error, variability and loudness change as you move the sliders, like adjusting a watch under test. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
+      <p class="note">A synthetic watch with a Swiss lever escapement, whose lift angle is the one set in Settings, so the amplitude read is the amplitude set here; changing that setting while it runs starts it again. Its rate, beat error, amplitude, variability and loudness change as you move the sliders, like adjusting a watch under test. The rate follows within the averaging window; the beat error and the amplitude rest on up to a minute of beats, so they follow more slowly and can show a dash on the way. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
       <div class="field">
         <label for="sim-bph">Beat rate</label>
         <select id="sim-bph"></select>
@@ -161,12 +163,16 @@
         <input type="range" id="sim-be" min="0" max="2" step="0.05" value="0.4">
       </div>
       <div class="field">
+        <label for="sim-amp">Amplitude <output id="sim-amp-out" for="sim-amp"></output></label>
+        <input type="range" id="sim-amp" min="150" max="330" step="5" value="270">
+      </div>
+      <div class="field">
         <label for="sim-jitter">Beat variability <output id="sim-jitter-out" for="sim-jitter"></output></label>
         <input type="range" id="sim-jitter" min="0" max="5" step="0.1" value="0">
       </div>
       <div class="field">
         <label for="sim-gain">Tick loudness <output id="sim-gain-out" for="sim-gain"></output></label>
-        <input type="range" id="sim-gain" min="0" max="3" step="0.05" value="2">
+        <input type="range" id="sim-gain" min="0" max="4" step="0.05" value="3">
       </div>
     </div>
 
@@ -197,7 +203,7 @@
   </section>
 
   <footer>
-    <p>Milestone 7 of 9 · six-position log. The <a href="diagnostic.html">audio diagnostic</a> shows
+    <p>Milestone 8 of 9, in progress · amplitude and beat error from the sounds inside each beat, experimental. The <a href="diagnostic.html">audio diagnostic</a> shows
       which capture settings the browser applied, and the <a href="check.html">browser check</a>
       shows whether this browser has what the app needs.</p>
     <p>Written with generative AI; see the README in the <a id="source-link" href="https://github.com/">source repository</a> for who did what. MIT licence.</p>
@@ -252,12 +258,12 @@
         <option value="lever">Swiss lever (most watches)</option>
         <option value="coaxial">Co-axial (Omega)</option>
       </select>
-      <p class="note">A co-axial escapement's tick and tock are different sounds, so beat error is not shown for it.</p>
+      <p class="note">A co-axial escapement's tick and tock are different sounds. The setting tells the app not to expect them alike, and how to tell the tick from the tock. A co-axial also needs a smaller lift angle, below.</p>
     </div>
     <div class="field">
       <label for="set-lift">Lift angle (degrees)</label>
       <input type="number" id="set-lift" name="liftAngle" min="30" max="70" step="0.5" inputmode="decimal">
-      <p class="note">From the movement's documentation; 52° if unknown. Used for amplitude, which is not measured yet.</p>
+      <p class="note">From the movement's documentation; 52° if unknown. Amplitude, which is experimental, is worked out from it and in proportion to it: at 52°, one degree too many reads about 5° high. Co-axial movements use less: Omega gives 38° for its calibres 8520 and 8521, and 36° is reported for the 3861.</p>
     </div>
     <div class="field">
       <label for="set-hum">Mains frequency</label>

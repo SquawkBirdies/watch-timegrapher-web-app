@@ -3,7 +3,7 @@
 // in real time for the simulator and recordings; the worker's events update the measurement
 // model, and the screen is redrawn from the model.
 
-import { Measurement, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
+import { Measurement, formatRate, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, liftHint, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
 import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
 import { ScreenWake } from './ui/wake.js';
@@ -54,13 +54,17 @@ const ui = {
   rate: $('rate'),
   rateWhy: $('rate-why'),
   numRate: $('num-rate'),
+  amplitude: $('amplitude'),
+  amplitudeWhy: $('amplitude-why'),
   beatError: $('beat-error'),
   beatErrorWhy: $('beat-error-why'),
+  liftHint: $('lift-hint'),
   irregular: $('irregular'),
   irregularText: $('irregular-text'),
   numBeatError: $('num-beat-error'),
   sub: $('sub'),
   trace: /** @type {HTMLCanvasElement} */ ($('trace')),
+  traceLegend: $('trace-legend'),
   traceCaption: $('trace-caption'),
   meter: $('meter'),
   meterFill: $('meter-fill'),
@@ -69,10 +73,12 @@ const ui = {
   guidance: $('guidance'),
   levels: $('levels'),
   waveform: /** @type {HTMLCanvasElement} */ ($('waveform')),
+  waveLegend: $('wave-legend'),
   waveCaption: $('wave-caption'),
   simBph: /** @type {HTMLSelectElement} */ ($('sim-bph')),
   simRate: /** @type {HTMLInputElement} */ ($('sim-rate')),
   simBe: /** @type {HTMLInputElement} */ ($('sim-be')),
+  simAmp: /** @type {HTMLInputElement} */ ($('sim-amp')),
   simGain: /** @type {HTMLInputElement} */ ($('sim-gain')),
   simJitter: /** @type {HTMLInputElement} */ ($('sim-jitter')),
   demos: $('demos'),
@@ -110,6 +116,8 @@ const ui = {
   sumSpreadNote: $('sum-spread-note'),
   sumBeatError: $('sum-beat-error'),
   sumBeatErrorNote: $('sum-beat-error-note'),
+  sumAmplitude: $('sum-amplitude'),
+  sumAmplitudeNote: $('sum-amplitude-note'),
   sumLeftOut: $('sum-left-out'),
   newLog: $('new-log'),
   logInfo: $('log-info'),
@@ -144,12 +152,16 @@ let target = nextPosition(log);
  * @property {number} sampleRate
  * @property {Escapement} escapement
  * @property {number} liftAngle degrees: the setting's, or a demo watch's own. A change of the
- *   setting replaces it, during the run and after it
+ *   setting replaces it, during the run and after it. During the run the pipeline reads the
+ *   amplitude again with the new angle; after it, the amplitude on screen was made with the old
+ *   one, and shows a dash instead
  * @property {boolean} running
  * @property {boolean} ended the source has no more audio
  * @property {boolean} finished the recording reached its end and the pipeline has heard all of it
  * @property {boolean} stopping Stop was pressed and the pipeline is still analysing audio handed
- *   to it before then; the run ends when it has answered every chunk
+ *   to it before then; the run ends when it has answered every chunk and given its last answer
+ * @property {boolean} closing the pipeline has heard all of the run's audio and has been asked
+ *   for its last answer: the reading of the beats' sounds it was working out, finished
  * @property {number} fed frames sent to the pipeline
  * @property {number} posted chunks sent to the pipeline
  * @property {number} answered chunks the pipeline has finished with
@@ -191,7 +203,7 @@ worker.onmessage = (event) => {
     if (m.id !== sessionId || !run) return;
     for (const e of /** @type {PipelineEvent[]} */ (m.events)) measurement.apply(shiftEvent(e, run.offset));
     if (measurement.state === 'tracking') run.resumed = false;
-    load = m.load;
+    if (m.load) load = m.load;
     run.answered++;
     finishIfDone(run);
     finishStopping(run);
@@ -269,6 +281,10 @@ async function start() {
         beatOffsetMs: Number(ui.simBe.value),
         gain: Number(ui.simGain.value),
         jitterMs: Number(ui.simJitter.value),
+        amplitude: Number(ui.simAmp.value),
+        // The simulated watch has the lift angle of the settings, so that the amplitude read is
+        // the amplitude set on its slider, whatever the setting.
+        liftAngle: settings.liftAngle,
         seed: Math.floor(Math.random() * 2 ** 31),
       });
       source = simulator;
@@ -367,7 +383,7 @@ async function start() {
  * @returns {Run}
  */
 function newRun(kind, name, duration, sampleRate, escapement, liftAngle) {
-  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
+  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, closing: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
 }
 
 /**
@@ -517,28 +533,43 @@ async function refreshMicrophones() {
 }
 
 /**
+ * Ask the pipeline for its last answer, once: it has heard all of the run's audio, and a
+ * reading of the sounds inside the beats that it was still working out is finished and shown
+ * instead of being dropped. The worker ends its session with that answer, which is counted as a
+ * chunk's is. On the iPhone a reading takes about 1.4 s of computing, so the last numbers can
+ * come that long after the audio ended.
+ * @param {Run} r
+ * @returns {boolean} whether the answer is still to come
+ */
+function awaitLast(r) {
+  if (r.closing) return r.answered < r.posted;
+  r.closing = true;
+  r.posted++;
+  worker.postMessage({ type: 'finish', id: sessionId });
+  return true;
+}
+
+/**
  * A recording's run is finished once its audio has ended and the pipeline has answered every
- * chunk of it.
+ * chunk of it and given its last answer.
  * @param {Run} r
  */
 function finishIfDone(r) {
-  if (!r.ended || r.finished || r.answered < r.posted) return;
+  if (!r.ended || r.finished || r.answered < r.posted || awaitLast(r)) return;
   r.running = false;
   r.finished = true;
-  worker.postMessage({ type: 'stop' });
   wake.want(false);
 }
 
 /**
  * A run stopped with Stop ends once the pipeline has answered every chunk handed to it before
- * then.
+ * then and given its last answer.
  * @param {Run} r
  */
 function finishStopping(r) {
-  if (!r.stopping || r.answered < r.posted) return;
+  if (!r.stopping || r.answered < r.posted || awaitLast(r)) return;
   r.stopping = false;
   sessionId++;
-  worker.postMessage({ type: 'stop' });
 }
 
 function stopPlayer() {
@@ -557,7 +588,9 @@ function stopLive() {
  * reading cover all the audio heard, which is all that a saved recording holds; a run that fits
  * in the length kept then reads exactly as a replay of its saved file. Until 22 November 2026 the
  * answers still on their way were ignored, up to a second of audio or more while an analysis
- * ran. Without `finish`, as after an error or when the analysis cannot keep up, they still are.
+ * ran. Since 26 November the reading of the beats' sounds that was being worked out is finished
+ * and shown as well (see `awaitLast`). Without `finish`, as after an error or when the analysis
+ * cannot keep up, none of this is waited for.
  * @param {boolean} [finish]
  */
 function stop(finish = false) {
@@ -566,9 +599,10 @@ function stop(finish = false) {
   loading = '';
   const r = run;
   // An interrupted microphone has no session whose answers count: they were set aside when the
-  // interruption began.
-  if (finish && r && r.running && !r.interrupted && r.answered < r.posted) {
+  // interruption began. A recording that has reached its end is already giving its last answer.
+  if (finish && r && r.running && !r.interrupted) {
     r.stopping = true;
+    finishStopping(r);
   } else {
     sessionId++;
     worker.postMessage({ type: 'stop' });
@@ -620,19 +654,20 @@ function render() {
   ui.rate.textContent = tracking && r ? formatRate(r.rate) : '—';
   const span = r && r.window ? r.window[1] - r.window[0] : 0;
   ui.rateWhy.textContent = tracking && r && r.rate !== null && r.rateSd !== null ? `±${r.rateSd < 0.1 ? r.rateSd.toFixed(2) : r.rateSd.toFixed(1)} over ${Math.round(span)} s` : '';
-  ui.beatError.textContent = tracking && r ? formatMs(r.beatErrorMs) : '—';
   const escapement = run ? run.escapement : settings.escapement;
-  ui.beatErrorWhy.textContent =
-    escapement === 'coaxial'
-      ? 'not shown: co-axial'
-      : tracking && r && r.rate !== null && r.beatErrorMs === null
-        ? r.irregular
-          ? 'irregular beat'
-          : 'not measurable here'
-        : '';
-  const bph = m.bph || settings.bph;
   // A demo runs with its own watch's lift angle, so the one shown is the run's.
   const lift = run ? run.liftAngle : settings.liftAngle;
+  // Amplitude and beat error both come from the sounds inside the beats, for either
+  // escapement: a number with its scatter, or a dash with the reason.
+  const sounds = soundsReadout(tracking, r, lift, src.running);
+  ui.amplitude.textContent = sounds.amplitude;
+  ui.amplitudeWhy.textContent = sounds.amplitudeNote;
+  ui.beatError.textContent = sounds.beatError;
+  ui.beatErrorWhy.textContent = sounds.beatErrorNote;
+  const hint = liftHint(escapement, lift);
+  ui.liftHint.hidden = hint === null;
+  ui.liftHint.textContent = hint || '';
+  const bph = m.bph || settings.bph;
   const parts = [bph ? `${formatBph(bph)} vph` : 'Beat rate automatic', `lift ${lift}°`, `${settings.averagingSeconds} s window`];
   if (tracking && span > settings.averagingSeconds + 2) parts[2] = `window lengthened to ${Math.round(span)} s`;
   ui.sub.textContent = parts.join(' · ');
@@ -649,13 +684,24 @@ function render() {
   const message = tracking ? 'Waiting for beats' : src.interrupted ? 'Interrupted' : src.running ? 'Listening for a steady beat' : run && (run.posted || run.interruptions) ? 'No lock' : 'Press Start';
   const points = m.points(from, to);
   traceView.set(points, from, to, loading || message);
-  ui.trace.setAttribute(
-    'aria-label',
-    points.length ? `Trace of ${points.filter((p) => p.type === 0).length} ticks and ${points.filter((p) => p.type === 1).length} tocks from ${from.toFixed(0)} to ${to.toFixed(0)} s` : `Trace: ${message}`,
-  );
-  const note = tracking ? averagingNote(r) : '';
+  // Beats the pipeline has not named yet are counted and drawn as beats.
+  const count = (/** @type {import('./ui/model.js').BeatName|null} */ name) => points.filter((p) => p.name === name).length;
+  const unnamed = points.some((p) => p.ok && p.name === null);
+  const named = points.some((p) => p.ok && p.name !== null);
+  const counts = [count('tick') ? `${count('tick')} ticks` : '', count('tock') ? `${count('tock')} tocks` : '', count(null) ? `${count(null)} beats not yet named` : ''].filter(Boolean);
+  ui.trace.setAttribute('aria-label', points.length ? `Trace of ${counts.join(', ')} from ${from.toFixed(0)} to ${to.toFixed(0)} s` : `Trace: ${message}`);
+  setLegend(ui.traceLegend, [
+    ...(named || !unnamed ? [['tick', 'tick'], ['tock', 'tock']] : []),
+    ...(unnamed ? [['beat', 'not yet named']] : []),
+    ['dim', 'low confidence'],
+  ]);
+  const note = tracking ? averagingNote(r, m.tick) : '';
   ui.traceCaption.textContent =
-    'Milliseconds ahead of an ideal clock. A gaining watch climbs; the gap between the lines is the beat error.' +
+    'Milliseconds ahead of an ideal clock. A gaining watch climbs. ' +
+    (escapement === 'coaxial'
+      ? 'Each beat is timed where it is loudest, which in a co-axial is a different sound in the tick and in the tock, so the gap between the two lines is not the beat error.'
+      : "Each beat is timed where it is loudest, so the gap between the two lines is near the beat error but not the same: the beat error is measured from each beat's first sound.") +
+    (unnamed ? ' Both beats are one colour until the app can tell the tick from the tock.' : '') +
     (note ? ` ${note}` : '') +
     (micRun && micRun.interruptions ? ' Gaps are interruptions of the microphone.' : '') +
     ' Touch a dot to read it.';
@@ -675,11 +721,23 @@ function render() {
   ui.levels.textContent = levels.join(' · ');
 
   // Averaged beat.
-  waveView.set(tracking ? m.waveform : null, src.interrupted ? 'Interrupted' : src.running ? 'Shown once locked' : run && run.posted ? 'No lock' : 'Press Start');
+  const wave = tracking ? m.waveform : null;
+  // The bars rest on the amplitude's own sounds, so they go when the amplitude does.
+  const marks = wave && sounds.amplitude !== '—' ? wave.marks : null;
+  waveView.set(wave && { ...wave, marks }, src.interrupted ? 'Interrupted' : src.running ? 'Shown once locked' : run && run.posted ? 'No lock' : 'Press Start', m.tick);
+  setLegend(ui.waveLegend, wave && m.tick === null ? [['beat', 'tick and tock, not yet named']] : [['tick', 'tick'], ['tock', 'tock']]);
+  const first = m.tick === null ? 0 : m.tick;
+  ui.waveform.setAttribute(
+    'aria-label',
+    marks
+      ? `Averaged ${m.tick === null ? 'beats' : 'tick and tock'}; from unlock to lock ${(marks[first].lockMs - marks[first].unlockMs).toFixed(2)} and ${(marks[1 - first].lockMs - marks[1 - first].unlockMs).toFixed(2)} ms`
+      : 'Averaged tick and tock',
+  );
   ui.waveCaption.textContent =
-    tracking && m.waveform
-      ? `Average of ${m.waveform.cycles} tick–tock cycles: sound level above 1.5 kHz around the moment each beat is timed.`
-      : 'Sound level above 1.5 kHz around the moment each beat is timed, averaged over many beats.';
+    (wave
+      ? `Average of ${wave.cycles} tick–tock cycles: sound level above 1.5 kHz around the moment each beat is timed.`
+      : 'Sound level above 1.5 kHz around the moment each beat is timed, averaged over many beats.') +
+    (marks ? " Each bar runs from where a beat's unlock begins to where its lock begins. The amplitude comes from the bars' lengths; the beat error is measured between the two unlocks." : '');
 
   // Source and dock.
   const recordingRun = run && run.kind !== 'simulator' && run.duration !== null;
@@ -761,6 +819,7 @@ function renderPositions(tracking, src) {
     needed: state.needed,
     ready: canSave,
     rateSd: r ? r.rateSd : null,
+    waiting: !!(r && r.sounds && (r.sounds.amplitudeWhy === 'waiting' || r.sounds.beatErrorWhy === 'waiting')),
   });
   // The drawing beside the instruction is of the position to measure next.
   if (ui.positionStepIcon.dataset.position !== (target || '')) {
@@ -792,10 +851,32 @@ function renderPositions(tracking, src) {
   ui.sumSpreadNote.textContent = summary.spreadNote;
   ui.sumBeatError.textContent = summary.beatError;
   ui.sumBeatErrorNote.textContent = summary.beatErrorNote;
+  ui.sumAmplitude.textContent = summary.amplitude;
+  ui.sumAmplitudeNote.textContent = summary.amplitudeNote;
   ui.sumLeftOut.textContent = summary.leftOut;
   ui.sumLeftOut.hidden = !summary.leftOut;
   ui.newLog.toggleAttribute('disabled', count === 0);
   ui.logInfo.textContent = log.started ? `Started ${new Date(log.started).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}. Kept on this device.` : 'The log is kept on this device.';
+}
+
+/**
+ * Set a chart's legend, leaving the page alone when it already says the same.
+ * @param {HTMLElement} legend
+ * @param {string[][]} chips each a colour class of the style sheet and its words
+ */
+function setLegend(legend, chips) {
+  const key = chips.map((chip) => chip.join(':')).join('|');
+  if (legend.dataset.chips === key) return;
+  legend.dataset.chips = key;
+  legend.replaceChildren(
+    ...chips.map(([colour, words]) => {
+      const chip = document.createElement('span');
+      const dot = document.createElement('i');
+      dot.className = colour;
+      chip.append(dot, words);
+      return chip;
+    }),
+  );
 }
 
 function selectedName() {
@@ -826,18 +907,20 @@ function showSimulatorValues() {
   const rate = Number(ui.simRate.value);
   out('sim-rate-out', `${formatRate(rate)} s/d`);
   out('sim-be-out', `${Number(ui.simBe.value).toFixed(2)} ms`);
+  out('sim-amp-out', `${Number(ui.simAmp.value).toFixed(0)}°`);
   const gain = Number(ui.simGain.value);
   out('sim-gain-out', gain === 0 ? 'silent' : `${gain.toFixed(2)}×`);
   const jitter = Number(ui.simJitter.value);
   out('sim-jitter-out', jitter === 0 ? 'none' : `${jitter.toFixed(1)} ms`);
 }
 showSimulatorValues();
-for (const input of [ui.simRate, ui.simBe, ui.simGain, ui.simJitter]) {
+for (const input of [ui.simRate, ui.simBe, ui.simAmp, ui.simGain, ui.simJitter]) {
   input.addEventListener('input', () => {
     showSimulatorValues();
     if (simulator && run && run.running && run.kind === 'simulator') {
       simulator.rate = Number(ui.simRate.value);
       simulator.beatOffsetMs = Number(ui.simBe.value);
+      simulator.amplitude = Number(ui.simAmp.value);
       simulator.gain = Number(ui.simGain.value);
       simulator.jitterMs = Number(ui.simJitter.value);
     }
@@ -1097,14 +1180,25 @@ ui.settingsForm.addEventListener('change', () => {
   // A lift angle set now is the one meant from here on: it replaces a demo's own while the demo
   // runs, and it is what the line under the readings shows once a run is over.
   if (run && settings.liftAngle !== before.liftAngle) run.liftAngle = settings.liftAngle;
-  if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
+  // The simulator's watch follows the lift angle set, which moves the sounds inside its beats.
+  // Its beats from before the change would be read with the new angle for up to a minute, at
+  // amplitudes the watch never had (186 degrees for half a minute after a change from 52 to 36
+  // degrees with 270 set), so it starts again instead, as it does for a new beat rate. A restart
+  // starts the source of the tab that is open, so it is made only while that is the simulator's.
+  const simulatorLift = !!run && run.kind === 'simulator' && tab === 'simulator' && settings.liftAngle !== before.liftAngle;
+  if (settings.bph !== before.bph || settings.humHz !== before.humHz || simulatorLift) {
     restart();
   } else if (run && run.running) {
     /** @type {{averagingSeconds?: number, escapement?: Escapement, liftAngle?: number}} */
     const changes = {};
     if (settings.averagingSeconds !== before.averagingSeconds) changes.averagingSeconds = settings.averagingSeconds;
     // The sounds inside the beats are read again with the new lift angle.
-    if (settings.liftAngle !== before.liftAngle) changes.liftAngle = settings.liftAngle;
+    if (settings.liftAngle !== before.liftAngle) {
+      changes.liftAngle = settings.liftAngle;
+      // A simulator left running under another tab is not started again: its watch takes the
+      // new angle from its next beat, and the readings come right as the earlier beats age out.
+      if (simulator && run.kind === 'simulator') simulator.liftAngle = settings.liftAngle;
+    }
     if (settings.escapement !== before.escapement) {
       changes.escapement = settings.escapement;
       run.escapement = settings.escapement;

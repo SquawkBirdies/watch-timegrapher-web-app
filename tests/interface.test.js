@@ -7,11 +7,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Pipeline } from '../js/dsp/pipeline.js';
-import { synthesizeWatch, WatchStream } from '../js/audio/simulator.js';
+import { synthesizeWatch, WatchStream, liftSeconds, SIMULATED_LIFT_ANGLE } from '../js/audio/simulator.js';
+import { amplitudeOf } from '../js/dsp/amplitude.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, stateText, irregularWarning } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
+import { FIRST_READING_SECONDS } from '../js/dsp/soundstage.js';
+import { tickByGap, tickByLift, NAME_SD } from '../js/dsp/names.js';
 import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 import { readiness } from '../js/ui/positions.js';
@@ -72,15 +75,25 @@ test('the averaging window and the escapement can change while measuring', () =>
   const before = /** @type {ReadingsEvent[]} */ (first.filter((e) => e.type === 'readings'));
   const a = before[before.length - 1];
   assert.ok(a.beatErrorMs !== null && Math.abs(a.beatErrorMs - 0.4) < 0.05);
+  // As a Swiss lever its tick was named at the lock, from the gap between its timed beats.
+  assert.ok(before.filter((e) => e.window !== null).every((e) => e.tick === a.tick) && a.tick !== null, 'named from the lock on');
   pipeline.setOptions({ averagingSeconds: 10, escapement: 'coaxial' });
   const after = /** @type {ReadingsEvent[]} */ (run(pipeline, next, 5).filter((e) => e.type === 'readings'));
   const b = after[after.length - 1];
   const span = /** @type {[number, number]} */ (b.window)[1] - /** @type {[number, number]} */ (b.window)[0];
   assert.ok(span > 8.5 && span <= 10.5, `window ${span.toFixed(1)} s after the change`);
   assert.equal(b.beatErrorMs, null, 'co-axial hides the beat error');
+  // A co-axial's tick is named by another rule, from an amplitude, which this pipeline has no
+  // lift angle to read: the beats lose their names, and setting the escapement back names
+  // them again as before.
+  assert.ok(after.every((e) => e.tick === null), 'no names as a co-axial');
+  pipeline.setOptions({ escapement: 'lever' });
+  const again = /** @type {ReadingsEvent[]} */ (run(pipeline, next, 1.5).filter((e) => e.type === 'readings'));
+  assert.ok(again.length > 0 && again.every((e) => e.tick === a.tick), 'the same tick as a lever again');
+  pipeline.setOptions({ escapement: 'coaxial' });
   assert.ok(b.rate !== null && Math.abs(b.rate - 6) < 0.5);
   pipeline.setOptions({ averagingSeconds: 60 });
-  const longer = /** @type {ReadingsEvent[]} */ (run(pipeline, next, 25).filter((e) => e.type === 'readings'));
+  const longer = /** @type {ReadingsEvent[]} */ (run(pipeline, next, 23.5).filter((e) => e.type === 'readings'));
   const c = longer[longer.length - 1];
   const spanC = /** @type {[number, number]} */ (c.window)[1] - /** @type {[number, number]} */ (c.window)[0];
   assert.ok(spanC > 45, `a 60 s window reaches back past the 40 s history: ${spanC.toFixed(1)} s`);
@@ -110,20 +123,93 @@ test('the lift angle reaches the stage that reads the sounds inside the beats, w
   assert.deepEqual(pipeline.push([new Float32Array(4096)]), []);
 });
 
-test('the fine print says what the stage costs, and whether its latest reading may be shown', () => {
+test('the fine print says what the stage costs, and gives the pipeline\'s own reason when a reading is not shown', () => {
   /** @type {import('../js/dsp/soundstage.js').StageLoad} */
   const load = { seconds: 7.5, readings: 3, lastSeconds: 3.14, lastAudioSeconds: 8.4, longestStepSeconds: 0.01 };
   /** @param {Partial<import('../js/dsp/soundstage.js').SoundsReport>} over @param {string|null} [why] */
   const sounds = (over, why = null) => /** @type {import('../js/dsp/soundstage.js').SoundsReport} */ ({ amplitude: null, beatErrorMs: null, amplitudeWhy: null, beatErrorWhy: null, detail: { why }, ...over });
   assert.equal(stageNote(null, null), '', 'no stage');
   assert.equal(stageNote({ ...load, readings: 0, lastSeconds: null, lastAudioSeconds: null }, sounds({ detail: null })), '', 'no reading yet');
-  assert.equal(stageNote(load, null), 'amplitude read 3 times, last in 3.1 s of computing over 8.4 s');
-  assert.equal(stageNote({ ...load, readings: 1 }, sounds({ amplitude: 288, beatErrorMs: 0.3 })), 'amplitude read 1 time, last in 3.1 s of computing over 8.4 s, both to show');
-  assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'irregular' })), /amplitude to show, beat error held back \(irregular\)$/);
-  // The placement check holds only the beat error back.
-  assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'placement' })), /amplitude to show, beat error held back \(placement\)$/);
-  assert.match(stageNote(load, sounds({ amplitudeWhy: 'failing', beatErrorWhy: 'failing' })), /, held back \(failing\)$/);
+  assert.equal(stageNote(load, null), 'beat sounds read 3 times, last in 3.1 s of computing over 8.4 s');
+  // Both on the readout: nothing to add.
+  assert.equal(stageNote({ ...load, readings: 1 }, sounds({ amplitude: 288, beatErrorMs: 0.3 })), 'beat sounds read 1 time, last in 3.1 s of computing over 8.4 s');
+  assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'irregular' })), / s, beat error held back \(irregular\)$/);
+  // The placement check can hold either reading back by itself.
+  assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'placement' })), / s, beat error held back \(placement\)$/);
+  assert.match(stageNote(load, sounds({ beatErrorMs: 0.3, amplitudeWhy: 'placement' })), / s, amplitude held back \(placement\)$/);
+  assert.match(stageNote(load, sounds({ amplitudeWhy: 'failing', beatErrorWhy: 'failing' })), /, both held back \(failing\)$/);
   assert.match(stageNote(load, sounds({ amplitudeWhy: 'no-pair', beatErrorWhy: 'no-pair' }, 'no-pair')), /, no reading \(no-pair\)$/);
+});
+
+test('the readout gives the amplitude and the beat error from the sounds inside the beats, each with its scatter, or a dash and the reason in plain words', () => {
+  /** @param {Partial<import('../js/dsp/soundstage.js').SoundsReport>} over @returns {ReadingsEvent} */
+  const readings = (over) => /** @type {any} */ ({ type: 'readings', t: 60, window: [40, 60], rate: 1, rateSd: 0.1, sounds: { liftAngle: 36, amplitude: null, amplitudeSd: null, amplitudeWhy: null, beatErrorMs: null, beatOffsetMs: null, beatErrorSd: null, beatErrorWhy: null, liftMs: null, liftSd: null, window: null, detail: null, ...over } });
+  const dash = { amplitude: '—', amplitudeNote: '', beatError: '—', beatErrorNote: '' };
+  // Not locked, no readings, or a pipeline that was given no lift angle: dashes and nothing said.
+  assert.deepEqual(soundsReadout(false, readings({ amplitude: 288, amplitudeSd: 1 }), 36), dash);
+  assert.deepEqual(soundsReadout(true, null, 36), dash);
+  assert.deepEqual(soundsReadout(true, /** @type {any} */ ({ ...readings({}), sounds: null }), 36), dash);
+  // Both shown: whole degrees and hundredths of a millisecond, each with its scatter and the
+  // stretch of beats it rests on. The Omega's capture after 50 s of beats.
+  const both = readings({ amplitude: 288.42, amplitudeSd: 1.14, beatErrorMs: 0.3156, beatOffsetMs: -0.3156, beatErrorSd: 0.0443, window: [8.14, 58.63] });
+  assert.deepEqual(soundsReadout(true, both, 36), { amplitude: '288', amplitudeNote: '±1.1° over 50 s', beatError: '0.32', beatErrorNote: '±0.04 over 50 s' });
+  // A scatter is never shown as nothing: at least one unit of the last digit.
+  const tight = soundsReadout(true, readings({ amplitude: 269.6, amplitudeSd: 0.02, beatErrorMs: 0.4934, beatErrorSd: 0.004, window: [8, 38.4] }), 36);
+  assert.deepEqual([tight.amplitude, tight.amplitudeNote, tight.beatError, tight.beatErrorNote], ['270', '±0.1° over 30 s', '0.49', '±0.01 over 30 s']);
+  // Waiting for beats; once the source has stopped, they will not come.
+  const waiting = readings({ amplitudeWhy: 'waiting', beatErrorWhy: 'waiting' });
+  assert.deepEqual(soundsReadout(true, waiting, 36), { amplitude: '—', amplitudeNote: 'needs 30 s of beats', beatError: '—', beatErrorNote: 'needs 30 s of beats' });
+  assert.equal(soundsReadout(true, waiting, 36, false).amplitudeNote, 'needed 30 s of beats');
+  assert.equal(BEATS_NEEDED_SECONDS, FIRST_READING_SECONDS, 'the words give the stage\'s own figure');
+  // An irregular watch keeps its amplitude and loses its beat error.
+  const irregular = soundsReadout(true, readings({ amplitude: 269.7, amplitudeSd: 0.84, beatErrorWhy: 'irregular', window: [8, 48] }), 36);
+  assert.deepEqual(irregular, { amplitude: '270', amplitudeNote: '±0.8° over 40 s', beatError: '—', beatErrorNote: 'irregular beat' });
+  // Every reason the pipeline can give has words, and they are short enough for a narrow column.
+  /** @type {import('../js/dsp/soundstage.js').StageWhy[]} */
+  const reasons = ['waiting', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound', 'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement'];
+  for (const why of reasons) assert.ok(whyWords(why).length > 5 && whyWords(why).length <= 24 && !whyWords(why).includes('-'), `${why}: "${whyWords(why)}"`);
+  assert.equal(whyWords(null), '');
+  assert.equal(whyWords('lift-range'), 'check the lift angle');
+  assert.equal(whyWords('halfway'), 'check the beat rate');
+  assert.equal(whyWords('averaged'), 'beats too faint');
+  // An amplitude made with another lift angle than the one now set is not shown: after a run
+  // has ended, a new setting leaves a dash. The beat error does not depend on the angle.
+  assert.deepEqual(soundsReadout(true, both, 38, false), { amplitude: '—', amplitudeNote: 'lift angle changed', beatError: '0.32', beatErrorNote: '±0.04 over 50 s' });
+  // The same in a line of text, as the audio diagnostic gives it.
+  assert.deepEqual(soundsInWords(soundsReadout(true, both, 36)), { amplitude: 'amplitude 288° ±1.1° over 50 s', beatError: 'beat error 0.32 ms ±0.04 over 50 s' });
+  assert.deepEqual(soundsInWords(soundsReadout(true, waiting, 36, false)), { amplitude: 'amplitude — (needed 30 s of beats)', beatError: 'beat error — (needed 30 s of beats)' });
+  assert.deepEqual(soundsInWords(irregular), { amplitude: 'amplitude 270° ±0.8° over 40 s', beatError: 'beat error — (irregular beat)' });
+  assert.deepEqual(soundsInWords(dash), { amplitude: 'amplitude —', beatError: 'beat error —' });
+});
+
+test('a co-axial set with a Swiss lever\'s lift angle is told so, with the two angles known for Omega calibres', () => {
+  assert.equal(liftHint('lever', 52), null);
+  assert.equal(liftHint('coaxial', 36), null);
+  assert.equal(liftHint('coaxial', 38), null);
+  assert.equal(liftHint('coaxial', COAXIAL_LIFT_LIMIT), null);
+  const hint = liftHint('coaxial', 52);
+  assert.ok(hint && hint.startsWith('The lift angle is set to 52°') && hint.includes('38° for its calibres 8520 and 8521') && hint.includes('36° is reported for the 3861'), hint || 'no hint');
+  // Left at 52 degrees, the Omega's 288 degrees would come out as 416, which is not believable.
+  assert.ok((288 * 52) / 36 > 330);
+});
+
+test('the tick is named only by a difference more than three times its uncertainty: the longer gap after it on a lever, the longer time from unlock to lock on a co-axial', () => {
+  assert.equal(NAME_SD, 3);
+  // The beats of type 1 fall 0.3 ms late of midway: the longer gap follows type 0.
+  assert.equal(tickByGap(0.3, 0.01), 0);
+  assert.equal(tickByGap(-0.3, 0.01), 1);
+  assert.equal(tickByGap(0.03, 0.01), null, 'three times is not more than three times');
+  assert.equal(tickByGap(0.031, 0.01), 0);
+  assert.equal(tickByGap(0, 0), null, 'a watch in perfect beat has no tick by this rule');
+  assert.equal(tickByGap(0.02, NaN), null);
+  // The Omega 3861: 6.92 and 6.33 ms, each to about 0.04 ms.
+  assert.equal(tickByLift([6.92, 6.33], [0.03, 0.04]), 0);
+  assert.equal(tickByLift([6.31, 6.91], [0.04, 0.03]), 1);
+  // The ETA 2836-2: 7.49 and 7.45 ms, within their scatter of each other.
+  assert.equal(tickByLift([7.49, 7.45], [0.01, 0.02]), null);
+  assert.equal(beatName(0, null), null);
+  assert.equal(beatName(1, 1), 'tick');
+  assert.equal(beatName(0, 1), 'tock');
 });
 
 test('a lock sends the averaged tick and tock, each peaking at its timestamp', () => {
@@ -150,15 +236,60 @@ test('a lock sends the averaged tick and tock, each peaking at its timestamp', (
 // ---- The simulator ---------------------------------------------------------------------------
 
 test('the endless simulator gives the same audio whatever the chunk sizes', () => {
-  for (const jitterMs of [0, 3]) {
-    const a = new WatchStream({ bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7, jitterMs });
-    const b = new WatchStream({ bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7, jitterMs });
+  // The last case has its first sound 22 ms before its last, the earliest the app's simulator
+  // can put it: an amplitude of 150 degrees at 18,000 vph.
+  for (const [jitterMs, more] of /** @type {[number, {bph?: number, amplitude?: number}][]} */ ([[0, {}], [3, {}], [3, { bph: 18000, amplitude: 150 }]])) {
+    const options = { bph: 21600, rate: 5, beatOffsetMs: 0.5, gain: 1.5, seed: 7, jitterMs, ...more };
+    const a = new WatchStream(options);
+    const b = new WatchStream(options);
     const whole = a.next(60000)[0];
     const parts = [];
     for (const n of [1, 999, 12000, 30000, 17000]) parts.push(...b.next(n)[0]);
     assert.equal(parts.length, whole.length);
-    for (let i = 0; i < whole.length; i++) assert.equal(parts[i], whole[i], `${jitterMs} ms: sample ${i}`);
+    for (let i = 0; i < whole.length; i++) assert.equal(parts[i], whole[i], `${jitterMs} ms, ${JSON.stringify(more)}: sample ${i}`);
   }
+});
+
+test('the simulator\'s amplitude sets how long before its lock each beat\'s unlock comes, for the lift angle it is given, and the app reads that amplitude back at that angle', () => {
+  assert.equal(SIMULATED_LIFT_ANGLE, DEFAULTS.liftAngle, 'without one, the lift angle the app starts with');
+  // The formula the pipeline reads the amplitude by, the other way round.
+  for (const bph of [18000, 21600, 28800, 36000]) {
+    for (const amplitude of [150, 270, 330]) {
+      assert.ok(Math.abs(amplitudeOf(52, bph, liftSeconds(amplitude, bph) * 1e3) - amplitude) < 1e-9, `${bph} vph, ${amplitude} degrees`);
+      for (const lift of [30, 36, 70]) assert.ok(Math.abs(amplitudeOf(lift, bph, liftSeconds(amplitude, bph, lift) * 1e3) - amplitude) < 1e-9, `${bph} vph, ${amplitude} degrees, lift ${lift}`);
+    }
+  }
+  assert.ok(Math.abs(liftSeconds(270, 28800) * 1e3 - 7.675) < 0.001 && Math.abs(liftSeconds(270, 21600) * 1e3 - 10.233) < 0.001);
+  // Without an amplitude the sounds stay 7 ms apart whatever the beat rate, as before.
+  assert.equal(new WatchStream({ bph: 21600 }).unlockSeconds(), 0.007);
+  // The app gives its simulator the lift angle of the settings, and a change of it applies from
+  // the next beat: the unlock comes sooner before the lock for a smaller angle.
+  const follows = new WatchStream({ bph: 28800, amplitude: 270, liftAngle: 36 });
+  assert.equal(follows.unlockSeconds(), liftSeconds(270, 28800, 36));
+  assert.ok(Math.abs(follows.unlockSeconds() * 1e3 - 5.309) < 0.001);
+  follows.liftAngle = 52;
+  assert.equal(follows.unlockSeconds(), liftSeconds(270, 28800));
+  // 21,600 vph with the lift angle set to 60 degrees, where 7 ms would read 455 degrees and
+  // show a dash: 270 degrees, 0.4 ms out of beat, at the loudness the app's simulator starts
+  // with. The simulated watch and the pipeline are given the same angle, as in the app.
+  const sim = new WatchStream({ bph: 21600, rate: 8, beatOffsetMs: 0.4, gain: 3, amplitude: 270, liftAngle: 60, seed: 3 });
+  const pipeline = new Pipeline(sim.sampleRate, 1, { liftAngle: 60, sounds: { share: Infinity } });
+  const readings = /** @type {ReadingsEvent[]} */ (run(pipeline, (n) => sim.next(n), 45).filter((e) => e.type === 'readings' && e.window !== null));
+  const made = readings.filter((e) => e.sounds && e.sounds.detail !== null);
+  assert.ok(made.length > 3, 'the sounds were read');
+  for (const e of made) {
+    const s = /** @type {NonNullable<ReadingsEvent['sounds']>} */ (e.sounds);
+    assert.ok(s.amplitude !== null && s.beatErrorMs !== null, `shown at ${e.t.toFixed(1)} s: ${s.amplitudeWhy}, ${s.beatErrorWhy}`);
+    assert.ok(Math.abs(s.amplitude - 270) <= 2, `amplitude ${s.amplitude.toFixed(1)}`);
+    assert.ok(Math.abs(s.beatErrorMs - 0.4) <= 0.05, `beat error ${s.beatErrorMs.toFixed(3)} ms`);
+  }
+  // Read at 52 degrees, a watch whose lift angle is 60 gives 52/60 of its swing: an amplitude is
+  // only as right as the lift angle. That is why the app's simulator takes the angle set. Its
+  // beats from before a change of the setting would be read this way for up to a minute, so
+  // the app starts the simulator again instead.
+  pipeline.setOptions({ liftAngle: 52 });
+  const after = /** @type {ReadingsEvent[]} */ (run(pipeline, (n) => sim.next(n), 1.5).filter((e) => e.type === 'readings')).pop();
+  assert.ok(after && after.sounds && after.sounds.amplitude !== null && Math.abs(after.sounds.amplitude - (270 * 52) / 60) <= 2, `at 52 degrees ${after?.sounds?.amplitude}`);
 });
 
 test('beat variability set while the simulator runs brings the irregular-beat warning within seconds, and taking it away clears it', () => {
@@ -378,6 +509,53 @@ test('a lock that carries on a lost one keeps its stretch of the trace, so the d
   assert.equal(m.episodes.length, 2);
 });
 
+test('the trace\'s beats have no names until the readings give them, keep them while the lock carries on, and start without them at a new lock', () => {
+  const m = new Measurement();
+  m.start();
+  /** @param {number} t @param {0|1|null} tick @returns {ReadingsEvent} */
+  const readings = (t, tick) => /** @type {any} */ ({ type: 'readings', t, window: [t - 5, t], windowStart: t - 5, windowSeconds: 20, signal: { z: [30, 30], cycles: [1, 1] }, rate: 1, rateSd: 0.1, tick, sounds: null });
+  const blank = /** @type {ReadingsEvent} */ (/** @type {any} */ ({ type: 'readings', t: 14, window: null, tick: null, sounds: null }));
+  assert.equal(m.tick, null, 'nothing to name before a lock');
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 18000, cyclesAveraged: [1, 1], t: 8 });
+  m.apply({ type: 'beats', beats: [beat(0, 1, 0), beat(1, 1.2, 1), beat(2, 1.4, 0), beat(3, 1.6, 1, false)], replaceFrom: 1 });
+  m.apply(readings(9, null));
+  assert.deepEqual(m.points().map((p) => p.name), [null, null, null, null], 'one colour for both beats');
+  assert.match(guidance(m, { running: true, finished: false }), /^Clear beats\.$/);
+  // The pipeline names its second kind of beat the tick: every dot of the stretch takes its
+  // name, those already drawn too.
+  m.apply(readings(10, 1));
+  assert.equal(m.tick, 1);
+  assert.deepEqual(m.points().map((p) => p.name), ['tock', 'tick', 'tock', 'tick']);
+  assert.equal(/** @type {import('../js/ui/model.js').TracePoint} */ (m.lastPoint()).name, 'tock');
+  assert.match(guidance(m, { running: true, finished: false }), /^Clear t[io]cks\.$/);
+  // The lock is lost: the readings blank, the dots drawn keep their names.
+  m.apply({ type: 'status', state: 'listening', reason: 'lost', bph: null, cyclesAveraged: null, t: 14 });
+  m.apply(blank);
+  assert.deepEqual(m.points().map((p) => p.name), ['tock', 'tick', 'tock', 'tick']);
+  // A lock that carries on is the same stretch, with the same names, before its first reading.
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 18000, cyclesAveraged: [1, 1], t: 20, continues: true });
+  m.apply({ type: 'beats', beats: [beat(90, 19, 0), beat(91, 19.2, 1)], replaceFrom: 18 });
+  assert.equal(m.episodes.length, 1);
+  assert.deepEqual(m.points().slice(4).map((p) => p.name), ['tock', 'tick']);
+  m.apply(readings(21, 1));
+  // A lock that does not carry on numbers its beats afresh, and waits for names of its own.
+  m.apply({ type: 'status', state: 'listening', reason: 'lost', bph: null, cyclesAveraged: null, t: 30 });
+  m.apply({ type: 'status', state: 'tracking', reason: 'locked', bph: 18000, cyclesAveraged: [1, 1], t: 45 });
+  m.apply({ type: 'beats', beats: [beat(0, 44, 0), beat(1, 44.2, 1)], replaceFrom: 44 });
+  assert.equal(m.episodes.length, 2);
+  assert.equal(m.tick, null);
+  assert.deepEqual(m.points().map((p) => p.name), ['tock', 'tick', 'tock', 'tick', 'tock', 'tick', null, null]);
+  m.apply(readings(46, 0));
+  assert.deepEqual(m.points().slice(6).map((p) => p.name), ['tick', 'tock']);
+  // The escapement setting is changed: the pipeline takes the names back until its other rule
+  // gives them, and the stretch on screen follows.
+  m.apply(readings(47, null));
+  assert.deepEqual(m.points().slice(6).map((p) => p.name), [null, null]);
+  assert.deepEqual(m.points().slice(0, 6).map((p) => p.name), ['tock', 'tick', 'tock', 'tick', 'tock', 'tick'], 'an earlier stretch keeps its own');
+  // Moved to the run's timeline after an interruption, a reading keeps its names.
+  assert.equal(/** @type {ReadingsEvent} */ (shiftEvent(readings(10, 1), 30)).tick, 1);
+});
+
 test('the vertical range ignores stray points and never shrinks below 1 ms', () => {
   const pts = Array.from({ length: 200 }, (_, i) => ({ t: i, y: 0.001 * i, type: /** @type {0|1} */ (0), ok: true, cycles: 1 }));
   pts.push({ t: 300, y: 50, type: 0, ok: true, cycles: 1 });
@@ -410,7 +588,13 @@ test('the signal meter judges the better-timed beat type and names the fainter o
   const faint = signalLevel(readings([null, 5], [null, 8]));
   assert.ok(faint && faint.level === 'faint' && faint.cycles === 8 && faint.fraction < 0.1);
   assert.equal(signalLevel(readings([null, null], [null, null])), null);
-  assert.equal(averagingNote(readings([10, 14], [1, 2])), 'Tock dots average 2 cycles.');
+  // The second kind of beat is the tock when the first is the tick, the tick when the pipeline
+  // says so, and neither until it has said.
+  assert.equal(averagingNote(readings([10, 14], [1, 2]), 0), 'Tock dots average 2 cycles.');
+  assert.equal(averagingNote(readings([10, 14], [1, 2]), 1), 'Tick dots average 2 cycles.');
+  assert.equal(averagingNote(readings([10, 14], [1, 2])), 'Every other dot averages 2 cycles.');
+  assert.equal(averagingNote(readings([10, 14], [3, 2]), 1), 'Tick dots average 2 cycles. Tock dots average 3 cycles.');
+  assert.equal(averagingNote(readings([10, 14], [3, 2])), "The dots of one beat average 3 cycles, the other's 2.");
   assert.equal(averagingNote(readings([5, 5], [4, 4])), 'Each dot averages 4 cycles.');
   assert.equal(averagingNote(readings([40, 30], [1, 1])), '');
   assert.equal(irregularWarning(null), null);
@@ -429,6 +613,16 @@ test('the signal meter judges the better-timed beat type and names the fainter o
   m.apply(readings([null, 5], [null, 8]));
   assert.match(guidance(m, { running: true, finished: false }), /each dot averages 8 cycles \(2\.7 s\)/);
   assert.equal(stateText(m, { running: false, finished: true }), 'End of recording');
+  // The fainter beat is named once the pipeline has named the tick, and until then it is the
+  // other beat.
+  m.apply({ ...readings([30, 12], [1, 3]), tick: null });
+  assert.equal(guidance(m, { running: true, finished: false }), 'Clear beats. Every other beat is fainter and is averaged over 3 cycles.');
+  m.apply({ ...readings([30, 12], [1, 3]), tick: 1 });
+  assert.equal(guidance(m, { running: true, finished: false }), 'Clear tocks. The ticks are fainter and are averaged over 3 cycles.');
+  m.apply({ ...readings([5, 6], [4, 8]), tick: null });
+  assert.equal(guidance(m, { running: true, finished: false }), "Faint beats: the dots of one beat average 4 cycles (1.3 s) and the other's 8. Firmer contact with the case would help.");
+  m.apply({ ...readings([5, 6], [4, 8]), tick: 0 });
+  assert.equal(guidance(m, { running: true, finished: false }), 'Faint beats: tick dots average 4 cycles (1.3 s) and tock dots 8. Firmer contact with the case would help.');
 });
 
 test('stored settings are checked, and anything invalid falls back to the default', () => {
