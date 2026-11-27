@@ -120,6 +120,8 @@ test('the fine print says what the stage costs, and whether its latest reading m
   assert.equal(stageNote(load, null), 'amplitude read 3 times, last in 3.1 s of computing over 8.4 s');
   assert.equal(stageNote({ ...load, readings: 1 }, sounds({ amplitude: 288, beatErrorMs: 0.3 })), 'amplitude read 1 time, last in 3.1 s of computing over 8.4 s, both to show');
   assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'irregular' })), /amplitude to show, beat error held back \(irregular\)$/);
+  // The placement check holds only the beat error back.
+  assert.match(stageNote(load, sounds({ amplitude: 288, beatErrorWhy: 'placement' })), /amplitude to show, beat error held back \(placement\)$/);
   assert.match(stageNote(load, sounds({ amplitudeWhy: 'failing', beatErrorWhy: 'failing' })), /, held back \(failing\)$/);
   assert.match(stageNote(load, sounds({ amplitudeWhy: 'no-pair', beatErrorWhy: 'no-pair' }, 'no-pair')), /, no reading \(no-pair\)$/);
 });

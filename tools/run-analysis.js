@@ -1,19 +1,21 @@
 // Command-line check:
-//   node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle] [lineUp] [resamples]
+//   node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle] [lineUp] [resamples] [placement]
 // Prints the readings the offline pipeline produces for a recording. With a lift angle in
 // degrees it also prints what the sounds inside each beat give: the beat error from the unlocks
 // and the amplitude, with their scatter over the resamples and whether each may be shown. Give
 // 0 for endSeconds to read to the end, and 0 for bph to have the beat rate detected. lineUp is
 // `moved` (the default: beats are lined up again on the sounds whose 10 s blocks show them
 // moving), `always` or `never`; resamples is 200 unless given, and 0 gives the reading alone.
+// placement is `check` (the default: the beat error is read a second time with every beat on the
+// trend of its timestamps, and the difference added to its scatter) or `none`.
 
 import { readWav } from '../tests/helpers/wav.js';
 import { analyze } from '../js/dsp/offline.js';
 import { MIN_BEATS, BLOCK_SECONDS, MAX_SHIFT_SCATTER_MS } from '../js/dsp/amplitude.js';
 
-const [path, start, end, bph, liftAngle, lineUp, resamples] = process.argv.slice(2);
+const [path, start, end, bph, liftAngle, lineUp, resamples, placement] = process.argv.slice(2);
 if (!path || (lineUp && !['moved', 'always', 'never'].includes(lineUp))) {
-  console.error('usage: node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle] [moved|always|never] [resamples]');
+  console.error('usage: node tools/run-analysis.js <file.wav> [startSeconds] [endSeconds] [bph] [liftAngle] [moved|always|never] [resamples] [check|none]');
   process.exit(1);
 }
 
@@ -45,6 +47,8 @@ function describeSounds(s) {
     irregular: 'the watch runs irregularly',
     halfway: 'a beat lies halfway between the tick and the tock, so the beat rate is half the watch\'s own',
     scatter: 'the resamples scatter too far',
+    unplaced: 'with the beats on the trend of their timestamps the sounds were not found',
+    placement: 'it moves too far with the beats on the trend of their timestamps',
   };
   if (s.beats && s.weights && s.timestampGapMs !== null) {
     lines.push(`  ${s.counts[0]} ticks and ${s.counts[1]} tocks averaged; the tocks' timestamps ${signed(s.timestampGapMs, 3)} ms from midway; believable unlock to lock ${lo.toFixed(1)} to ${hi.toFixed(1)} ms`);
@@ -74,6 +78,12 @@ function describeSounds(s) {
   /** @param {import('../js/dsp/amplitude.js').Held|null} why */
   const back = (why) => (why === null ? '' : `  [held back: ${held[why]}]`);
   lines.push(`  beat error from the unlocks ${Math.abs(s.unlockGapMs).toFixed(2)}${pm(sd?.unlockGapMs, 2)} ms (the tock's unlock ${signed(s.unlockGapMs, 3)} ms from midway)${back(s.beatErrorHeld)}`);
+  const placed = s.placement;
+  if (placed && placed.unlockGapMs !== null && placed.differenceMs !== null && sd) {
+    lines.push(`    with the beats on the trend of their timestamps: ${signed(placed.unlockGapMs, 3)} ms, ${signed(-placed.differenceMs, 3)} ms from the reading; scatter ${placed.resampledScatterMs.toFixed(3)} ms over the resamples, ${sd.unlockGapMs.toFixed(3)} ms with that difference`);
+  } else if (placed && placed.why !== null) {
+    lines.push(`    with the beats on the trend of their timestamps: no reading (${reasons[placed.why]})`);
+  }
   lines.push(`  gap between the locks ${signed(s.lockGapMs, 2)}${pm(sd?.lockGapMs, 2)} ms`);
   lines.push(`  unlock to lock: tick ${s.liftMs[0].toFixed(2)}${pm(sd?.liftMs[0], 2)} ms, tock ${s.liftMs[1].toFixed(2)}${pm(sd?.liftMs[1], 2)} ms, ratio ${(s.liftMs[0] / s.liftMs[1]).toFixed(3)}`);
   lines.push(`  amplitude ${s.amplitude.toFixed(0)}${pm(sd?.amplitude, 0)} degrees (tick alone ${s.amplitudes[0].toFixed(0)}, tock alone ${s.amplitudes[1].toFixed(0)})${back(s.amplitudeHeld)}`);
@@ -92,7 +102,7 @@ const r = analyze(wav.channels, wav.sampleRate, {
   endSeconds: Number(end) ? Number(end) : undefined,
   bph: Number(bph) ? Number(bph) : undefined,
   liftAngle: Number(liftAngle) ? Number(liftAngle) : undefined,
-  sounds: { lineUp: /** @type {'moved'|'always'|'never'|undefined} */ (lineUp || undefined), resamples: resamples === undefined ? undefined : Number(resamples) },
+  sounds: { lineUp: /** @type {'moved'|'always'|'never'|undefined} */ (lineUp || undefined), resamples: resamples === undefined ? undefined : Number(resamples), placementCheck: placement !== 'none' },
 });
 const elapsed = (performance.now() - t0) / 1000;
 for (const a of r.acquisition) console.log(`  candidate ${a.bph} bph: best ${a.ppm.toFixed(1)} ppm, stat ${a.stat.toFixed(1)}, z ${a.z.toFixed(1)}, second cluster z ${a.secondZ.toFixed(1)}`);

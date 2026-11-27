@@ -99,6 +99,10 @@ function assertSameReading(report, s, what) {
   same(d.amplitudeSd, s.scatter.amplitude, 'its scatter');
   same(d.beatOffsetMs, s.unlockGapMs, 'gap between the unlocks');
   same(d.beatErrorSd, s.scatter.unlockGapMs, 'its scatter');
+  // The placement check's second reading, from the beats cut out on the trend when the reading
+  // started: the difference it found, or none when the check was left out.
+  if (s.placement && s.placement.differenceMs !== null) same(d.placementMs, s.placement.differenceMs, 'the difference with the beats on the trend');
+  else assert.equal(d.placementMs, null, what);
   same(/** @type {[number, number]} */ (d.liftMs)[0], s.liftMs[0], 'tick unlock to lock');
   same(/** @type {[number, number]} */ (d.liftMs)[1], s.liftMs[1], 'tock unlock to lock');
   assert.equal(d.failing, s.failing, what);
@@ -130,6 +134,10 @@ test('the stage shows nothing until each beat type has 30 s of beats, then reads
     assert.ok(report.liftMs && report.liftSd && report.liftMs.every((v) => Math.abs(v - 7.4) < 0.03), `unlock to lock ${report.liftMs}`);
     assert.equal(report.beatErrorMs, Math.abs(/** @type {number} */ (report.beatOffsetMs)));
     assert.ok(/** @type {number} */ (report.amplitudeSd) > 0 && /** @type {number} */ (report.beatErrorSd) > 0);
+    // The placement check is made in real time too. This watch's beats fall anywhere within an
+    // envelope sample, which the trend leaves out: the two readings differ by 0.01 ms at most.
+    assert.ok(report.detail.placementMs !== null && Math.abs(report.detail.placementMs) < 0.01, `difference with the beats on the trend ${report.detail.placementMs}`);
+    assert.ok(/** @type {number} */ (report.beatErrorSd) >= Math.abs(report.detail.placementMs));
   }
   // The first reading rests on the 30 s since the start; the last on the minute before it, by
   // which time the envelopes kept have been moved up in their buffer more than once.
@@ -197,9 +205,12 @@ test('only beats heard since the lock appeared are read, unless the stage is tol
   // The first tick and the first tock after the lock come up to a beat later.
   assert.ok(since.reports[0].t > 39.8 && since.reports[0].t < 40.75, `first reading at ${since.reports[0].t.toFixed(2)} s`);
   assert.ok(since.reports.every((r) => r.report.window && r.report.window[0] >= 10 && r.report.window[0] < 10.2));
-  const all = feed(w, { since: 10, stage: { reading, sinceLock: false } });
+  // Told also to leave the placement check out, as the stage was before it had one.
+  const all = feed(w, { since: 10, stage: { reading: { ...reading, placementCheck: false }, sinceLock: false } });
   assert.ok(all.reports[0].t > 29.8 && all.reports[0].t < 30.4, `with the earlier beats, at ${all.reports[0].t.toFixed(2)} s`);
   assert.ok(all.reports[0].report.window && all.reports[0].report.window[0] < 0.3);
+  assert.ok(since.reports[0].report.detail && since.reports[0].report.detail.placementMs !== null);
+  for (const { t, report } of all.reports) assertSameReading(report, whole(w, report, 50, { ...reading, placementCheck: false }), `without the check, at ${t.toFixed(1)} s`);
   // Only the ticks timed: 5 s after the reading would have come, the stage stops waiting.
   /** @type {{t: number, why: string|null}[]} */
   const whys = [];

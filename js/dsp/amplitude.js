@@ -21,10 +21,18 @@
 // matched in each block, and a sound whose blocks show it moving has its beats lined up again
 // on it before they are averaged.
 //
+// A noisy timestamp smears the averaged sounds, and when the unlock helps the earlier stages
+// time the beat it also lines the unlock's noise up. The beat error then moves one way, by an
+// amount the resamples cannot see: they draw the beats with their timestamps, so they see the
+// scatter and not the shift. The beat error is therefore read a second time with every beat
+// placed on the trend of its type's timestamps, and the difference between the two readings is
+// added to the stated scatter (the placement check).
+//
 // A port of tools/prototype/coaxial/events.py (`lift_limits`, `pair_beats`, `amplitude`,
-// `block_shifts`, `moved`, `reliable`, `beat_shifts` and `measure`).
+// `block_shifts`, `moved`, `reliable`, `beat_shifts`, `running_median`, `beat_times` and
+// `measure`).
 
-import { median, mean, std, seededRandom, chiSquaredQuantile } from './mathutil.js';
+import { median, medianInPlace, mean, std, seededRandom, chiSquaredQuantile } from './mathutil.js';
 import {
   STRETCH_BEFORE_S, STRETCH_AFTER_S, stackBeats, stretchMs, samplesBefore, rankBand, shiftedBandMeans, bandMeans, energyWeights, mixBands,
   findSounds, smoothForMatching, shiftOf, MAX_SHIFT_MS, MATCH_SMOOTH_MS,
@@ -94,6 +102,11 @@ export const MIN_SHIFT_SCATTER_MS = 0.01;
 export const MAX_SHIFT_SCATTER_MS = 0.3;
 /** How far a lined-up sound may lie from where the plain average put it, in milliseconds. */
 export const LINED_NEAR_MS = 1;
+/**
+ * Timestamps whose distances from their straight line are averaged, by their median, for the
+ * trend that the placement check puts every beat on.
+ */
+export const TREND_BEATS = 15;
 
 /**
  * Why there is no reading.
@@ -120,7 +133,11 @@ export const LINED_NEAR_MS = 1;
  *   half the watch's own: the tick and the tock are the same kind of beat, and the amplitude
  *   formula has the wrong rate
  * - `scatter`: the resamples that found the sounds scatter too far
- * @typedef {'unchecked'|'failing'|'irregular'|'halfway'|'scatter'} Held
+ * - `unplaced`: with every beat placed on the trend of its timestamps the sounds were not
+ *   found, so the beat error could not be checked; only the beat error is held for this
+ * - `placement`: the resamples agree, but the beat error moves too far when every beat is placed
+ *   on the trend of its timestamps; only the beat error is held for this
+ * @typedef {'unchecked'|'failing'|'irregular'|'halfway'|'scatter'|'unplaced'|'placement'} Held
  */
 
 /**
@@ -168,6 +185,24 @@ export const LINED_NEAR_MS = 1;
  */
 
 /**
+ * The ticks and the tocks stacked for reading, with the gap between the two types' timestamps;
+ * or why there are none, with each type's confident timestamps counted.
+ * @typedef {{beats: [TypeBeats, TypeBeats], gapMs: number, why: null} | {why: 'few-beats'|'averaged', counts: [number, number]}} StackedBeats
+ */
+
+/**
+ * What the placement check came to: the beat error read a second time, with every beat on the
+ * trend of its type's timestamps.
+ * @typedef {Object} Placement
+ * @property {number|null} unlockGapMs the second reading of the gap between the unlocks; null
+ *   when it found no sounds
+ * @property {number|null} differenceMs the reading less the second reading; null with it
+ * @property {number} resampledScatterMs the beat error's scatter over the resamples alone,
+ *   before the difference was added to it
+ * @property {NoReading|null} why why the second reading found no sounds
+ */
+
+/**
  * Where a reading puts the sounds: for the tick and the tock, the unlock's and the lock's
  * start in milliseconds from the timestamp.
  * @typedef {{at: [[number, number], [number, number]], unlockDb: number}} Places
@@ -188,6 +223,11 @@ export const LINED_NEAR_MS = 1;
  *   and the tock: both readings are then held back
  * @property {(n: number) => Int32Array} [draw] gives n beats drawn from n, in place of the
  *   seeded draws
+ * @property {boolean} [placementCheck] false leaves the placement check out, as before it was
+ *   added; `measureSounds` and the real-time stage make it otherwise
+ * @property {StackedBeats|null} [onTrend] the same beats placed on the trend of their timestamps
+ *   (`trendBeats`): given, the beat error is read a second time from them once the resamples
+ *   have given it a scatter, and the difference is added to that scatter
  * @property {(outcome: NoReading | 'other-sound' | {unlockGapMs: number, lockGapMs: number, liftMs: [number, number], places: Places}) => void} [each]
  *   called with each resample's outcome
  */
@@ -239,7 +279,9 @@ export const LINED_NEAR_MS = 1;
  * @property {number|null} otherSound share of the resamples that found another sound, which is part of `failing`
  * @property {{unlockGapMs: number, lockGapMs: number, liftMs: [number, number], amplitude: number}|null} scatter
  *   each reading's standard deviation over the resamples that found the sounds; null when fewer
- *   than MIN_RESAMPLES_KEPT did
+ *   than MIN_RESAMPLES_KEPT did. After the placement check, `unlockGapMs` also holds the
+ *   difference between the two readings, added as the root of the sum of squares
+ * @property {Placement|null} placement what the placement check came to; null when it was not made
  * @property {boolean} showBeatError true when the resamples support the beat error
  * @property {boolean} showAmplitude true when they support the amplitude
  * @property {Held|null} beatErrorHeld why the beat error is not to be shown, when there is one
@@ -363,6 +405,7 @@ export function noReading(bph, liftAngle, counts, why) {
     failing: null,
     otherSound: null,
     scatter: null,
+    placement: null,
     showBeatError: false,
     showAmplitude: false,
     beatErrorHeld: null,
@@ -627,8 +670,11 @@ function readingsOf(places, gapMs) {
  * know of the watch. The first reason that applies is the one given: sounds that are often not
  * found leave nothing to say about the watch, and what the pipeline knows of the watch comes
  * before the scatter of a reading it would not show anyway.
- * @param {Pick<SoundsReading, 'amplitude'|'failing'|'scatter'>} reading one with its resamples
- *   counted
+ * The placement check comes last: a beat error whose resamples already scatter too far is held
+ * for that, one that could not be checked is held for that, and one that the resamples support
+ * is held when the difference between its two readings takes its scatter over the limit.
+ * @param {Pick<SoundsReading, 'amplitude'|'failing'|'scatter'|'placement'>} reading one with its
+ *   resamples counted
  * @param {boolean} irregular the pipeline found the watch's beats falling at scattered times
  * @param {boolean} halfway the pipeline found a beat halfway between the tick and the tock
  * @returns {{beatError: Held|null, amplitude: Held|null}} null for a reading to show, and for
@@ -639,8 +685,18 @@ export function heldBack(reading, irregular, halfway) {
   if (reading.failing === null) return { beatError: 'unchecked', amplitude: 'unchecked' };
   const failing = reading.failing > MAX_FAILING;
   if (!reading.scatter) return failing ? { beatError: 'failing', amplitude: 'failing' } : { beatError: 'unchecked', amplitude: 'unchecked' };
+  const placed = reading.placement;
+  const resampled = placed ? placed.resampledScatterMs : reading.scatter.unlockGapMs;
+  /** @type {Held|null} */
+  let beatError = null;
+  if (failing) beatError = 'failing';
+  else if (irregular) beatError = 'irregular';
+  else if (halfway) beatError = 'halfway';
+  else if (resampled > MAX_BEAT_ERROR_SCATTER_MS) beatError = 'scatter';
+  else if (placed && placed.differenceMs === null) beatError = 'unplaced';
+  else if (reading.scatter.unlockGapMs > MAX_BEAT_ERROR_SCATTER_MS) beatError = 'placement';
   return {
-    beatError: failing ? 'failing' : irregular ? 'irregular' : halfway ? 'halfway' : reading.scatter.unlockGapMs > MAX_BEAT_ERROR_SCATTER_MS ? 'scatter' : null,
+    beatError,
     amplitude: failing ? 'failing' : halfway ? 'halfway' : reading.scatter.amplitude > MAX_AMPLITUDE_SCATTER ? 'scatter' : null,
   };
 }
@@ -662,7 +718,7 @@ export function heldBack(reading, irregular, halfway) {
  * @returns {Generator<void, SoundsReading, void>}
  */
 export function* readBeatsSteps(beats, envelopeRate, timestampGapMs, bph, liftAngle, options = {}) {
-  const { resamples = RESAMPLES, lineUp = 'moved', seed = 1, irregular = false, halfway = false, each } = options;
+  const { resamples = RESAMPLES, lineUp = 'moved', seed = 1, irregular = false, halfway = false, each, onTrend = null } = options;
   const stacks = [beats[0].stack, beats[1].stack];
   const out = noReading(bph, liftAngle, [stacks[0].count, stacks[1].count], null);
   out.timestampGapMs = timestampGapMs;
@@ -866,6 +922,23 @@ export function* readBeatsSteps(beats, envelopeRate, timestampGapMs, bph, liftAn
   out.failing = (resamples - found) / resamples;
   out.otherSound = other / resamples;
   if (found >= MIN_RESAMPLES_KEPT) out.scatter = { unlockGapMs: std(kept.unlockGapMs), lockGapMs: std(kept.lockGapMs), liftMs: [std(kept.tick), std(kept.tock)], amplitude: std(kept.amplitude) };
+
+  if (onTrend && out.scatter) {
+    // The placement check: the same reading with every beat on the trend of its timestamps,
+    // from the same envelopes and with no resamples. The trend is not used for the reading
+    // itself: it smears a watch whose beats really scatter, by 0.12 ms with 0.3 ms of jitter.
+    // The draws carry on from the reading's own, so one seed still gives one result.
+    const second = onTrend.why === null ? yield* readBeatsSteps(onTrend.beats, envelopeRate, onTrend.gapMs, bph, liftAngle, { resamples: 0, lineUp, draw }) : null;
+    const resampledScatterMs = out.scatter.unlockGapMs;
+    if (second && second.unlockGapMs !== null) {
+      const differenceMs = reading.unlockGapMs - second.unlockGapMs;
+      out.placement = { unlockGapMs: second.unlockGapMs, differenceMs, resampledScatterMs, why: null };
+      out.scatter = { ...out.scatter, unlockGapMs: Math.hypot(resampledScatterMs, differenceMs) };
+    } else {
+      // No sounds on the trend: the beat error cannot be checked, and is held back.
+      out.placement = { unlockGapMs: null, differenceMs: null, resampledScatterMs, why: second ? second.why : onTrend.why };
+    }
+  }
   const held = heldBack(out, irregular, halfway);
   out.beatErrorHeld = held.beatError;
   out.amplitudeHeld = held.amplitude;
@@ -893,21 +966,75 @@ export function readBeats(beats, envelopeRate, timestampGapMs, bph, liftAngle, o
 }
 
 /**
- * The timed beats of a stretch of envelope, stacked for reading. Only beats the pipeline timed
- * alone are read. When a beat type's timestamps each average several cycles there is nothing to
- * stack: placing such beats on the trend of their timestamps read simulated watches 0.04 ms
- * high on average and 1.6 times their stated scatter.
- * @param {Float32Array[]} rows the envelope of each band the sounds are read from, before
- *   Cleanup (`soundRows` in js/dsp/sounds.js): clipping and equal weights hid the Omega's unlock
- * @param {number} envelopeRate envelope sample rate in hertz
- * @param {Pick<BeatSeries, 'K'|'t'|'n'|'ok'>[]} beats the ticks' and the tocks' timestamps
- * @param {(seconds: number) => number} toPosition where a time lies in `rows`, in samples and
- *   fractions of one
- * @returns {{beats: [TypeBeats, TypeBeats], gapMs: number, why: null} | {why: 'few-beats'|'averaged', counts: [number, number]}}
- *   the stacked beats, copied out of `rows`, and the gap between the two types' timestamps; or
- *   why there are none, with each type's confident timestamps counted
+ * The median of the `k` values centred on each value (`k` odd). Near either end the window
+ * holds only the values there are, so an end is not pulled towards zero, nor left with its own
+ * value's noise.
+ * @param {ArrayLike<number>} values
+ * @param {number} k
+ * @returns {Float64Array}
  */
-export function timedBeats(rows, envelopeRate, beats, toPosition) {
+export function runningMedian(values, k) {
+  const half = (k - 1) / 2;
+  const out = new Float64Array(values.length);
+  const window = new Float64Array(k);
+  for (let i = 0; i < values.length; i++) {
+    const from = Math.max(0, i - half);
+    const to = Math.min(values.length, i + half + 1);
+    for (let m = from; m < to; m++) window[m - from] = values[m];
+    out[i] = medianInPlace(window, to - from);
+  }
+  return out;
+}
+
+/**
+ * Every beat of one type placed on the trend of its confident timestamps: a straight line
+ * through them against beat number, and the median of each TREND_BEATS timestamps' distances
+ * from it, read off between them. Beats the earlier stages were not confident of are placed too,
+ * and every beat's own timing noise is left out of its place.
+ * @param {ArrayLike<number>} t the type's confident timestamps in seconds, in order
+ * @param {ArrayLike<number>} n their beat numbers, every second whole number
+ * @returns {{t: number[], n: number[]}} a time for every beat of the type from the first
+ *   confident one to the last
+ */
+export function trendTimes(t, n) {
+  const count = t.length;
+  let nMean = 0;
+  let tMean = 0;
+  for (let i = 0; i < count; i++) {
+    nMean += n[i];
+    tMean += t[i];
+  }
+  nMean /= count;
+  tMean /= count;
+  let snn = 0;
+  let snt = 0;
+  for (let i = 0; i < count; i++) {
+    snn += (n[i] - nMean) * (n[i] - nMean);
+    snt += (n[i] - nMean) * (t[i] - tMean);
+  }
+  const slope = snt / snn;
+  const numbers = Array.from(n);
+  // Taken from the means, so that the line's place does not rest on the product of a slope and
+  // a beat number of thousands.
+  const line = (/** @type {number} */ at) => tMean + slope * (at - nMean);
+  const trend = Array.from(runningMedian(Float64Array.from(t, (v, i) => v - line(n[i])), TREND_BEATS));
+  /** @type {{t: number[], n: number[]}} */
+  const out = { t: [], n: [] };
+  const first = Math.ceil(Math.min(...numbers));
+  const last = Math.floor(Math.max(...numbers));
+  for (let at = first; at <= last; at += 2) {
+    out.n.push(at);
+    out.t.push(line(at) + interpolate(at, numbers, trend));
+  }
+  return out;
+}
+
+/**
+ * Each type's confident timestamps and their beat numbers.
+ * @param {Pick<BeatSeries, 't'|'n'|'ok'>[]} beats the ticks' and the tocks' timestamps
+ * @returns {{t: [number[], number[]], n: [number[], number[]]}}
+ */
+function confident(beats) {
   /** @type {[number[], number[]]} */
   const t = [[], []];
   /** @type {[number[], number[]]} */
@@ -920,10 +1047,21 @@ export function timedBeats(rows, envelopeRate, beats, toPosition) {
       n[j].push(b.n[i]);
     }
   }
+  return { t, n };
+}
+
+/**
+ * Beats at given times stacked for reading, with the gap between the two types' times.
+ * @param {Float32Array[]} rows
+ * @param {number} envelopeRate
+ * @param {[number[], number[]]} t each type's times in seconds
+ * @param {[number[], number[]]} n and their beat numbers
+ * @param {(seconds: number) => number} toPosition
+ * @returns {{beats: [TypeBeats, TypeBeats], gapMs: number, why: null}}
+ */
+function stackedAt(rows, envelopeRate, t, n, toPosition) {
   const before = Math.floor(STRETCH_BEFORE_S * envelopeRate);
   const after = Math.floor(STRETCH_AFTER_S * envelopeRate);
-  if (Math.min(t[0].length, t[1].length) < MIN_BEATS) return { why: 'few-beats', counts: [t[0].length, t[1].length] };
-  if (beats[0].K > 1 || beats[1].K > 1) return { why: 'averaged', counts: [t[0].length, t[1].length] };
   const { gapMs, slope } = timestampGap(t, n);
   const stacked = /** @type {[TypeBeats, TypeBeats]} */ ([0, 1].map((j) => {
     const stack = stackBeats(rows, t[j].map(toPosition), before, after);
@@ -937,8 +1075,46 @@ export function timedBeats(rows, envelopeRate, beats, toPosition) {
 }
 
 /**
+ * The timed beats of a stretch of envelope, stacked for reading. Only beats the pipeline timed
+ * alone are read. When a beat type's timestamps each average several cycles there is nothing to
+ * stack: placing such beats on the trend of their timestamps read simulated watches 0.04 ms
+ * high on average and 1.6 times their stated scatter.
+ * @param {Float32Array[]} rows the envelope of each band the sounds are read from, before
+ *   Cleanup (`soundRows` in js/dsp/sounds.js): clipping and equal weights hid the Omega's unlock
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @param {Pick<BeatSeries, 'K'|'t'|'n'|'ok'>[]} beats the ticks' and the tocks' timestamps
+ * @param {(seconds: number) => number} toPosition where a time lies in `rows`, in samples and
+ *   fractions of one
+ * @returns {StackedBeats} the stacked beats, copied out of `rows`, and the gap between the two
+ *   types' timestamps; or why there are none, with each type's confident timestamps counted
+ */
+export function timedBeats(rows, envelopeRate, beats, toPosition) {
+  const { t, n } = confident(beats);
+  if (Math.min(t[0].length, t[1].length) < MIN_BEATS) return { why: 'few-beats', counts: [t[0].length, t[1].length] };
+  if (beats[0].K > 1 || beats[1].K > 1) return { why: 'averaged', counts: [t[0].length, t[1].length] };
+  return stackedAt(rows, envelopeRate, t, n, toPosition);
+}
+
+/**
+ * The same stretch's beats stacked with every beat on the trend of its type's confident
+ * timestamps (`trendTimes`), for the placement check. The gap between the two types is the gap
+ * between their trends.
+ * @param {Float32Array[]} rows as for `timedBeats`
+ * @param {number} envelopeRate envelope sample rate in hertz
+ * @param {Pick<BeatSeries, 't'|'n'|'ok'>[]} beats the ticks' and the tocks' timestamps
+ * @param {(seconds: number) => number} toPosition as for `timedBeats`
+ * @returns {StackedBeats}
+ */
+export function trendBeats(rows, envelopeRate, beats, toPosition) {
+  const { t, n } = confident(beats);
+  if (Math.min(t[0].length, t[1].length) < MIN_BEATS) return { why: 'few-beats', counts: [t[0].length, t[1].length] };
+  const placed = [trendTimes(t[0], n[0]), trendTimes(t[1], n[1])];
+  return stackedAt(rows, envelopeRate, [placed[0].t, placed[1].t], [placed[0].n, placed[1].n], toPosition);
+}
+
+/**
  * The sounds' readings for a stretch of audio whose beats have been timed: the whole-recording
- * entry.
+ * entry. The placement check is made unless `placementCheck` is false.
  * @param {Float32Array[]} rows the envelope of each band the sounds are read from, as for
  *   `timedBeats`
  * @param {number} envelopeRate envelope sample rate in hertz
@@ -953,5 +1129,6 @@ export function timedBeats(rows, envelopeRate, beats, toPosition) {
 export function measureSounds(rows, envelopeRate, beats, bph, liftAngle, toPosition, options = {}) {
   const timed = timedBeats(rows, envelopeRate, beats, toPosition);
   if (timed.why !== null) return noReading(bph, liftAngle, timed.counts, timed.why);
-  return readBeats(timed.beats, envelopeRate, timed.gapMs, bph, liftAngle, options);
+  const placed = options.placementCheck === false ? null : trendBeats(rows, envelopeRate, beats, toPosition);
+  return readBeats(timed.beats, envelopeRate, timed.gapMs, bph, liftAngle, { ...options, onTrend: placed });
 }

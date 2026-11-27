@@ -4,7 +4,7 @@
 // (js/dsp/sounds.js and js/dsp/amplitude.js). The stage on its own, without the pipeline, is
 // tested in sounds.test.js, and the real recordings in recordings.test.js.
 //
-// Each watch is analysed once, and this file takes about four minutes: 55 watches of 20 to 60 s.
+// Each watch is analysed once, and this file takes about five minutes: 61 watches of 20 to 60 s.
 // The beat rate is given: the stage reads the beats the pipeline timed, however their rate was
 // found, and a detected rate gives the same timestamps in about twice the time.
 
@@ -247,7 +247,9 @@ function shownBeatErrors() {
 test('every beat error shown for the 46 simulated watches lies within three times its own stated scatter of the truth, and within 0.15 ms', () => {
   const shown = shownBeatErrors();
   for (const r of shown) {
-    // The worst of them: 2.4 times (a co-axial in beat, seed 5, and one 2.0 ms out, seed 12).
+    // The worst of them: 2.2 times (a co-axial 2.0 ms out, seed 12). Before the placement
+    // check added to the stated scatter it was 2.4 times, for that one and a co-axial in beat
+    // (seed 5), which is now 1.1 times its stated scatter off.
     assert.ok(Math.abs(r.error) <= 3 * r.scatter, `${r.name}: ${r.error.toFixed(3)} ms off at a stated +-${r.scatter.toFixed(3)}`);
     // An outer bound against a gross fault. The worst: 0.137 ms (a co-axial in beat, seed 3).
     assert.ok(Math.abs(r.error) <= 0.15, `${r.name}: ${r.error.toFixed(3)} ms off`);
@@ -262,9 +264,9 @@ test('every beat error shown for the 46 simulated watches lies within three time
 test('over the 46 the beat errors shown are off by about as much as their stated scatter says', () => {
   const shown = shownBeatErrors();
   const rms = Math.sqrt(shown.reduce((sum, r) => sum + (r.error / r.scatter) ** 2, 0) / shown.length);
-  // 1 would be a scatter stated exactly; this stage's draws give 1.06, the prototype's 1.22 on
-  // the same envelopes. Thirty-one readings give the figure to about 13%, so a scatter stated
-  // a third too narrow or too wide would fall outside.
+  // 1 would be a scatter stated exactly; this stage gives 0.89, and 1.06 from the resamples
+  // alone, before the placement check's difference is added. Thirty-one readings give the
+  // figure to about 13%, so a scatter stated a third too narrow or too wide would fall outside.
   assert.ok(rms >= 0.7 && rms <= 1.5, `errors ${rms.toFixed(2)} times the stated scatter, rms`);
 });
 
@@ -287,6 +289,71 @@ test('31 of the 46 beat errors are shown, as the prototype shows on the same env
   // One of them took another sound for an unlock and read 3 ms: 95% of its draws disagree.
   const wrong = ofTheFortySix('co-axial unlock 0 dB, seed 42').sounds;
   assert.ok(wrong.unlockGapMs !== null && Math.abs(wrong.unlockGapMs) > 2.5 && wrong.failing !== null && wrong.failing > 0.9 && !wrong.showBeatError);
+});
+
+test('the placement check is made for every one of the 46 that has a scatter, and holds none of their beat errors back: on watches like the Omega and on levers the two readings agree', () => {
+  for (const run of fortySix()) {
+    const s = run.sounds;
+    if (!s.scatter) continue;
+    assert.ok(s.placement, `${run.watch.name}: not checked`);
+    assert.ok(s.beatErrorHeld !== 'placement' && s.beatErrorHeld !== 'unplaced', `${run.watch.name}: held back for ${s.beatErrorHeld}`);
+    assert.ok(s.scatter.unlockGapMs >= s.placement.resampledScatterMs);
+    if (!s.showBeatError) continue;
+    // The largest difference among those shown: 0.062 ms (a co-axial in beat, seed 3, which is
+    // 0.137 ms off at +-0.067 from its resamples and +-0.091 with the difference).
+    assert.ok(s.placement.differenceMs !== null && Math.abs(s.placement.differenceMs) < 0.07, `${run.watch.name}: the two readings differ by ${s.placement.differenceMs} ms`);
+    // A lever's timestamps follow its drop to 0.04 ms, and its two readings agree to 0.003 ms.
+    if (run.watch.liftAngle === 50) assert.ok(Math.abs(s.placement.differenceMs) < 0.005, `${run.watch.name}: ${s.placement.differenceMs} ms`);
+  }
+});
+
+// Issue 33 of the investigation: the watches the placement check is for. A co-axial whose unlock
+// is as loud as its lock, 20 dB over the background where the Omega's is 5, with every sound
+// then made 5 dB quieter, so that its timestamps scatter by 0.1 ms. The unlock helps the
+// pipeline time such a beat, so stacking the beats on their timestamps lines the unlock's noise
+// up, and the beat error moves one way by more than its resamples can see.
+/** @type {Watch[]} */
+const LOUD_UNLOCKS = [];
+for (const [restOffsetDeg, label] of /** @type {[number, string][]} */ ([[0, 'in beat'], [1.35, '0.5 ms out of beat']])) {
+  for (const seed of [1, 2, 3]) {
+    const name = `faint co-axial with a loud unlock, ${label}, seed ${seed}`;
+    LOUD_UNLOCKS.push({
+      name,
+      group: 'faint co-axial with a loud unlock',
+      liftAngle: 36,
+      make: () => {
+        const watch = coaxialWatch({ unlockDb: 20, restOffsetDeg, seed });
+        return { ...watch, sounds: /** @type {[BeatSound[], BeatSound[]]} */ (watch.sounds.map((beat) => beat.map((sound) => ({ ...sound, db: sound.db - 5 })))) };
+      },
+    });
+  }
+}
+
+test('six faint co-axials whose unlock is as loud as their lock read their beat error up to 0.08 ms off, three times what their resamples say; with the placement check\'s difference the stated scatter covers it, and all six are still shown', () => {
+  const runs = LOUD_UNLOCKS.map(simulated);
+  /** @type {{name: string, error: number, resampled: number, stated: number}[]} */
+  const read = [];
+  for (const run of runs) {
+    const s = run.sounds;
+    assert.ok(s.unlockGapMs !== null && s.amplitude !== null && s.scatter && s.placement && s.placement.differenceMs !== null, `${run.watch.name}: ${s.why}`);
+    assert.ok(s.showBeatError && s.showAmplitude, `${run.watch.name}: held back for ${s.beatErrorHeld ?? s.amplitudeHeld}`);
+    const error = s.unlockGapMs - run.unlockGapMs;
+    read.push({ name: run.watch.name, error, resampled: s.placement.resampledScatterMs, stated: s.scatter.unlockGapMs });
+    // Off by 0.017 to 0.075 ms, and the second reading lies on the truth's side of the first,
+    // 0.011 to 0.043 ms from it.
+    assert.ok(Math.abs(error) > 0.01 && Math.abs(error) < 0.09, `${run.watch.name}: ${error.toFixed(3)} ms off`);
+    assert.equal(Math.sign(s.placement.differenceMs), Math.sign(error), `${run.watch.name}: the two readings differ by ${s.placement.differenceMs.toFixed(3)} ms, the error is ${error.toFixed(3)}`);
+    // The worst is 1.8 times its stated scatter off; from its resamples alone it was 5.3 times.
+    assert.ok(Math.abs(error) <= 2.5 * s.scatter.unlockGapMs, `${run.watch.name}: ${error.toFixed(3)} ms off at a stated +-${s.scatter.unlockGapMs.toFixed(3)}`);
+    // The amplitude is not checked this way and does not need it here: the worst is 0.7 degrees off.
+    assert.ok(Math.abs(s.amplitude - run.meanAmplitude) <= 2, `${run.watch.name}: ${s.amplitude.toFixed(1)}, truly ${run.meanAmplitude.toFixed(1)}`);
+  }
+  /** @param {'resampled'|'stated'} scatter */
+  const rms = (scatter) => Math.sqrt(read.reduce((sum, r) => sum + (r.error / r[scatter]) ** 2, 0) / read.length);
+  // 3.3 times the resamples' scatter, rms, and 1.3 times the stated one. On the prototype's 16
+  // such watches the same two figures were 4.0 and 1.4.
+  assert.ok(rms('resampled') > 2.5, `errors ${rms('resampled').toFixed(2)} times the resamples' scatter, rms`);
+  assert.ok(rms('stated') >= 0.7 && rms('stated') <= 1.7, `errors ${rms('stated').toFixed(2)} times the stated scatter, rms`);
 });
 
 test('every amplitude shown for the 46 lies within 2 degrees of the truth, and the two whose amplitude wanders are lined up again', () => {
