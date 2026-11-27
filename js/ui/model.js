@@ -548,7 +548,8 @@ export const COAXIAL_LIFT_LIMIT = 40;
  */
 export function liftHint(escapement, liftAngle) {
   if (escapement !== 'coaxial' || !(liftAngle > COAXIAL_LIFT_LIMIT)) return null;
-  return `The lift angle is set to ${liftAngle}°, which suits a Swiss lever. Co-axial movements use less: Omega gives 38° for its calibres 8520 and 8521, and 36° is reported for the 3861. Change it in Settings, or the amplitude will read too high or show a dash.`;
+  // Kept short at Lawrence's request (27 November 2026); the README gives the sources.
+  return `Lift angle ${liftAngle}° suits a Swiss lever. Co-axials use less: 38° for Omega's 8520 and 8521, 36° reported for the 3861.`;
 }
 
 /**

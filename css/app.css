@@ -230,6 +230,8 @@ dialog {
 dialog::backdrop { background: rgb(0 0 0 / 0.4); }
 dialog form { display: grid; gap: 14px; padding: 18px; }
 dialog h2 { font-size: 18px; }
+/* The settings heading takes the focus when the dialog opens; it is not a control, so no ring. */
+dialog h2:focus { outline: none; }
 dialog .actions { display: flex; justify-content: flex-end; gap: 10px; }
 dialog p { font-size: 15px; }
 .note { font-size: 13px; color: var(--muted); }
