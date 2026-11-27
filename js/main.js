@@ -280,6 +280,9 @@ async function start() {
         gain: Number(ui.simGain.value),
         jitterMs: Number(ui.simJitter.value),
         amplitude: Number(ui.simAmp.value),
+        // The simulated watch has the lift angle of the settings, so that the amplitude read is
+        // the amplitude set on its slider, whatever the setting.
+        liftAngle: settings.liftAngle,
         seed: Math.floor(Math.random() * 2 ** 31),
       });
       source = simulator;
@@ -1157,14 +1160,25 @@ ui.settingsForm.addEventListener('change', () => {
   // A lift angle set now is the one meant from here on: it replaces a demo's own while the demo
   // runs, and it is what the line under the readings shows once a run is over.
   if (run && settings.liftAngle !== before.liftAngle) run.liftAngle = settings.liftAngle;
-  if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
+  // The simulator's watch follows the lift angle set, which moves the sounds inside its beats.
+  // Its beats from before the change would be read with the new angle for up to a minute, at
+  // amplitudes the watch never had (186 degrees for half a minute after a change from 52 to 36
+  // degrees with 270 set), so it starts again instead, as it does for a new beat rate. A restart
+  // starts the source of the tab that is open, so it is made only while that is the simulator's.
+  const simulatorLift = !!run && run.kind === 'simulator' && tab === 'simulator' && settings.liftAngle !== before.liftAngle;
+  if (settings.bph !== before.bph || settings.humHz !== before.humHz || simulatorLift) {
     restart();
   } else if (run && run.running) {
     /** @type {{averagingSeconds?: number, escapement?: Escapement, liftAngle?: number}} */
     const changes = {};
     if (settings.averagingSeconds !== before.averagingSeconds) changes.averagingSeconds = settings.averagingSeconds;
     // The sounds inside the beats are read again with the new lift angle.
-    if (settings.liftAngle !== before.liftAngle) changes.liftAngle = settings.liftAngle;
+    if (settings.liftAngle !== before.liftAngle) {
+      changes.liftAngle = settings.liftAngle;
+      // A simulator left running under another tab is not started again: its watch takes the
+      // new angle from its next beat, and the readings come right as the earlier beats age out.
+      if (simulator && run.kind === 'simulator') simulator.liftAngle = settings.liftAngle;
+    }
     if (settings.escapement !== before.escapement) {
       changes.escapement = settings.escapement;
       run.escapement = settings.escapement;

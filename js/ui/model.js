@@ -520,6 +520,19 @@ export function soundsReadout(tracking, readings, liftAngle, running = true) {
   return out;
 }
 
+/**
+ * The amplitude and the beat error as a phrase each, for text with no column to put a note
+ * under, such as the audio diagnostic's reading line and its report: "amplitude 288° ±1.1° over
+ * 50 s", or "amplitude — (needs 30 s of beats)".
+ * @param {SoundsReadout} r
+ * @returns {{amplitude: string, beatError: string}}
+ */
+export function soundsInWords(r) {
+  /** @param {string} name @param {string} value @param {string} unit @param {string} note */
+  const phrase = (name, value, unit, note) => (value === '—' ? `${name} —${note ? ` (${note})` : ''}` : `${name} ${value}${unit} ${note}`.trim());
+  return { amplitude: phrase('amplitude', r.amplitude, '°', r.amplitudeNote), beatError: phrase('beat error', r.beatError, ' ms', r.beatErrorNote) };
+}
+
 /** A lift angle above this is a Swiss lever's, in degrees: co-axial calibres are set lower. */
 export const COAXIAL_LIFT_LIMIT = 40;
 

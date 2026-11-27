@@ -12,7 +12,7 @@ import { amplitudeOf } from '../js/dsp/amplitude.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
 import { FIRST_READING_SECONDS } from '../js/dsp/soundstage.js';
 import { tickByGap, tickByLift, NAME_SD } from '../js/dsp/names.js';
 import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
@@ -175,6 +175,11 @@ test('the readout gives the amplitude and the beat error from the sounds inside 
   // An amplitude made with another lift angle than the one now set is not shown: after a run
   // has ended, a new setting leaves a dash. The beat error does not depend on the angle.
   assert.deepEqual(soundsReadout(true, both, 38, false), { amplitude: '—', amplitudeNote: 'lift angle changed', beatError: '0.32', beatErrorNote: '±0.04 over 50 s' });
+  // The same in a line of text, as the audio diagnostic gives it.
+  assert.deepEqual(soundsInWords(soundsReadout(true, both, 36)), { amplitude: 'amplitude 288° ±1.1° over 50 s', beatError: 'beat error 0.32 ms ±0.04 over 50 s' });
+  assert.deepEqual(soundsInWords(soundsReadout(true, waiting, 36, false)), { amplitude: 'amplitude — (needed 30 s of beats)', beatError: 'beat error — (needed 30 s of beats)' });
+  assert.deepEqual(soundsInWords(irregular), { amplitude: 'amplitude 270° ±0.8° over 40 s', beatError: 'beat error — (irregular beat)' });
+  assert.deepEqual(soundsInWords(dash), { amplitude: 'amplitude —', beatError: 'beat error —' });
 });
 
 test('a co-axial set with a Swiss lever\'s lift angle is told so, with the two angles known for Omega calibres', () => {
@@ -245,19 +250,30 @@ test('the endless simulator gives the same audio whatever the chunk sizes', () =
   }
 });
 
-test('the simulator\'s amplitude sets how long before its lock each beat\'s unlock comes, at every beat rate, and the app reads that amplitude back at the simulated watch\'s own lift angle', () => {
-  assert.equal(SIMULATED_LIFT_ANGLE, DEFAULTS.liftAngle, 'the lift angle the app starts with');
+test('the simulator\'s amplitude sets how long before its lock each beat\'s unlock comes, for the lift angle it is given, and the app reads that amplitude back at that angle', () => {
+  assert.equal(SIMULATED_LIFT_ANGLE, DEFAULTS.liftAngle, 'without one, the lift angle the app starts with');
   // The formula the pipeline reads the amplitude by, the other way round.
   for (const bph of [18000, 21600, 28800, 36000]) {
-    for (const amplitude of [150, 270, 330]) assert.ok(Math.abs(amplitudeOf(52, bph, liftSeconds(amplitude, bph) * 1e3) - amplitude) < 1e-9, `${bph} vph, ${amplitude} degrees`);
+    for (const amplitude of [150, 270, 330]) {
+      assert.ok(Math.abs(amplitudeOf(52, bph, liftSeconds(amplitude, bph) * 1e3) - amplitude) < 1e-9, `${bph} vph, ${amplitude} degrees`);
+      for (const lift of [30, 36, 70]) assert.ok(Math.abs(amplitudeOf(lift, bph, liftSeconds(amplitude, bph, lift) * 1e3) - amplitude) < 1e-9, `${bph} vph, ${amplitude} degrees, lift ${lift}`);
+    }
   }
   assert.ok(Math.abs(liftSeconds(270, 28800) * 1e3 - 7.675) < 0.001 && Math.abs(liftSeconds(270, 21600) * 1e3 - 10.233) < 0.001);
   // Without an amplitude the sounds stay 7 ms apart whatever the beat rate, as before.
   assert.equal(new WatchStream({ bph: 21600 }).unlockSeconds(), 0.007);
-  // 21,600 vph, where 7 ms would read 394 degrees and show a dash: 270 degrees, 0.4 ms out of
-  // beat, at the loudness the app's simulator starts with.
-  const sim = new WatchStream({ bph: 21600, rate: 8, beatOffsetMs: 0.4, gain: 3, amplitude: 270, seed: 3 });
-  const pipeline = new Pipeline(sim.sampleRate, 1, { liftAngle: 52, sounds: { share: Infinity } });
+  // The app gives its simulator the lift angle of the settings, and a change of it applies from
+  // the next beat: the unlock comes sooner before the lock for a smaller angle.
+  const follows = new WatchStream({ bph: 28800, amplitude: 270, liftAngle: 36 });
+  assert.equal(follows.unlockSeconds(), liftSeconds(270, 28800, 36));
+  assert.ok(Math.abs(follows.unlockSeconds() * 1e3 - 5.309) < 0.001);
+  follows.liftAngle = 52;
+  assert.equal(follows.unlockSeconds(), liftSeconds(270, 28800));
+  // 21,600 vph with the lift angle set to 60 degrees, where 7 ms would read 455 degrees and
+  // show a dash: 270 degrees, 0.4 ms out of beat, at the loudness the app's simulator starts
+  // with. The simulated watch and the pipeline are given the same angle, as in the app.
+  const sim = new WatchStream({ bph: 21600, rate: 8, beatOffsetMs: 0.4, gain: 3, amplitude: 270, liftAngle: 60, seed: 3 });
+  const pipeline = new Pipeline(sim.sampleRate, 1, { liftAngle: 60, sounds: { share: Infinity } });
   const readings = /** @type {ReadingsEvent[]} */ (run(pipeline, (n) => sim.next(n), 45).filter((e) => e.type === 'readings' && e.window !== null));
   const made = readings.filter((e) => e.sounds && e.sounds.detail !== null);
   assert.ok(made.length > 3, 'the sounds were read');
@@ -267,11 +283,13 @@ test('the simulator\'s amplitude sets how long before its lock each beat\'s unlo
     assert.ok(Math.abs(s.amplitude - 270) <= 2, `amplitude ${s.amplitude.toFixed(1)}`);
     assert.ok(Math.abs(s.beatErrorMs - 0.4) <= 0.05, `beat error ${s.beatErrorMs.toFixed(3)} ms`);
   }
-  // Set to 50 degrees, the app reads the same swing as 50/52 of it: the amplitude is only as
-  // right as the lift angle.
-  pipeline.setOptions({ liftAngle: 50 });
+  // Read at 52 degrees, a watch whose lift angle is 60 gives 52/60 of its swing: an amplitude is
+  // only as right as the lift angle. That is why the app's simulator takes the angle set. Its
+  // beats from before a change of the setting would be read this way for up to a minute, so
+  // the app starts the simulator again instead.
+  pipeline.setOptions({ liftAngle: 52 });
   const after = /** @type {ReadingsEvent[]} */ (run(pipeline, (n) => sim.next(n), 1.5).filter((e) => e.type === 'readings')).pop();
-  assert.ok(after && after.sounds && after.sounds.amplitude !== null && Math.abs(after.sounds.amplitude - (270 * 50) / 52) <= 2, `at 50 degrees ${after?.sounds?.amplitude}`);
+  assert.ok(after && after.sounds && after.sounds.amplitude !== null && Math.abs(after.sounds.amplitude - (270 * 52) / 60) <= 2, `at 52 degrees ${after?.sounds?.amplitude}`);
 });
 
 test('beat variability set while the simulator runs brings the irregular-beat warning within seconds, and taking it away clears it', () => {

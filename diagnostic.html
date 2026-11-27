@@ -63,8 +63,9 @@ p { margin: 0; }
 section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
 label { font-size: 15px; }
 .field { display: grid; gap: 4px; }
-.field > span { font-size: 14px; color: var(--muted); }
-select { font: 16px var(--font); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }
+.field > span, .field > label { font-size: 14px; color: var(--muted); }
+select, input[type="number"] { font: 16px var(--font); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }
+input[type="number"] { max-width: 7em; }
 .row { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
 .switches { display: grid; gap: 6px; }
 .switches label { display: flex; gap: 10px; align-items: center; }
@@ -125,7 +126,7 @@ ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
       <label><input type="checkbox" id="noise"> Noise suppression</label>
       <label><input type="checkbox" id="gain"> Automatic gain</label>
     </div>
-    <p class="note">Choose Co-axial for Omega co-axial watches. Their tick and tock are different sounds, so the gap between their timed beats is not shown. This page gives that gap in place of a beat error, which the app measures from each beat's first sound.</p>
+    <p class="note">Choose Co-axial for Omega co-axial watches, and give the watch's lift angle: 52° if unknown; co-axial movements use less (Omega gives 38° for its calibres 8520 and 8521, and 36° is reported for the 3861). Amplitude and beat error are read from the sounds inside each beat, as in the app, and need 30 s of beats after the watch is found: only a 60-second recording has time to show them.</p>
     <div class="row">
       <div class="field">
         <span>Length</span>
@@ -134,6 +135,10 @@ ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
       <div class="field">
         <span>Escapement</span>
         <select id="escapement"><option value="lever" selected>Swiss lever</option><option value="coaxial">Co-axial</option></select>
+      </div>
+      <div class="field">
+        <label for="lift">Lift angle (degrees)</label>
+        <input type="number" id="lift" min="30" max="70" step="0.5" value="52" inputmode="decimal">
       </div>
       <div class="field">
         <span>Mains frequency</span>

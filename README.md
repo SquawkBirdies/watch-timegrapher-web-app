@@ -596,14 +596,27 @@ the co-axial investigation found: 38° in Omega's technical guide for its calibr
 would come out as 416°, which is not believable, and the readout says "check the lift angle".
 
 **The simulator** has an amplitude slider, 150° to 330°, starting at 270° (decided on 26 November).
-Its watch is a Swiss lever with a 52° lift angle, and the slider sets how long before its lock each
-beat's unlock comes. Until now that was 7 ms at every beat rate, which the app reads as 294° at
-28,800 vph and as nothing believable at 21,600 vph and below. Its loudness now starts at 3.00×
-instead of 2.00×, and the slider reaches 4.00×: at 2.00× the simulated unlock stands about 10 dB
-over the noise of the averaged beat, 5 to 17% of the draws lost it, and the readings were often held
-back; at 2.50× and 3.00× none did at any of four beat rates. In Node the simulator at 270° reads
-268.8° to 269.3° at 18,000 to 28,800 vph and 266.8° to 267.9° at 36,000 vph, and 0.38 to 0.43 ms for
-0.40 ms set.
+Its watch is a Swiss lever whose lift angle is the one set in Settings (decided the same day), so
+the amplitude read is the amplitude set, whatever the setting; the slider sets how long before its
+lock each beat's unlock comes. Until now that was 7 ms at every beat rate, which at 52° the app
+reads as 294° at 28,800 vph and as nothing believable at 21,600 vph and below. A lift angle changed
+while the simulator runs starts it again, as a new beat rate does. Left running, its beats from
+before the change were read with the new angle for up to a minute, at amplitudes the watch never
+had: with 270° set, 186° for half a minute after a change from 52° to 36°, then a dash, and 268°
+only a minute after the change. Its loudness now starts at 3.00× instead of 2.00×, and the slider
+reaches 4.00×: at 2.00× the simulated unlock stands about 10 dB over the noise of the averaged beat,
+5 to 17% of the draws lost it, and the readings were often held back; at 2.50× and 3.00× none did at
+any of four beat rates. In Node, at 52°, the simulator at 270° reads 268.8° to 269.3° at 18,000 to
+28,800 vph and 266.8° to 267.9° at 36,000 vph, and 0.38 to 0.43 ms for 0.40 ms set. With other lift
+angles set: 268° at 36° and 28,800 vph, 269° at 60° and 21,600 vph, 199.6° for 200° set at 70° and
+18,000 vph, and 296° for 300° set at 30° and 36,000 vph.
+
+**The audio diagnostic** takes a lift angle as well (decided on 26 November), 52° unless another is
+typed, and gives the app's own amplitude and beat error in its reading line and in its report, as
+"amplitude 288° ±1.1° over 50 s" or "amplitude — (needs 30 s of beats)". The report keeps the gap
+between the timed beats beside them, under that name, with each beat's time from unlock to lock and
+what reading the sounds cost. Until this step the page ran the pipeline without a lift angle and
+called that gap the beat error.
 
 In Chrome at phone size, on this computer, with each source played at real speed:
 
@@ -620,7 +633,17 @@ In Chrome at phone size, on this computer, with each source played at real speed
   0.40 ms ±0.03 from 43 s in; at 21,600 vph, 269° ±0.6° and 0.40 ms from 45 s in. After Stop the
   numbers stayed, and setting the lift angle to 50° left a dash for the amplitude with "lift angle
   changed", the beat error staying. Set as co-axial at 52°, the note on lift angles showed and the
-  beats stayed grey.
+  beats stayed grey. With the lift angle set to 36° it showed 268° ±1.4° and 0.43 ms ±0.03 from
+  43 s in. A lift angle changed from 52° to 50° 14 s into a run started the simulator again at
+  once; it locked 9 s later and showed 268° ±0.8° and 0.38 ms ±0.02 41 s after the change.
+- **The audio diagnostic**, with a recording played in as the microphone, showed "needs 30 s of
+  beats" for both from the lock on, and its report gave the lift angle, both readings and the gap
+  between the timed beats. Chrome's simulated microphone drops out about 35 s in and runs at
+  44.1 kHz, so no reading of the sounds was shown in 60 s there: the Omega's capture at 36° had its
+  three readings held back ("sounds not clear enough"), and a simulated lever lost its lock at
+  36 s. With the page's script served so that the stage read after 12 s of beats, and nothing else
+  changed, the simulated lever of 0.50 ms and 270° at 50° read "amplitude 270° ±0.5° over 12 s ·
+  beat error 0.50 ms ±0.02 over 12 s".
 - **Six positions**, on the simulator: a position saved 22 s after the lock kept a dash for both,
   and one saved 42 s after its lock kept 0.39 ms and 268° (see [Six positions](#six-positions)).
 
@@ -653,8 +676,8 @@ What this step leaves as it is, and its limits:
 - **The trace is still drawn from the timed beats,** so the gap between its two lines is the gap
   between each beat's loudest sounds, not the beat error on the readout: 0.42 ms against 0.27 ms on
   the ETA's capture, and 3.4 ms against 0.3 ms on the Omega's. The caption says so.
-- **The audio diagnostic reads no sounds inside the beats.** It now calls what it shows the gap
-  between the timed beats, not a beat error.
+- **On the audio diagnostic the two readings need the 60 s recording,** and come about 40 s into it.
+  A 30 s recording, which is what the page starts with, ends with "needed 30 s of beats".
 
 ## Live microphone
 
@@ -904,9 +927,9 @@ decided on 26 November. Two limits follow from the captures' lengths:
 - **The Omega's 60 s leave time for three readings on a computer,** the first about 45 s in and the
   last just before the end, and for four on an iPhone 17 Pro Max.
 
-In Chrome on a computer, before the fourth step of milestone 8 put the readings of the sounds on
-the screen, with nothing changed in Settings, the ETA demo ran at 50° and ended at +1.7 ± 0.05 s/day
-and 0.31 ms between its timed beats, with the analysis at 8% of real time. The Omega demo ran at 36° and
+In Chrome on a computer, before the fourth step of milestone 8 put the readings of the sounds on the
+screen, with nothing changed in Settings, the ETA demo ran at 50° and ended at +1.7 ± 0.05 s/day and
+0.31 ms between its timed beats, with the analysis at 8% of real time. The Omega demo ran at 36° and
 ended at +0.9 ± 0.09 s/day over its last 20 s, with the analysis at 19% of real time. It was read
 three times: the first reading was on the screen about 45 s after Start, after 2.2 s of computing
 over 4.4 s, and could be shown; the second was held back, more than 5% of its draws having lost the
@@ -938,8 +961,10 @@ wake lock, and whether the signal pipeline loads.
 `diagnostic.html` is the audio diagnostic. It records up to 60 s from the first channel of a
 chosen microphone with the browser's echo cancellation, noise suppression and automatic gain
 off (or on, to compare), shows the waveform above 2 kHz, and runs the real-time pipeline on the
-audio as it arrives in a background worker. Afterwards it reports what the browser actually
-applied, the levels, any dropouts or interruptions, the readings and the pipeline's load. The
+audio as it arrives in a background worker, with the escapement and the lift angle chosen on the
+page, so that it gives rate, amplitude and beat error as the app does. Afterwards it reports what
+the browser actually applied, the levels, any dropouts or interruptions, the readings and the
+pipeline's load. The
 recording can be saved as a 32-bit float WAV file holding nothing but the audio. A speed test
 times the pipeline on 60 s of a simulated watch.
 
