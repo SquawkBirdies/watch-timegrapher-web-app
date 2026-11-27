@@ -159,7 +159,9 @@ let target = nextPosition(log);
  * @property {boolean} ended the source has no more audio
  * @property {boolean} finished the recording reached its end and the pipeline has heard all of it
  * @property {boolean} stopping Stop was pressed and the pipeline is still analysing audio handed
- *   to it before then; the run ends when it has answered every chunk
+ *   to it before then; the run ends when it has answered every chunk and given its last answer
+ * @property {boolean} closing the pipeline has heard all of the run's audio and has been asked
+ *   for its last answer: the reading of the beats' sounds it was working out, finished
  * @property {number} fed frames sent to the pipeline
  * @property {number} posted chunks sent to the pipeline
  * @property {number} answered chunks the pipeline has finished with
@@ -201,7 +203,7 @@ worker.onmessage = (event) => {
     if (m.id !== sessionId || !run) return;
     for (const e of /** @type {PipelineEvent[]} */ (m.events)) measurement.apply(shiftEvent(e, run.offset));
     if (measurement.state === 'tracking') run.resumed = false;
-    load = m.load;
+    if (m.load) load = m.load;
     run.answered++;
     finishIfDone(run);
     finishStopping(run);
@@ -381,7 +383,7 @@ async function start() {
  * @returns {Run}
  */
 function newRun(kind, name, duration, sampleRate, escapement, liftAngle) {
-  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
+  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, closing: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
 }
 
 /**
@@ -531,28 +533,43 @@ async function refreshMicrophones() {
 }
 
 /**
+ * Ask the pipeline for its last answer, once: it has heard all of the run's audio, and a
+ * reading of the sounds inside the beats that it was still working out is finished and shown
+ * instead of being dropped. The worker ends its session with that answer, which is counted as a
+ * chunk's is. On the iPhone a reading takes about 1.4 s of computing, so the last numbers can
+ * come that long after the audio ended.
+ * @param {Run} r
+ * @returns {boolean} whether the answer is still to come
+ */
+function awaitLast(r) {
+  if (r.closing) return r.answered < r.posted;
+  r.closing = true;
+  r.posted++;
+  worker.postMessage({ type: 'finish', id: sessionId });
+  return true;
+}
+
+/**
  * A recording's run is finished once its audio has ended and the pipeline has answered every
- * chunk of it.
+ * chunk of it and given its last answer.
  * @param {Run} r
  */
 function finishIfDone(r) {
-  if (!r.ended || r.finished || r.answered < r.posted) return;
+  if (!r.ended || r.finished || r.answered < r.posted || awaitLast(r)) return;
   r.running = false;
   r.finished = true;
-  worker.postMessage({ type: 'stop' });
   wake.want(false);
 }
 
 /**
  * A run stopped with Stop ends once the pipeline has answered every chunk handed to it before
- * then.
+ * then and given its last answer.
  * @param {Run} r
  */
 function finishStopping(r) {
-  if (!r.stopping || r.answered < r.posted) return;
+  if (!r.stopping || r.answered < r.posted || awaitLast(r)) return;
   r.stopping = false;
   sessionId++;
-  worker.postMessage({ type: 'stop' });
 }
 
 function stopPlayer() {
@@ -571,7 +588,9 @@ function stopLive() {
  * reading cover all the audio heard, which is all that a saved recording holds; a run that fits
  * in the length kept then reads exactly as a replay of its saved file. Until 22 November 2026 the
  * answers still on their way were ignored, up to a second of audio or more while an analysis
- * ran. Without `finish`, as after an error or when the analysis cannot keep up, they still are.
+ * ran. Since 26 November the reading of the beats' sounds that was being worked out is finished
+ * and shown as well (see `awaitLast`). Without `finish`, as after an error or when the analysis
+ * cannot keep up, none of this is waited for.
  * @param {boolean} [finish]
  */
 function stop(finish = false) {
@@ -580,9 +599,10 @@ function stop(finish = false) {
   loading = '';
   const r = run;
   // An interrupted microphone has no session whose answers count: they were set aside when the
-  // interruption began.
-  if (finish && r && r.running && !r.interrupted && r.answered < r.posted) {
+  // interruption began. A recording that has reached its end is already giving its last answer.
+  if (finish && r && r.running && !r.interrupted) {
     r.stopping = true;
+    finishStopping(r);
   } else {
     sessionId++;
     worker.postMessage({ type: 'stop' });

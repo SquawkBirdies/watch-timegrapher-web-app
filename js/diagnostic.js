@@ -74,6 +74,8 @@ const worker = new Worker(new URL('./dsp/worker.js', import.meta.url), { type: '
  * @property {import('./dsp/pipeline.js').ReadingsEvent|null} readings
  * @property {import('./dsp/session.js').Load|null} load
  * @property {boolean} stopped
+ * @property {boolean} closing the worker has been asked for its last answer: the reading of the
+ *   beats' sounds it was working out when the recording ended, finished for the report
  * @property {import('./dsp/estimate.js').Escapement} escapement
  * @property {number} liftAngle degrees, as given when the recording started
  */
@@ -196,6 +198,7 @@ async function start() {
     readings: null,
     load: null,
     stopped: false,
+    closing: false,
     escapement: ui.escapement.value === 'coaxial' ? 'coaxial' : 'lever',
     liftAngle: liftAngle(),
   };
@@ -284,7 +287,14 @@ async function stop() {
 function finishIfDone() {
   const r = run;
   if (!r || !r.stopped || r.answered < r.sent) return;
-  worker.postMessage({ type: 'stop' });
+  if (!r.closing) {
+    // The worker ends its session with this answer, which is counted as a chunk's is.
+    r.closing = true;
+    r.sent++;
+    worker.postMessage({ type: 'finish' });
+    setStatus('Stopped. Finishing the measurement…');
+    return;
+  }
   ui.start.disabled = false;
   setStatus(r.state === 'tracking' ? `Stopped. The pipeline was tracking ${r.bph?.toLocaleString('en-US')} vph.` : 'Stopped. The pipeline did not lock on a watch.', r.state === 'tracking' ? 'tracking' : 'problem');
   ui.report.textContent = report();
@@ -298,7 +308,7 @@ worker.onmessage = (event) => {
     const r = run;
     if (!r) return;
     r.answered++;
-    r.load = m.load;
+    if (m.load) r.load = m.load;
     for (const e of /** @type {import('./dsp/pipeline.js').PipelineEvent[]} */ (m.events)) {
       if (e.type === 'status') {
         if (r.state === 'tracking' && e.state === 'listening') r.lockLost++;

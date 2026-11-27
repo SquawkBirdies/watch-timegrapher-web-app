@@ -41,6 +41,20 @@ export class Session {
     return events;
   }
 
+  /**
+   * The audio has ended: what the pipeline still has to report (see `Pipeline.finish`). Its
+   * computing counts as the rest does.
+   * @returns {import('./pipeline.js').PipelineEvent[]}
+   */
+  finish() {
+    const t0 = performance.now();
+    const events = this.pipeline.finish();
+    const busy = (performance.now() - t0) / 1000;
+    this.busySeconds += busy;
+    this.longestSeconds = Math.max(this.longestSeconds, busy);
+    return events;
+  }
+
   /** @returns {Load} */
   load() {
     return { audioSeconds: this.audioSeconds, busySeconds: this.busySeconds, longestSeconds: this.longestSeconds, stage: this.pipeline.sounds ? this.pipeline.sounds.load() : null };

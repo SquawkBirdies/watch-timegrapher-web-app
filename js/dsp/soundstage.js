@@ -397,6 +397,23 @@ export class SoundStage {
   }
 
   /**
+   * Take the reading in progress to its end in one go. This is for the end of the audio, at
+   * Stop or where a recording finishes: no beats are left for the work to keep out of the way
+   * of, and no audio blocks to spread it over. No reading is started.
+   * @param {number} now cleaned samples received so far
+   */
+  finish(now) {
+    if (!this.job) return;
+    const share = this.share;
+    this.share = Infinity;
+    try {
+      this.work(now, 0);
+    } finally {
+      this.share = share;
+    }
+  }
+
+  /**
    * @param {SoundsReading} reading
    * @param {[number, number]} window
    * @param {number} computeSeconds

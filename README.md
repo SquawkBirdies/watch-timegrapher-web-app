@@ -603,30 +603,45 @@ reads as 294° at 28,800 vph and as nothing believable at 21,600 vph and below. 
 while the simulator runs starts it again, as a new beat rate does. Left running, its beats from
 before the change were read with the new angle for up to a minute, at amplitudes the watch never
 had: with 270° set, 186° for half a minute after a change from 52° to 36°, then a dash, and 268°
-only a minute after the change. Its loudness now starts at 3.00× instead of 2.00×, and the slider
-reaches 4.00×: at 2.00× the simulated unlock stands about 10 dB over the noise of the averaged beat,
-5 to 17% of the draws lost it, and the readings were often held back; at 2.50× and 3.00× none did at
-any of four beat rates. In Node, at 52°, the simulator at 270° reads 268.8° to 269.3° at 18,000 to
-28,800 vph and 266.8° to 267.9° at 36,000 vph, and 0.38 to 0.43 ms for 0.40 ms set. With other lift
-angles set: 268° at 36° and 28,800 vph, 269° at 60° and 21,600 vph, 199.6° for 200° set at 70° and
-18,000 vph, and 296° for 300° set at 30° and 36,000 vph.
+only a minute after the change. Its loudness now starts at 3.00× instead of 2.00× (agreed on 26
+November), and the slider reaches 4.00×: at 2.00× the simulated unlock stands about 10 dB over the
+noise of the averaged beat, 5 to 17% of the draws lost it, and the readings were often held back; at
+2.50× and 3.00× none did at any of four beat rates. In Node, at 52°, the simulator at 270° reads
+268.8° to 269.3° at 18,000 to 28,800 vph and 266.8° to 267.9° at 36,000 vph, and 0.38 to 0.43 ms for
+0.40 ms set. With other lift angles set: 268° at 36° and 28,800 vph, 269° at 60° and 21,600 vph,
+199.6° for 200° set at 70° and 18,000 vph, and 296° for 300° set at 30° and 36,000 vph.
 
 **The audio diagnostic** takes a lift angle as well (decided on 26 November), 52° unless another is
 typed, and gives the app's own amplitude and beat error in its reading line and in its report, as
 "amplitude 288° ±1.1° over 50 s" or "amplitude — (needs 30 s of beats)". The report keeps the gap
 between the timed beats beside them, under that name, with each beat's time from unlock to lock and
 what reading the sounds cost. Until this step the page ran the pipeline without a lift angle and
-called that gap the beat error.
+called that gap the beat error. The page now starts with the 60-second recording (decided on 26
+November): the two readings come about 40 s in, and a 30-second recording ends with "needed 30 s of
+beats".
+
+**Where the audio ends,** at Stop and at the end of a recording, the reading of the beats' sounds
+that is being worked out is finished and shown (decided on 26 November); until then it was dropped,
+and a run could end on a dash with its last reading a second from done. A reading is spread over the
+audio that follows its start, so that the beats are still timed promptly, and takes about 1.4 s of
+computing on the iPhone: the last numbers can come that long after Stop. They rest on beats heard
+before the end, as every reading does, and no reading is started for it. A reading finished within
+the last second, which had not yet gone out with the once-a-second readings, is shown as well. The
+audio diagnostic does the same for its report, and so does `tools/run-stream.js` when it is given a
+share of real time.
 
 In Chrome at phone size, on this computer, with each source played at real speed:
 
 - **The Omega demo** locked 9 s in with both beats grey and a dash for both readings. 46 s in it
   showed 290° ±1.5° and 0.34 ms ±0.07, each over 30 s, coloured its beats and drew its bars. 53 s in
   the second reading was held back, more than 5% of its draws having lost the unlock, and both went
-  back to a dash; the recording ended before a third was finished, so the demo ended on a dash. On
-  the iPhone, before this step, the same demo was read four times and the last could be shown. In
-  Node, with a reading every 5 s finished at once, all five are shown: 0.34, 0.32, 0.30, 0.30 and
-  0.32 ms, and 290°, 290°, 289°, 289° and 288°.
+  back to a dash. The recording ended while a third was being worked out: finished there, in 3.4 and
+  3.5 s of computing in two runs, it showed 289° ±1.1° and 0.31 and 0.30 ms ±0.05, each over 45 s,
+  where the demo used to end on a dash. Stopped 43 s in, while its first reading was being worked
+  out, the demo showed "needed 30 s of beats" and within a second 290° ±1.5° and 0.34 ms ±0.07, with
+  its beats coloured. On the iPhone, before this step, the same demo was read four times and the
+  last could be shown. In Node, with a reading every 5 s finished at once, all five are shown: 0.34,
+  0.32, 0.30, 0.30 and 0.32 ms, and 290°, 290°, 289°, 289° and 288°.
 - **The ETA demo** coloured its beats at the lock and ended with a dash for both readings and
   "needed 30 s of beats": its capture has 22 s of them after the lock.
 - **The simulator as it starts** (28,800 vph, 270°, 0.40 ms) locked 9 s in and showed 268° ±1.0° and
@@ -638,12 +653,15 @@ In Chrome at phone size, on this computer, with each source played at real speed
   once; it locked 9 s later and showed 268° ±0.8° and 0.38 ms ±0.02 41 s after the change.
 - **The audio diagnostic**, with a recording played in as the microphone, showed "needs 30 s of
   beats" for both from the lock on, and its report gave the lift angle, both readings and the gap
-  between the timed beats. Chrome's simulated microphone drops out about 35 s in and runs at
-  44.1 kHz, so no reading of the sounds was shown in 60 s there: the Omega's capture at 36° had its
-  three readings held back ("sounds not clear enough"), and a simulated lever lost its lock at
-  36 s. With the page's script served so that the stage read after 12 s of beats, and nothing else
-  changed, the simulated lever of 0.50 ms and 270° at 50° read "amplitude 270° ±0.5° over 12 s ·
-  beat error 0.50 ms ±0.02 over 12 s".
+  between the timed beats. Chrome's simulated microphone drops out about 35 s in and runs at 44.1
+  kHz, so no reading of the sounds was shown in 60 s there: the Omega's capture at 36° had its three
+  readings held back ("sounds not clear enough"), and a simulated lever lost its lock at 36 s. With
+  the page's script served so that the stage read after 12 s of beats, and nothing else changed, the
+  simulated lever of 0.50 ms and 270° at 50° read "amplitude 270° ±0.5° over 12 s · beat error 0.50
+  ms ±0.02 over 12 s". Served so that the first reading started about a second before the end of a
+  30-second recording, the report gave "amplitude 270° ±0.3° over 21 s, beat error 0.51 ms ±0.01
+  over 21 s". Before a reading made in the last second was reported where the audio ends, the same
+  run's report ended on "needed 30 s of beats" with that reading already made.
 - **Six positions**, on the simulator: a position saved 22 s after the lock kept a dash for both,
   and one saved 42 s after its lock kept 0.39 ms and 268° (see [Six positions](#six-positions)).
 
@@ -652,10 +670,15 @@ What this step leaves as it is, and its limits:
 - **A reading can appear, give way to a dash and come back,** as the Omega demo's did above. With 30
   to 40 s of the Omega's beats 4 to 6% of the draws lose its faint unlock, against the 5% allowed,
   and one beat more or less in the reading decides. No rule holds a number on the screen through
-  that: a dash, never a stale value.
-- **A reading still being worked out when the audio ends is dropped.** At Stop, and at the end of a
-  recording, the beats heard are still timed, but the sounds inside them are not read once more.
-  That is why the Omega demo above ended on a dash on a computer that needs 5 s for a reading.
+  that: a dash, never a stale value. It was left so on 26 November until it is seen on the phone,
+  where it has not been looked for yet. The two rules considered were to show the first number only
+  after two readings in a row pass, which adds about 5 s and would have left the Omega demo in
+  Chrome without a number for its whole minute, and to keep a number once shown up to a higher share
+  of failing draws, which shows readings the gate refuses today and has not been measured.
+- **The last numbers can come after Stop,** by up to a reading's computing: about 1.4 s on the
+  iPhone, and 2.2 to 3.5 s for the Omega on this computer. Start pressed in that time waits for it.
+  No reading is started where the audio ends, so the last one shown can rest on beats up to about 10
+  s before the end.
 - **After a change, the beat error is slow and the amplitude blank.** Both rest on up to a minute of
   beats. With the simulator's beat error moved from 0.40 to 1.00 ms, the reading passed through 0.42
   ms after 9 s, 0.51 after 18 s, 0.79 after 34 s and 0.97 after 54 s, and reached 1.00 after 64 s,
@@ -663,7 +686,12 @@ What this step leaves as it is, and its limits:
   the watch has moved within it. The gap between the timed beats had followed within 14 s. With its
   amplitude moved from 270° to 220°, the old reading stayed for 4 s, a dash followed for 20 s, and
   219° was shown from 28 s after the change. A watchmaker turning a regulator or moving a stud will
-  see the same. Following a change sooner is part of the fifth step.
+  see the same. The fifth step follows the amplitude over time and not the beat error. Following a
+  change of beat error sooner is a piece of work of its own, to come before that step (decided on 26
+  November). Two rules are to be measured for it, on simulated adjustments and on the irregular
+  watches: a dash while the gap between the timed beats disagrees with the minute's reading, and
+  starting the minute again when that gap steps. Either may cost dashes or wrong restarts on watches
+  that are only irregular, which is what the measuring is for.
 - **A Swiss lever within about 0.05 ms of in beat may never be named,** and its two lines then
   nearly coincide. On 24 November, of simulated levers 20 s after the lock, all 24 at 0.1 to 0.2 ms
   were named, 10 of 12 at 0.05 ms, and none of 12 in perfect beat. The names follow the sign of the
@@ -676,8 +704,8 @@ What this step leaves as it is, and its limits:
 - **The trace is still drawn from the timed beats,** so the gap between its two lines is the gap
   between each beat's loudest sounds, not the beat error on the readout: 0.42 ms against 0.27 ms on
   the ETA's capture, and 3.4 ms against 0.3 ms on the Omega's. The caption says so.
-- **On the audio diagnostic the two readings need the 60 s recording,** and come about 40 s into it.
-  A 30 s recording, which is what the page starts with, ends with "needed 30 s of beats".
+- **On the audio diagnostic a 30 s recording is too short for the two readings,** which come about
+  40 s in; it ends with "needed 30 s of beats". The page starts with 60 s.
 
 ## Live microphone
 

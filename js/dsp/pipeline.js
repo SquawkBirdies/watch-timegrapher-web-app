@@ -391,6 +391,8 @@ export class Pipeline {
      * @type {SoundStage|null}
      */
     this.sounds = this.options.liftAngle === undefined ? null : new SoundStage(this.bank, this.cleanup.delay, this.options.liftAngle, this.options.sounds);
+    /** The stage's version when its report last went out with the readings, once a second. */
+    this.soundsSent = -1;
   }
 
   /**
@@ -470,6 +472,30 @@ export class Pipeline {
         this.step();
       }
     }
+    const out = this.events;
+    this.events = [];
+    return out;
+  }
+
+  /**
+   * The audio has ended, at Stop or with a recording: finish the reading of the sounds inside
+   * the beats that is being worked out, and report it. During a run that reading is spread over
+   * the audio blocks that follow its start, so that the beats are still timed promptly; with no
+   * more blocks to come it would never be finished, and until 26 November 2026 it was dropped,
+   * so that a run could end on a dash while its last reading was a second from done. A reading
+   * finished since the readings last went out, which they do once a second, is reported here
+   * too. Either rests on beats heard before the end, as every reading does. No reading is
+   * started here, and nothing is reported when the stage has nothing new.
+   * @returns {PipelineEvent[]}
+   */
+  finish() {
+    const stage = this.sounds;
+    if (!stage || this.state !== 'tracking' || !this.lock) return [];
+    const before = stage.version;
+    stage.finish(this.count);
+    // The marks on the averaged beat follow the reading.
+    if (stage.version !== before) this.events.push(this.waveform());
+    if (stage.version !== this.soundsSent) this.emitReadings();
     const out = this.events;
     this.events = [];
     return out;
@@ -1303,6 +1329,7 @@ export class Pipeline {
       signal.cycles[type] = ty.K;
     }
     const sounds = this.sounds ? this.sounds.report(lock.irregular, this.halfway()) : null;
+    if (this.sounds) this.soundsSent = this.sounds.version;
     if (this.tick === null) this.tick = this.nameTick(r, sounds, lock.irregular);
     return { type: 'readings', t: this.toSeconds(this.count), window: [this.toSeconds(inside[0].p), this.toSeconds(inside[inside.length - 1].p)], windowStart: this.toSeconds(from), windowSeconds: span / this.fe, signal, irregular: lock.irregular, sounds, tick: this.tick, ...r };
   }
