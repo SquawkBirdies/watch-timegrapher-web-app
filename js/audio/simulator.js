@@ -158,12 +158,31 @@ export function synthesizeWatch(options) {
   return { sampleRate: fs, channels, truePeriod, beatTimes: Float64Array.from(beatTimes) };
 }
 
-/** The three sounds of a simulated beat: time before the beat's nominal time, loudness, decay. */
+/**
+ * The three sounds of a simulated beat: time before the beat's nominal time, loudness, decay.
+ * They stand for a Swiss lever's unlock, impulse and lock.
+ */
 const BEAT_SOUNDS = [
   { dt: -0.007, amp: 0.25, decayMs: 0.3 },
   { dt: -0.0045, amp: 0.45, decayMs: 0.4 },
   { dt: 0, amp: 1.0, decayMs: 0.5 },
 ];
+
+/** Lift angle of the in-app simulator's watch, in degrees: the app's default setting. */
+export const SIMULATED_LIFT_ANGLE = 52;
+
+/**
+ * How long a balance swinging to `amplitude` takes to cross `liftAngle` about its rest
+ * position, which is the time from a beat's unlock to its lock: the amplitude formula of
+ * js/dsp/amplitude.js (`amplitudeOf`) the other way round.
+ * @param {number} amplitude in degrees
+ * @param {number} bph beat rate in beats per hour
+ * @param {number} [liftAngle] in degrees
+ * @returns {number} seconds
+ */
+export function liftSeconds(amplitude, bph, liftAngle = SIMULATED_LIFT_ANGLE) {
+  return Math.asin(liftAngle / (2 * amplitude)) / (Math.PI * (bph / 7200));
+}
 
 /**
  * @typedef {Object} StreamOptions
@@ -174,14 +193,18 @@ const BEAT_SOUNDS = [
  * @property {number} [jitterMs] standard deviation of a random displacement given to every beat,
  *   for a watch that runs irregularly; 0 when absent. Displacements beyond four standard
  *   deviations are cut back to four
+ * @property {number} [amplitude] swing of the balance in degrees, for a watch whose lift angle
+ *   is SIMULATED_LIFT_ANGLE: each beat's first sound then comes `liftSeconds` before its last,
+ *   and the sound between them in proportion. When absent the first sound comes 7 ms before
+ *   the last at every beat rate, which is a believable swing only at some of them
  * @property {number} [sampleRate]
  * @property {number} [seed]
  */
 
 /**
  * A simulated watch that runs for as long as audio is asked of it, in one channel. The rate,
- * beat offset, loudness and beat variability (`jitterMs`) are plain properties: a change
- * applies from the next beat, as when
+ * beat offset, loudness, beat variability (`jitterMs`) and amplitude are plain properties: a
+ * change applies from the next beat, as when
  * a watchmaker turns the regulator while the watch is on the timegrapher. The background and
  * the ticks are the same kind as `synthesizeWatch` makes, without the mains buzz. The output
  * does not depend on the chunk sizes asked for.
@@ -189,12 +212,14 @@ const BEAT_SOUNDS = [
 export class WatchStream {
   /** @param {StreamOptions} options */
   constructor(options) {
-    const { bph, rate = 0, beatOffsetMs = 0, gain = 1, jitterMs = 0, sampleRate = 48000, seed = 1 } = options;
+    const { bph, rate = 0, beatOffsetMs = 0, gain = 1, jitterMs = 0, amplitude, sampleRate = 48000, seed = 1 } = options;
     this.bph = bph;
     this.rate = rate;
     this.beatOffsetMs = beatOffsetMs;
     this.gain = gain;
     this.jitterMs = jitterMs;
+    /** @type {number|undefined} */
+    this.amplitude = amplitude;
     this.sampleRate = sampleRate;
     // Separate generators for the background and the ticks keep the output independent of
     // the chunk sizes: each is used in the same order whatever the chunks.
@@ -238,8 +263,10 @@ export class WatchStream {
     const m = out.length;
     // Every beat whose sounds start before the end of this piece is made now. The 20 ms margin
     // keeps a beat's earliest sound (7 ms early) from falling before the current position, and
-    // the margin grows by as far as a beat can be displaced early.
-    const horizon = (this.position + m) / fs + 0.02 + 4e-3 * this.jitterMs;
+    // the margin grows by as far as a beat can be displaced early, and by as much as a small
+    // amplitude at a low beat rate puts that sound earlier still (22 ms at 150 degrees and
+    // 18,000 vph).
+    const horizon = (this.position + m) / fs + 0.02 + 4e-3 * this.jitterMs + Math.max(0, this.unlockSeconds() - 0.007);
     while (this.nextBeat < horizon) this.beat();
     for (let i = 0; i < m; i++) {
       const w = this.noise();
@@ -253,18 +280,25 @@ export class WatchStream {
     this.position += m;
   }
 
+  /** @returns {number} seconds from a beat's first sound, its unlock, to its last, its lock */
+  unlockSeconds() {
+    return this.amplitude === undefined ? -BEAT_SOUNDS[0].dt : liftSeconds(this.amplitude, this.bph);
+  }
+
   /** Add the next beat's sounds to the tick buffer and schedule the beat after it. */
   beat() {
     const fs = this.sampleRate;
     const odd = this.beatIndex % 2 === 1;
     const scatter = Math.max(-4, Math.min(4, this.displace())) * this.jitterMs * 1e-3;
     const t = this.nextBeat + (odd ? this.beatOffsetMs * 1e-3 : 0) + scatter;
+    // The sounds keep their order and their proportions, stretched to the amplitude's time.
+    const stretch = this.unlockSeconds() / -BEAT_SOUNDS[0].dt;
     if (this.gain > 0) {
       for (const s of BEAT_SOUNDS) {
         const level = s.amp * this.gain * 1e-3 * (odd ? 0.8 : 1);
         for (let i = 0; i < this.burstLength; i++) this.raw[i] = this.burstNoise() * Math.exp(-i / (s.decayMs * 1e-3 * fs));
         new Cascade(bandpassSections(fs, 3000, 14000)).process(this.raw, this.shaped);
-        const pos = (t + s.dt) * fs - this.position;
+        const pos = (t + s.dt * stretch) * fs - this.position;
         const i0 = Math.floor(pos);
         const frac = pos - i0;
         for (let i = 0; i < this.burstLength; i++) {

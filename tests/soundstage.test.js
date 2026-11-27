@@ -13,6 +13,9 @@ import { measureSounds } from '../js/dsp/amplitude.js';
 import { Pipeline } from '../js/dsp/pipeline.js';
 import { madeUpWatch, ENVELOPE_RATE } from './helpers/envelopes.js';
 import { synthesizeBalanceWatch, leverWatch } from './helpers/balance.js';
+import { parityOf } from './helpers/stream.js';
+import { Measurement, soundsReadout } from '../js/ui/model.js';
+import { readiness, takeReading, describeReading, positionStep, withReading, emptyLog, summarise, describeSummary } from '../js/ui/positions.js';
 
 /**
  * @typedef {ReturnType<typeof madeUpWatch>} MadeUp
@@ -395,6 +398,75 @@ test('in the pipeline, the marks on the averaged beat come with the amplitude an
   // The marks went with the old reading and came back with the new one.
   const around = waves.filter((w) => w.t > changeT - 0.05 && w.t < changeT + 0.2);
   assert.ok(around.length >= 2 && around[0].marks === null && around[around.length - 1].marks !== null, `${around.length} waveform events at the change`);
+});
+
+test('on the screen, that lever is named at the lock by the longer gap after its tick; amplitude and beat error show a dash and why for 30 s, then the watch\'s own within 1 degree and 0.03 ms; the six-position log keeps a dash for both when saved early and both when saved later', () => {
+  const events = leverEvents(4096, true);
+  const truth = lever().truth;
+  const changeT = CHANGE_AT / 48000;
+  const m = new Measurement();
+  m.start();
+  /** @type {{reading: ReadingsEvent, words: ReturnType<typeof soundsReadout>, ready: boolean, names: (string|null)[]}[]} */
+  const seen = [];
+  for (const e of events) {
+    if (e.type !== 'beats' && e.t >= changeT) break;
+    m.apply(e);
+    if (e.type !== 'readings' || e.window === null) continue;
+    seen.push({ reading: e, words: soundsReadout(m.state === 'tracking', m.readings, 50), ready: readiness(true, e, 20, m.lockSince).ready, names: [...new Set(m.points().map((p) => p.name))] });
+  }
+  const lock = /** @type {number} */ (m.lockSince);
+  // The names: with the first reading, and every dot of the trace then has one. The simulated
+  // odd beats lock 0.5 ms from midway between the even ones; the tick is the beat the longer
+  // gap follows.
+  const tick = seen[0].reading.tick;
+  assert.ok(tick !== null && seen.every((x) => x.reading.tick === tick), 'named at the lock, and kept');
+  assert.ok(seen.every((x) => x.names.length === 2 && x.names.includes('tick') && x.names.includes('tock')), 'no dot without a name');
+  assert.ok(Math.abs(Math.abs(truth.lockGapMs) - 0.5) < 0.01);
+  assert.equal(parityOf(m.episodes[0].beats, truth.lock, tick), truth.lockGapMs > 0 ? 0 : 1, 'the beat followed by the longer gap');
+  // The readout: a dash and the reason until the first reading of the sounds, 30 s after the lock.
+  const firstShown = seen.findIndex((x) => x.words.amplitude !== '—');
+  assert.ok(firstShown > 25 && seen[firstShown].reading.t > lock + 29.5 && seen[firstShown].reading.t < lock + 31.5);
+  for (const x of seen.slice(0, firstShown)) assert.deepEqual(x.words, { amplitude: '—', amplitudeNote: 'needs 30 s of beats', beatError: '—', beatErrorNote: 'needs 30 s of beats' });
+  // Then both, in the digits the screen gives, with their scatter and the beats they rest on.
+  for (const x of seen.slice(firstShown)) {
+    assert.ok(Math.abs(Number(x.words.amplitude) - truth.meanAmplitude) <= 1, `amplitude ${x.words.amplitude}, truly ${truth.meanAmplitude.toFixed(1)}`);
+    assert.ok(Math.abs(Number(x.words.beatError) - Math.abs(truth.unlockGapMs)) <= 0.03, `beat error ${x.words.beatError} ms, truly ${Math.abs(truth.unlockGapMs).toFixed(3)}`);
+    assert.match(x.words.amplitudeNote, /^±0\.\d° over 3\d s$/);
+    assert.match(x.words.beatErrorNote, /^±0\.0[1-3] over 3\d s$/);
+  }
+  // After the run, a lift angle set to 52 degrees leaves a dash for the amplitude made at 50.
+  const last = seen[seen.length - 1];
+  const changed = soundsReadout(true, last.reading, 52, false);
+  assert.deepEqual([changed.amplitude, changed.amplitudeNote, changed.beatError], ['—', 'lift angle changed', last.words.beatError]);
+
+  // The six-position log. Save is ready 20 s after the lock, 10 s before the sounds are read:
+  // the line says what is still to come, and a position saved then keeps a dash for both.
+  const firstReady = seen.findIndex((x) => x.ready);
+  assert.ok(firstReady > 0 && firstReady < firstShown && seen[firstReady].reading.t < lock + 21);
+  const context = { bph: 28800, escapement: /** @type {const} */ ('lever'), source: 'Simulator', now: new Date('2026-11-26T12:00:00Z') };
+  const sounds = /** @type {NonNullable<ReadingsEvent['sounds']>} */ (seen[firstReady].reading.sounds);
+  assert.match(positionStep({ target: 'dialUp', saved: null, running: true, tracking: true, covered: 20, needed: 20, ready: true, rateSd: seen[firstReady].reading.rateSd, waiting: sounds.amplitudeWhy === 'waiting' }), /^Ready to save as Dial up\. The beat error and the amplitude need 30 s of beats: wait for them, or save without\.$/);
+  const early = takeReading(seen[firstReady].reading, context);
+  assert.ok(early);
+  assert.deepEqual([early.beatErrorMs, early.beatErrorGap, early.amplitude, early.amplitudeGap, early.liftAngle], [null, 'waiting', null, 'waiting', 50]);
+  assert.match(describeReading(early).detail, / · no beat error or amplitude: saved before 30 s of beats$/);
+  // Saved once they are on the screen, the position keeps both as they were shown.
+  const late = takeReading(last.reading, context);
+  assert.ok(late && late.beatErrorMs !== null && late.beatErrorSd !== null && late.amplitude !== null && late.amplitudeSd !== null);
+  assert.ok(Math.abs(late.beatErrorMs - Math.abs(truth.unlockGapMs)) <= 0.03 && Math.abs(late.amplitude - truth.meanAmplitude) <= 1);
+  assert.deepEqual([late.beatErrorGap, late.amplitudeGap, late.liftAngle], [null, null, 50]);
+  assert.equal(describeReading(late).main.split(' · ').slice(1).join(' · '), `${last.words.beatError} ms · ${last.words.amplitude}°`);
+  // The summary takes its largest beat error and its median amplitude from the position that has them.
+  const log = withReading(withReading(emptyLog(), 'dialUp', early), 'dialDown', late);
+  const summary = describeSummary(summarise(log));
+  assert.deepEqual([summary.beatError, summary.beatErrorNote, summary.amplitude, summary.amplitudeNote], [`${last.words.beatError} ms`, 'Dial down', `${last.words.amplitude}°`, 'of 1 position']);
+
+  // The lift angle is then set to 44 degrees while the run goes on: the next reading is made
+  // with it and shown with it, 44/50 of the amplitude before.
+  const after = /** @type {ReadingsEvent} */ (events.find((e) => e.type === 'readings' && e.t > changeT));
+  const at44 = soundsReadout(true, after, 44);
+  assert.ok(Math.abs(Number(at44.amplitude) - (truth.meanAmplitude * 44) / 50) <= 1, `at 44 degrees ${at44.amplitude}`);
+  assert.equal(soundsReadout(true, after, 50).amplitudeNote, 'lift angle changed', 'and not shown as if made at 50');
 });
 
 test('in the pipeline, the stage\'s readings do not depend on how the audio is cut into chunks, and timestamps, rate and beat error are the same with the stage as without', () => {

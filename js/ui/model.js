@@ -19,6 +19,13 @@
  * @property {number} base trace value of the reference beat, in milliseconds: 0 for the first
  *   stretch, and where the previous stretch ended for later ones, so the trace does not jump
  * @property {Beat[]} beats in time order
+ * @property {0|1|null} tick which type of beat is the tick, once the pipeline's readings have
+ *   said so; null until then, and the stretch's beats then have no names
+ */
+
+/**
+ * What a beat is called once the pipeline has named the tick.
+ * @typedef {'tick'|'tock'} BeatName
  */
 
 /**
@@ -26,7 +33,9 @@
  * @typedef {Object} TracePoint
  * @property {number} t seconds from the start of the audio
  * @property {number} y milliseconds ahead of an ideal clock at the nominal beat rate
- * @property {0|1} type 0 for a tick, 1 for a tock
+ * @property {0|1} type the pipeline's two kinds of beat, which alternate
+ * @property {BeatName|null} name tick or tock; null while the pipeline has not named them, and
+ *   both kinds are then drawn in one colour
  * @property {boolean} ok false for a low-confidence timestamp
  * @property {number} cycles tick-tock cycles averaged for this timestamp
  */
@@ -52,6 +61,15 @@ export class Measurement {
     this.lockSince = null;
     /** Seconds of audio sent to the pipeline so far. */
     this.audioSeconds = 0;
+  }
+
+  /**
+   * Which type of beat is the tick in the stretch of lock now on, or in the last one.
+   * @returns {0|1|null} null when the pipeline has not named it
+   */
+  get tick() {
+    const ep = this.episodes[this.episodes.length - 1];
+    return ep ? ep.tick : null;
   }
 
   /** The source is starting: everything goes back to its starting state. */
@@ -92,7 +110,7 @@ export class Measurement {
         const ep = this.episodes[this.episodes.length - 1];
         if (!(e.continues && ep && ep.bph === e.bph && ep.n0 !== null)) {
           const last = this.lastPoint();
-          this.episodes.push({ bph: /** @type {number} */ (e.bph), n0: null, t0: null, base: last ? last.y : 0, beats: [] });
+          this.episodes.push({ bph: /** @type {number} */ (e.bph), n0: null, t0: null, base: last ? last.y : 0, beats: [], tick: null });
         }
         if (this.lockedAt === null) this.lockedAt = e.t;
         // A lock that carries on a lost one is still a new lock: what was heard while it was
@@ -122,6 +140,10 @@ export class Measurement {
       this.trim();
     } else if (e.type === 'readings') {
       this.readings = e.window === null ? null : e;
+      // The names are the pipeline's to give and to take back: it keeps them for as long as
+      // the beat numbers carry on, and drops them only when the escapement setting changes.
+      const ep = this.episodes[this.episodes.length - 1];
+      if (ep && e.window !== null && this.state === 'tracking') ep.tick = e.tick;
     } else if (e.type === 'waveform') {
       this.waveform = e;
     }
@@ -160,7 +182,7 @@ export class Measurement {
       if (ep.n0 === null) continue;
       for (const b of ep.beats) {
         if (b.t < from || b.t > to) continue;
-        out.push({ t: b.t, y: Measurement.ahead(ep, b), type: b.type, ok: b.ok, cycles: b.cycles });
+        out.push({ t: b.t, y: Measurement.ahead(ep, b), type: b.type, name: beatName(b.type, ep.tick), ok: b.ok, cycles: b.cycles });
       }
     }
     return out;
@@ -173,11 +195,21 @@ export class Measurement {
       if (ep.n0 === null) continue;
       for (let k = ep.beats.length - 1; k >= 0; k--) {
         const b = ep.beats[k];
-        if (b.ok) return { t: b.t, y: Measurement.ahead(ep, b), type: b.type, ok: true, cycles: b.cycles };
+        if (b.ok) return { t: b.t, y: Measurement.ahead(ep, b), type: b.type, name: beatName(b.type, ep.tick), ok: true, cycles: b.cycles };
       }
     }
     return null;
   }
+}
+
+/**
+ * @param {0|1} type one of the pipeline's two kinds of beat
+ * @param {0|1|null} tick the kind that is the tick, or null while they have no names
+ * @returns {BeatName|null}
+ */
+export function beatName(type, tick) {
+  if (tick === null) return null;
+  return type === tick ? 'tick' : 'tock';
 }
 
 /**
@@ -294,8 +326,6 @@ export function formatBph(bph) {
 export const CLEAR_Z = 20;
 export const FAINT_Z = 8;
 
-/** @param {0|1} type */
-const typeName = (type) => (type === 0 ? 'tick' : 'tock');
 
 /**
  * @param {ReadingsEvent|null} readings
@@ -328,18 +358,24 @@ export function signalLevel(readings) {
 /**
  * Which dots of the trace are averages, in words; empty when every beat is timed on its own.
  * @param {ReadingsEvent|null} readings
+ * @param {0|1|null} [tick] the kind of beat that is the tick; null while they have no names
  * @returns {string}
  */
-export function averagingNote(readings) {
+export function averagingNote(readings, tick = null) {
   const s = readings && readings.signal;
   if (!s) return '';
-  const [tick, tock] = s.cycles.map((c) => c || 1);
-  if (tick > 1 && tick === tock) return `Each dot averages ${tick} cycles.`;
-  /** @type {string[]} */
-  const parts = [];
-  if (s.cycles[0] !== null && tick > 1) parts.push(`Tick dots average ${tick} cycles.`);
-  if (s.cycles[1] !== null && tock > 1) parts.push(`Tock dots average ${tock} cycles.`);
-  return parts.join(' ');
+  const cycles = s.cycles.map((c) => c || 1);
+  if (cycles[0] > 1 && cycles[0] === cycles[1]) return `Each dot averages ${cycles[0]} cycles.`;
+  const averaged = /** @type {(0|1)[]} */ ([0, 1]).filter((type) => s.cycles[type] !== null && cycles[type] > 1);
+  if (tick === null) {
+    if (averaged.length === 2) return `The dots of one beat average ${cycles[0]} cycles, the other's ${cycles[1]}.`;
+    return averaged.length ? `Every other dot averages ${cycles[averaged[0]]} cycles.` : '';
+  }
+  // Tick first, whichever kind it is.
+  return averaged
+    .sort((a, b) => Number(a !== tick) - Number(b !== tick))
+    .map((type) => `${type === tick ? 'Tick' : 'Tock'} dots average ${cycles[type]} cycles.`)
+    .join(' ');
 }
 
 /**
@@ -369,9 +405,10 @@ export function irregularWarning(readings) {
  */
 
 /**
- * The fine print on the computing that reading the sounds inside the beats takes: the beat
- * error from the unlocks and the amplitude, which are not on the screen yet. It is there so that
- * the cost can be read off a phone.
+ * The fine print on the computing that reading the sounds inside the beats takes, for the beat
+ * error and the amplitude. It is there so that the cost can be read off a phone. When a reading
+ * gave nothing, or one of the two is held back, it adds the pipeline's own word for the reason,
+ * which the readout gives in plain language.
  * @param {import('../dsp/soundstage.js').StageLoad|null} stage the stage's computing so far
  * @param {import('../dsp/soundstage.js').SoundsReport|null} sounds what the latest readings carry
  * @returns {string} empty when the stage is not running or has not finished a reading
@@ -381,12 +418,124 @@ export function stageNote(stage, sounds) {
   let result = '';
   if (sounds && sounds.detail) {
     if (sounds.detail.why !== null) result = `, no reading (${sounds.detail.why})`;
-    else if (sounds.amplitude !== null && sounds.beatErrorMs !== null) result = ', both to show';
-    else if (sounds.amplitude !== null) result = `, amplitude to show, beat error held back (${sounds.beatErrorWhy})`;
-    else if (sounds.beatErrorMs !== null) result = `, beat error to show, amplitude held back (${sounds.amplitudeWhy})`;
-    else result = `, held back (${sounds.amplitudeWhy})`;
+    else if (sounds.amplitude !== null && sounds.beatErrorMs !== null) result = '';
+    else if (sounds.amplitude !== null) result = `, beat error held back (${sounds.beatErrorWhy})`;
+    else if (sounds.beatErrorMs !== null) result = `, amplitude held back (${sounds.amplitudeWhy})`;
+    else result = `, both held back (${sounds.amplitudeWhy})`;
   }
-  return `amplitude read ${stage.readings} time${stage.readings === 1 ? '' : 's'}, last in ${stage.lastSeconds.toFixed(1)} s of computing over ${stage.lastAudioSeconds.toFixed(1)} s${result}`;
+  return `beat sounds read ${stage.readings} time${stage.readings === 1 ? '' : 's'}, last in ${stage.lastSeconds.toFixed(1)} s of computing over ${stage.lastAudioSeconds.toFixed(1)} s${result}`;
+}
+
+/**
+ * Seconds of beats the pipeline wants of each kind before it first reads the sounds inside
+ * them: FIRST_READING_SECONDS of js/dsp/soundstage.js, repeated here so that the page does not
+ * load the pipeline's code, which runs in the worker. A test holds the two together.
+ */
+export const BEATS_NEEDED_SECONDS = 30;
+
+/**
+ * Why a reading taken from the sounds inside the beats shows a dash, in plain language. The
+ * words are short: they stand under a number in a narrow column.
+ * @param {import('../dsp/soundstage.js').StageWhy|null} why the pipeline's reason
+ * @returns {string} empty for no reason
+ */
+export function whyWords(why) {
+  switch (why) {
+    case null:
+      return '';
+    case 'waiting':
+      return `needs ${BEATS_NEEDED_SECONDS} s of beats`;
+    case 'averaged':
+      return 'beats too faint';
+    case 'few-beats':
+      return 'too few clear beats';
+    case 'lift-range':
+      return 'check the lift angle';
+    case 'failing':
+      return 'sounds not clear enough';
+    case 'irregular':
+      return 'irregular beat';
+    case 'halfway':
+      return 'check the beat rate';
+    case 'scatter':
+      return 'readings too scattered';
+    case 'unplaced':
+    case 'placement':
+      return 'beat timing unsure';
+    case 'unchecked':
+      return 'not checked';
+    default:
+      // The remaining reasons are all the same to the user: the unlock, or the lock to pair it
+      // with, was not found in the averaged beats.
+      return 'sounds not found';
+  }
+}
+
+/**
+ * A scatter as shown beside its reading: at least one unit of the last digit shown, so that a
+ * reading is never given as exact.
+ * @param {number} sd
+ * @param {number} digits
+ * @returns {string}
+ */
+function formatScatter(sd, digits) {
+  return Math.max(sd, 10 ** -digits).toFixed(digits);
+}
+
+/**
+ * What the readout shows for the amplitude and the beat error, which are both read from the
+ * sounds inside the beats.
+ * @typedef {Object} SoundsReadout
+ * @property {string} amplitude whole degrees, or a dash
+ * @property {string} amplitudeNote its scatter and the beats it rests on, or why there is a dash
+ * @property {string} beatError milliseconds, or a dash
+ * @property {string} beatErrorNote as for the amplitude
+ */
+
+/**
+ * @param {boolean} tracking the pipeline is locked
+ * @param {ReadingsEvent|null} readings the latest readings
+ * @param {number} liftAngle the lift angle in effect, in degrees. An amplitude made with another
+ *   is not shown: after a run has ended, a new setting leaves a dash and says why
+ * @param {boolean} [running] false once the source has stopped or a recording has ended: a
+ *   reading that was still waiting for beats will not get them
+ * @returns {SoundsReadout}
+ */
+export function soundsReadout(tracking, readings, liftAngle, running = true) {
+  const s = tracking && readings ? readings.sounds : null;
+  if (!s) return { amplitude: '—', amplitudeNote: '', beatError: '—', beatErrorNote: '' };
+  const span = s.window ? `over ${Math.round(s.window[1] - s.window[0])} s` : '';
+  const words = (/** @type {import('../dsp/soundstage.js').StageWhy|null} */ why) => (why === 'waiting' && !running ? `needed ${BEATS_NEEDED_SECONDS} s of beats` : whyWords(why));
+  const out = { amplitude: '—', amplitudeNote: words(s.amplitudeWhy), beatError: '—', beatErrorNote: words(s.beatErrorWhy) };
+  if (s.liftAngle !== liftAngle) {
+    out.amplitudeNote = 'lift angle changed';
+  } else if (s.amplitude !== null && s.amplitudeSd !== null) {
+    out.amplitude = s.amplitude.toFixed(0);
+    out.amplitudeNote = `±${formatScatter(s.amplitudeSd, s.amplitudeSd < 9.95 ? 1 : 0)}° ${span}`;
+  }
+  if (s.beatErrorMs !== null && s.beatErrorSd !== null) {
+    out.beatError = formatMs(s.beatErrorMs);
+    out.beatErrorNote = `±${formatScatter(s.beatErrorSd, 2)} ${span}`;
+  }
+  return out;
+}
+
+/** A lift angle above this is a Swiss lever's, in degrees: co-axial calibres are set lower. */
+export const COAXIAL_LIFT_LIMIT = 40;
+
+/**
+ * A reminder that co-axial movements are measured with a smaller lift angle than Swiss levers,
+ * shown while the escapement is set to co-axial and the lift angle is still a lever's: the
+ * amplitude would read some 40% high, and usually not be believable at all. The two angles
+ * are the ones the co-axial investigation found: Omega's technical guide for its calibres 8520
+ * and 8521, and a watchmaker's figure for the 3861.
+ * @param {import('../dsp/estimate.js').Escapement} escapement
+ * @param {number} liftAngle in degrees
+ * @returns {string|null} null when there is nothing to say
+ */
+export function liftHint(escapement, liftAngle) {
+  if (escapement !== 'coaxial' || !(liftAngle > COAXIAL_LIFT_LIMIT)) return null;
+  return `The lift angle is set to ${liftAngle}°, which suits a Swiss lever. Co-axial movements use less: Omega gives 38° for its calibres 8520 and 8521, and 36° is reported for the 3861. Change it in Settings, or the amplitude will read too high or show a dash.`;
 }
 
 /**
@@ -411,12 +560,20 @@ export function guidance(m, source) {
   }
   const s = signalLevel(m.readings);
   if (!s) return 'Locked. Waiting for the first reading.';
-  const fainter = s.fainter ? ` The ${typeName(s.fainter.type)}s are fainter and are averaged over ${s.fainter.cycles} cycles.` : '';
-  if (s.level === 'clear') return `Clear ${typeName(s.type)}s.${fainter}`;
-  if (s.level === 'usable') return `Usable ${typeName(s.type)}s.${fainter} A quieter room or firmer contact would make them clearer.`;
+  // Until the pipeline has named the tick, the two kinds of beat are told apart only as one
+  // and the other.
+  const name = beatName(s.type, m.tick);
+  const other = s.fainter ? beatName(s.fainter.type, m.tick) : null;
+  const fainter = s.fainter ? (other ? ` The ${other}s are fainter and are averaged over ${s.fainter.cycles} cycles.` : ` Every other beat is fainter and is averaged over ${s.fainter.cycles} cycles.`) : '';
+  if (s.level === 'clear') return `Clear ${name || 'beat'}s.${fainter}`;
+  if (s.level === 'usable') return `Usable ${name || 'beat'}s.${fainter} A quieter room or firmer contact would make them clearer.`;
   if (s.cycles > 1) {
     const seconds = m.bph ? (s.cycles * 7200) / m.bph : 0;
-    const which = s.fainter ? `${typeName(s.type)} dots average ${s.cycles} cycles (${seconds.toFixed(1)} s) and ${typeName(s.fainter.type)} dots ${s.fainter.cycles}` : `each dot averages ${s.cycles} cycles (${seconds.toFixed(1)} s)`;
+    const which = !s.fainter
+      ? `each dot averages ${s.cycles} cycles (${seconds.toFixed(1)} s)`
+      : name && other
+        ? `${name} dots average ${s.cycles} cycles (${seconds.toFixed(1)} s) and ${other} dots ${s.fainter.cycles}`
+        : `the dots of one beat average ${s.cycles} cycles (${seconds.toFixed(1)} s) and the other's ${s.fainter.cycles}`;
     return `Faint beats: ${which}. Firmer contact with the case would help.`;
   }
   return 'Faint beats. Firmer contact with the case would help.';

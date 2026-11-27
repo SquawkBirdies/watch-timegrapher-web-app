@@ -32,6 +32,8 @@ let last = null;
 let lastPrinted = -Infinity;
 /** The end of the latest reading of the sounds that was printed. */
 let soundsPrinted = -Infinity;
+/** Which beat type the pipeline last said was the tick; undefined before any reading. */
+let tick = /** @type {0|1|null|undefined} */ (undefined);
 /** @param {number|null} v @param {number} digits */
 const fixed = (v, digits) => (v === null ? '-' : v.toFixed(digits));
 for (let i = from; i < to; i += size) {
@@ -41,6 +43,10 @@ for (let i = from; i < to; i += size) {
     if (e.type === 'beats') beats += e.beats.length;
     if (e.type === 'readings') {
       last = e;
+      if (e.window !== null && e.tick !== tick) {
+        tick = e.tick;
+        console.log(`${e.t.toFixed(1).padStart(6)} s  ${tick === null ? 'the beats have no names' : `the tick is beat type ${tick}`}`);
+      }
       if (e.t - lastPrinted >= 5 || e.rate === null) {
         lastPrinted = e.t;
         console.log(`${e.t.toFixed(1).padStart(6)} s  rate ${e.rate === null ? 'blank' : e.rate.toFixed(2) + ' +- ' + (e.rateSd ?? 0).toFixed(2) + ' s/d'}, beat error ${e.beatErrorMs === null ? 'blank' : e.beatErrorMs.toFixed(2) + ' ms'}, scatter ${e.jitterMs === null ? '-' : e.jitterMs.toFixed(3) + ' ms'}`);

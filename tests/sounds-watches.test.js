@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 
 import { synthesizeBalanceWatch, coaxialWatch, leverWatch } from './helpers/balance.js';
 import { analyze } from '../js/dsp/offline.js';
+import { tickByLift } from '../js/dsp/names.js';
 
 /**
  * @typedef {import('./helpers/balance.js').BalanceWatchOptions} BalanceWatchOptions
@@ -27,7 +28,10 @@ import { analyze } from '../js/dsp/offline.js';
  * @property {boolean} irregular whether the pipeline found the watch irregular
  * @property {number} meanAmplitude the true amplitude, averaged over the beats
  * @property {number} unlockGapMs the true gap between the unlocks, in the pipeline's naming of the beats
+ * @property {number} lockGapMs the true gap between the locks, which a lever's timestamps follow, in that naming
  * @property {[number, number]} liftMs the true times from unlock to lock, in that naming
+ * @property {0|1|null} tick the beat series the analysis names the tick as a Swiss lever's,
+ *   by the gap between its timed beats
  */
 
 /** @type {Map<string, Simulated>} */
@@ -60,7 +64,9 @@ function simulated(watch) {
       irregular: analysis.irregular,
       meanAmplitude: made.truth.meanAmplitude,
       unlockGapMs: even ? made.truth.unlockGapMs : -made.truth.unlockGapMs,
+      lockGapMs: even ? made.truth.lockGapMs : -made.truth.lockGapMs,
       liftMs: even ? [a, b] : [b, a],
+      tick: analysis.tick,
     };
     runs.set(watch.name, run);
   }
@@ -358,6 +364,32 @@ test('six faint co-axials whose unlock is as loud as their lock read their beat 
   // such watches the same two figures were 4.0 and 1.4.
   assert.ok(rms('resampled') > 2.5, `errors ${rms('resampled').toFixed(2)} times the resamples' scatter, rms`);
   assert.ok(rms('stated') >= 0.7 && rms('stated') <= 1.7, `errors ${rms('stated').toFixed(2)} times the stated scatter, rms`);
+});
+
+test('the tick, by the truth: every co-axial of the 46 whose amplitude is shown is named, by its longer time from unlock to lock, and none wrongly; a lever out of beat is named by the longer gap after its tick, and a lever in beat is not named', () => {
+  let shown = 0;
+  let named = 0;
+  for (const run of fortySix()) {
+    const s = run.sounds;
+    if (run.watch.liftAngle !== 36 || !(s.showAmplitude && s.liftMs && s.scatter)) continue;
+    shown++;
+    // These co-axials were analysed as the app's default escapement, so the rule is applied
+    // here, as the pipeline applies it to a watch set as co-axial.
+    const tick = tickByLift(s.liftMs, s.scatter.liftMs);
+    if (tick === null) continue;
+    named++;
+    // The simulated beats cross 37.45 and 34.55 degrees, so one takes 8% longer than the other.
+    assert.equal(tick, run.liftMs[0] > run.liftMs[1] ? 0 : 1, `${run.watch.name}: ${s.liftMs.map((v) => v.toFixed(2))} +- ${s.scatter.liftMs.map((v) => v.toFixed(2))} ms`);
+  }
+  assert.deepEqual([shown, named], [27, 27], `${named} of ${shown} co-axials with an amplitude named`);
+  // The levers: 0.5 ms out of beat, the tick is the series the longer gap follows, in both
+  // seeds; in beat, the gap is within three times its uncertainty of nothing, and names none.
+  for (const seed of [61, 62]) {
+    const out = ofTheFortySix(`lever beat error 0.5 ms, seed ${seed}`);
+    assert.ok(Math.abs(Math.abs(out.lockGapMs) - 0.5) < 0.01);
+    assert.equal(out.tick, out.lockGapMs > 0 ? 0 : 1, `seed ${seed}`);
+    assert.equal(ofTheFortySix(`lever beat error 0 ms, seed ${seed}`).tick, null, `in beat, seed ${seed}`);
+  }
 });
 
 test('every amplitude shown for the 46 lies within 2 degrees of the truth, and the two whose amplitude wanders are lined up again', () => {

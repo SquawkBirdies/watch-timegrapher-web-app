@@ -11,6 +11,7 @@
 
 import { readWav } from '../tests/helpers/wav.js';
 import { analyze } from '../js/dsp/offline.js';
+import { tickByLift } from '../js/dsp/names.js';
 import { MIN_BEATS, BLOCK_SECONDS, MAX_SHIFT_SCATTER_MS } from '../js/dsp/amplitude.js';
 
 const [path, start, end, bph, liftAngle, lineUp, resamples, placement] = process.argv.slice(2);
@@ -116,4 +117,9 @@ r.beats.forEach((b, j) => {
 });
 console.log(`rate ${r.rate === null ? 'n/a' : r.rate.toFixed(2)} s/d (+- ${r.rateSd === null ? 'n/a' : r.rateSd.toFixed(2)}), beat error ${r.beatErrorMs === null ? 'not reported' : r.beatErrorMs.toFixed(3) + ' ms'}` + (r.beatErrorDetail ? ` (offset ${r.beatErrorDetail.offsetMs.toFixed(3)} +- ${r.beatErrorDetail.offsetSdMs.toFixed(3)} ms, similarity ${r.beatErrorDetail.similarity.toFixed(2)})` : ''));
 if (r.sounds) for (const line of describeSounds(r.sounds)) console.log(line);
+// Which of the two series above is the tick, by each escapement's rule (js/dsp/names.js). The
+// series stay as they are printed, the first called the tick.
+const series = (/** @type {0|1|null} */ t) => (t === null ? 'not clear' : `the ${t === 0 ? 'first' : 'second'} series`);
+const s = r.sounds;
+console.log(`tick: as a Swiss lever, by the longer gap after it, ${series(r.tick)}` + (s && s.amplitude !== null && s.amplitudeHeld === null && s.liftMs && s.scatter ? `; as a co-axial, by the longer time from unlock to lock, ${series(tickByLift(s.liftMs, s.scatter.liftMs))}` : ''));
 console.log(`elapsed ${elapsed.toFixed(1)} s`);

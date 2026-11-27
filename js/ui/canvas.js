@@ -26,6 +26,7 @@ export function prepare(canvas) {
  * @typedef {Object} ChartColors
  * @property {string} tick
  * @property {string} tock
+ * @property {string} beat a beat the pipeline has not yet named tick or tock
  * @property {string} dim low-confidence points
  * @property {string} grid
  * @property {string} text
@@ -44,6 +45,7 @@ export function chartColors(element) {
   return {
     tick: v('--tick'),
     tock: v('--tock'),
+    beat: v('--beat'),
     dim: v('--dim'),
     grid: v('--grid'),
     text: v('--muted'),

@@ -306,11 +306,17 @@ worker.onmessage = (event) => {
   }
 };
 
-/** @param {import('./dsp/pipeline.js').ReadingsEvent} e */
+/**
+ * This page runs the pipeline without a lift angle, so the sounds inside the beats are not
+ * read: it has no beat error, which the app measures from each beat's first sound. What it
+ * gives is the gap between the timed beats, half the difference between the two intervals from
+ * loudest sound to loudest sound, which was the app's beat error before milestone 8.
+ * @param {import('./dsp/pipeline.js').ReadingsEvent} e
+ */
 function readingText(e) {
   if (e.rate === null) return 'No reading.';
-  const be = run && run.escapement === 'coaxial' ? 'no beat error for co-axial' : e.beatErrorMs === null ? 'beat error blank' : `beat error ${e.beatErrorMs.toFixed(2)} ms`;
-  return `Rate ${signed(e.rate)} s/day · ${be} · scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}`;
+  const gap = run && run.escapement === 'coaxial' ? 'no tick-tock gap for co-axial' : e.beatErrorMs === null ? 'tick-tock gap blank' : `tick-tock gap ${e.beatErrorMs.toFixed(2)} ms`;
+  return `Rate ${signed(e.rate)} s/day · ${gap} · scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}`;
 }
 
 // ---------------------------------------------------------------------------- drawing
@@ -394,7 +400,7 @@ function report() {
     lines.push(`Pipeline: locked at ${r.lockedAt.toFixed(1)} s on ${r.bph?.toLocaleString('en-US') ?? '?'} vph, lock lost ${r.lockLost} time${r.lockLost === 1 ? '' : 's'}`);
     const e = r.readings;
     if (e) {
-      lines.push(`Last reading: rate ${signed(e.rate)} s/day${e.rateSd === null ? '' : ` (± ${e.rateSd.toFixed(2)})`}, beat error ${e.beatErrorMs === null ? 'blank' : e.beatErrorMs.toFixed(2) + ' ms'}, scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}, cycles averaged ${r.cycles ? r.cycles.map((k) => k ?? '–').join('/') : '–'}`);
+      lines.push(`Last reading: rate ${signed(e.rate)} s/day${e.rateSd === null ? '' : ` (± ${e.rateSd.toFixed(2)})`}, gap between the timed beats ${e.beatErrorMs === null ? 'blank' : e.beatErrorMs.toFixed(2) + ' ms'}, scatter ${e.jitterMs === null ? '–' : e.jitterMs.toFixed(3) + ' ms'}, cycles averaged ${r.cycles ? r.cycles.map((k) => k ?? '–').join('/') : '–'}`);
       if (e.beatErrorDetail) lines.push(`Tick-tock detail: offset ${e.beatErrorDetail.offsetMs.toFixed(2)} ms, uncertainty ${e.beatErrorDetail.offsetSdMs.toFixed(3)} ms, shape similarity ${e.beatErrorDetail.similarity.toFixed(2)}`);
     }
   }
@@ -454,7 +460,7 @@ function showBenchmark(b) {
   benchText =
     `${b.audioSeconds.toFixed(0)} s of simulated audio (${b.channelCount} channel${b.channelCount === 1 ? '' : 's'}) took ${b.busySeconds.toFixed(1)} s, ` +
     `${b.speed.toFixed(1)} times faster than real time; longest single step ${(1000 * b.longestSeconds).toFixed(0)} ms; ` +
-    `locked at ${b.lockedAt === null ? 'never' : b.lockedAt.toFixed(1) + ' s'}; read ${signed(b.rate)} s/day and ${b.beatErrorMs === null ? 'no beat error' : b.beatErrorMs.toFixed(2) + ' ms'} (true +12.00 and 0.30)`;
+    `locked at ${b.lockedAt === null ? 'never' : b.lockedAt.toFixed(1) + ' s'}; read ${signed(b.rate)} s/day and ${b.beatErrorMs === null ? 'no gap' : b.beatErrorMs.toFixed(2) + ' ms'} between the timed beats (true +12.00 and 0.30)`;
   ui.benchResult.textContent = `${b.speed.toFixed(1)} times faster than real time. ${b.speed >= 3 ? 'This device keeps up comfortably.' : b.speed >= 1 ? 'This device keeps up, with little to spare.' : 'This device is too slow to keep up.'}`;
   if (!ui.results.hidden) ui.report.textContent = report();
 }

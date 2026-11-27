@@ -3,7 +3,9 @@
 // appeared; saved readings
 // keep what the pipeline measured; the summary's average and spread come from the readings that
 // are certain enough, and the log survives being stored. Drawing and tapping are checked in a
-// browser.
+// browser. Since milestone 8 a saved reading also keeps the beat error and the amplitude read
+// from the sounds inside the beats, or the pipeline's reason for a dash; soundstage.test.js and
+// recordings.test.js save readings from runs that have them.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -58,7 +60,8 @@ const DIAL_UP = { rate: 4, seed: 701 };
 const CROWN_DOWN = { rate: -3, seed: 702 };
 
 /**
- * A made-up reading with the given rate and uncertainty, for the arithmetic of the summary.
+ * A made-up reading with the given rate and uncertainty, for the arithmetic of the summary. It
+ * has no amplitude unless one is given.
  * @param {number} rate
  * @param {number} rateSd
  * @param {number|null} beatErrorMs
@@ -70,7 +73,12 @@ function reading(rate, rateSd, beatErrorMs, more = {}) {
     rate,
     rateSd,
     beatErrorMs,
+    beatErrorSd: beatErrorMs === null ? null : 0.03,
     beatErrorGap: beatErrorMs === null ? 'unmeasured' : null,
+    amplitude: null,
+    amplitudeSd: null,
+    amplitudeGap: 'unmeasured',
+    liftAngle: null,
     irregular: false,
     beats: 160,
     cycles: [1, 1],
@@ -130,29 +138,55 @@ test('the lock time follows the lock: kept through repeat analyses, cleared when
   assert.equal(m.lockSince, null);
 });
 
-test('a saved reading keeps the rate, its uncertainty, the beat error and the beats behind them, as measured', () => {
+test('a saved reading keeps the rate, its uncertainty and the beats behind them as measured, and the beat error and the amplitude as the pipeline gave them, with its reason when it gave none', () => {
   const r = positionRuns(DIAL_UP);
   const last = /** @type {ReadingsEvent} */ (r.last);
-  const saved = takeReading(last, { bph: 28800, escapement: 'lever', source: 'Simulator', now: new Date('2026-11-25T12:00:00Z') });
+  const context = { bph: 28800, escapement: /** @type {const} */ ('lever'), source: 'Simulator', now: new Date('2026-11-25T12:00:00Z') };
+  const saved = takeReading(last, context);
   assert.ok(saved);
   assert.equal(saved.rate, last.rate);
   assert.equal(saved.rateSd, last.rateSd);
   assert.ok(Math.abs(saved.rate - DIAL_UP.rate) <= 3 * saved.rateSd + 0.05, `rate ${saved.rate.toFixed(2)} ± ${saved.rateSd.toFixed(2)}, true ${DIAL_UP.rate}`);
-  assert.ok(saved.beatErrorMs !== null && Math.abs(saved.beatErrorMs - 0.3) <= 0.05, `beat error ${saved.beatErrorMs}`);
-  assert.equal(saved.beatErrorGap, null);
   // 28,800 vph is 8 beats a second: about 160 in a 20 s window, ticks and tocks together.
   assert.ok(saved.beats >= 150 && saved.beats <= 162, `${saved.beats} beats`);
   assert.equal(saved.windowSeconds, 20, 'made over the 20 s window');
   assert.deepEqual(saved.cycles, [1, 1], 'every beat timed on its own');
   assert.ok(saved.seconds > 19.5 && saved.seconds <= 20, `timestamps span ${saved.seconds} s`);
-  assert.match(describeReading(saved).detail, /^Over a 20 s window · \d+ beats$/);
   assert.equal(saved.savedAt, '2026-11-25T12:00:00.000Z');
-  // The same reading on a watch set as co-axial says why it has no beat error once the
-  // pipeline leaves it out.
-  const coaxial = takeReading({ ...last, beatErrorMs: null }, { bph: 28800, escapement: 'coaxial', source: 'Microphone', now: new Date() });
-  assert.equal(coaxial && coaxial.beatErrorGap, 'coaxial');
-  const irregular = takeReading({ ...last, beatErrorMs: null, irregular: true }, { bph: 28800, escapement: 'lever', source: 'Microphone', now: new Date() });
-  assert.equal(irregular && irregular.beatErrorGap, 'irregular');
+  // This pipeline was given no lift angle, so it did not read the sounds inside the beats: the
+  // log has neither reading and says so. The gap between the timed beats, which was the beat
+  // error until 26 November 2026, is not saved in its place.
+  assert.ok(last.sounds === null && last.beatErrorMs !== null && Math.abs(last.beatErrorMs - 0.3) <= 0.05);
+  assert.deepEqual([saved.beatErrorMs, saved.beatErrorSd, saved.beatErrorGap, saved.amplitude, saved.amplitudeSd, saved.amplitudeGap, saved.liftAngle], [null, null, 'unmeasured', null, null, 'unmeasured', null]);
+  assert.match(describeReading(saved).detail, /^Over a 20 s window · \d+ beats · no beat error or amplitude: not measured$/);
+
+  // With the stage's report on the readings, the log keeps what it shows and why it shows a dash.
+  /** @param {Partial<import('../js/dsp/soundstage.js').SoundsReport>} over @returns {ReadingsEvent} */
+  const withSounds = (over) => ({ ...last, sounds: { liftAngle: 36, amplitude: null, amplitudeSd: null, amplitudeWhy: null, beatErrorMs: null, beatOffsetMs: null, beatErrorSd: null, beatErrorWhy: null, liftMs: null, liftSd: null, window: null, detail: null, ...over } });
+  // Saved as soon as the rate allows, 20 s after the lock: the pipeline is still waiting for
+  // 30 s of beats, and Save does not wait for it.
+  const early = takeReading(withSounds({ amplitudeWhy: 'waiting', beatErrorWhy: 'waiting' }), context);
+  assert.ok(early);
+  assert.deepEqual([early.beatErrorMs, early.beatErrorGap, early.amplitude, early.amplitudeGap, early.liftAngle], [null, 'waiting', null, 'waiting', 36]);
+  assert.deepEqual(describeReading(early), { main: `${describeReading(saved).main}`, detail: `Over a 20 s window · ${early.beats} beats · no beat error or amplitude: saved before 30 s of beats` });
+  // Saved later, with both shown: the Omega's figures after 50 s of beats.
+  const both = takeReading(withSounds({ amplitude: 288.42, amplitudeSd: 1.14, beatErrorMs: 0.3156, beatOffsetMs: -0.3156, beatErrorSd: 0.0443, window: [8.1, 58.6] }), { ...context, escapement: 'coaxial' });
+  assert.ok(both);
+  assert.deepEqual([both.beatErrorMs, both.beatErrorSd, both.beatErrorGap, both.amplitude, both.amplitudeSd, both.amplitudeGap, both.liftAngle], [0.3156, 0.0443, null, 288.42, 1.14, null, 36]);
+  assert.match(describeReading(both).main, / s\/d ±0\.\d+ · 0\.32 ms · 288°$/);
+  assert.match(describeReading(both).detail, / beats · beat error ±0\.04 ms · amplitude ±1\.1° at 36° lift$/);
+  // A co-axial has a beat error like any watch: the log takes the reason for a dash from the
+  // readings, never from the escapement setting.
+  assert.equal(both.escapement, 'coaxial');
+  // One shown and one held back, each for its own reason.
+  const irregular = takeReading({ ...withSounds({ amplitude: 269.7, amplitudeSd: 0.84, beatErrorWhy: 'irregular' }), irregular: true }, context);
+  assert.ok(irregular);
+  assert.deepEqual([irregular.beatErrorMs, irregular.beatErrorGap, irregular.amplitude, irregular.amplitudeGap], [null, 'irregular', 269.7, null]);
+  assert.match(describeReading(irregular).detail, / · amplitude ±0\.8° at 36° lift · no beat error: irregular beat$/);
+  const placed = takeReading(withSounds({ beatErrorMs: 0.41, beatErrorSd: 0.03, amplitudeWhy: 'placement' }), context);
+  assert.match(describeReading(/** @type {PositionReading} */ (placed)).detail, / · beat error ±0\.03 ms · no amplitude: beat timing unsure$/);
+  const wrongLift = takeReading(withSounds({ amplitudeWhy: 'lift-range', beatErrorWhy: 'lift-range' }), context);
+  assert.match(describeReading(/** @type {PositionReading} */ (wrongLift)).detail, / · no beat error or amplitude: check the lift angle$/);
   assert.equal(takeReading({ ...last, rate: null }, { bph: 28800, escapement: 'lever', source: 'x', now: new Date() }), null);
 });
 
@@ -179,7 +213,10 @@ test('two positions measured from simulated watches give the average and spread 
   assert.ok(s.spread !== null && Math.abs(s.spread - 7) <= 3 * sd + 0.05, `spread ${s.spread}`);
   assert.equal(s.fastest, 'dialUp');
   assert.equal(s.slowest, 'crownDown');
-  assert.ok(s.largestBeatError && Math.abs(s.largestBeatError.ms - 0.3) <= 0.05);
+  // Neither run read the sounds inside its beats, so the log has no beat error to rank.
+  assert.equal(s.largestBeatError, null);
+  assert.equal(s.beatErrorGaps, 2);
+  assert.equal(s.medianAmplitude, null);
 });
 
 test('the next position suggested is the first without a reading, looking on from the last one saved', () => {
@@ -226,8 +263,11 @@ test('a reading too uncertain to count is marked and left out of the average and
   assert.match(words.leftOut, /uncertain by more than ±1 s\/d: Crown up\./);
   assert.ok(isUncertain(/** @type {PositionReading} */ (log.readings.crownUp)));
   assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownUp)).detail, /uncertain, left out of the average/);
-  assert.deepEqual(describeReading(/** @type {PositionReading} */ (log.readings.dialUp)), { main: '+2.0 s/d ±0.08 · 0.15 ms', detail: 'Over a 20 s window · 160 beats' });
-  assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownDown)).detail, /beat error not measurable/);
+  assert.deepEqual(describeReading(/** @type {PositionReading} */ (log.readings.dialUp)), { main: '+2.0 s/d ±0.08 · 0.15 ms', detail: 'Over a 20 s window · 160 beats · beat error ±0.03 ms · no amplitude: not measured' });
+  assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownDown)).detail, / · no beat error or amplitude: not measured$/);
+  // An irregular watch is said to be so once, whether or not that is why its beat error is missing.
+  assert.match(describeReading(/** @type {PositionReading} */ (log.readings.crownUp)).detail, / · irregular beat · uncertain/);
+  assert.equal(describeReading(reading(1, 0.1, null, { irregular: true, beatErrorGap: 'irregular' })).detail.match(/irregular/g)?.length, 1);
   // A faint watch's lengthened window is given in minutes and seconds.
   assert.match(describeReading(reading(1, 0.2, 0.1, { windowSeconds: 153.5 })).detail, /^Over a 2 min 34 s window/);
   // Its timestamps average several cycles each, so they are not counted as beats.
@@ -238,19 +278,51 @@ test('a reading too uncertain to count is marked and left out of the average and
   assert.equal(counted({ cycles: null }), '33 timestamps', 'not known for readings saved before 26 November');
 });
 
-test('the summary says what it lacks: no positions, one position, co-axial beat error', () => {
+test('the summary says what it lacks: no positions, one position, no beat error or amplitude read in any', () => {
   const none = describeSummary(summarise(emptyLog()));
-  assert.deepEqual([none.average, none.averageNote, none.spread, none.spreadNote, none.beatError, none.beatErrorNote, none.leftOut], ['—', 'no positions yet', '—', 'needs two positions', '—', 'no positions yet', '']);
-  const one = summarise(withReading(emptyLog(), 'dialUp', reading(3, 0.1, null, { escapement: 'coaxial', beatErrorGap: 'coaxial' })));
+  assert.deepEqual(
+    [none.average, none.averageNote, none.spread, none.spreadNote, none.beatError, none.beatErrorNote, none.amplitude, none.amplitudeNote, none.leftOut],
+    ['—', 'no positions yet', '—', 'needs two positions', '—', 'no positions yet', '—', 'no positions yet', ''],
+  );
+  // A position saved before the pipeline had read the sounds inside its beats has neither.
+  const one = summarise(withReading(emptyLog(), 'dialUp', reading(3, 0.1, null, { escapement: 'coaxial', beatErrorGap: 'waiting', amplitudeGap: 'waiting', liftAngle: 36 })));
   const words = describeSummary(one);
   assert.equal(words.average, '+3.0 s/d');
   assert.equal(words.averageNote, 'over 1 position');
   assert.equal(one.spread, null);
   assert.equal(words.spreadNote, 'needs two positions');
-  assert.equal(words.beatErrorNote, 'not shown for co-axial');
+  assert.deepEqual([words.beatError, words.beatErrorNote, words.amplitude, words.amplitudeNote], ['—', 'not read in any position', '—', 'not read in any position']);
   const unsure = describeSummary(summarise(withReading(emptyLog(), 'dialUp', reading(3, 2, 0.1))));
   assert.equal(unsure.average, '—');
   assert.equal(unsure.averageNote, 'no certain reading yet');
+});
+
+test('the summary gives the median amplitude of the positions that have one, beside the largest beat error', () => {
+  /** @param {number} amplitude @param {number|null} beatErrorMs */
+  const withAmplitude = (amplitude, beatErrorMs) => reading(1, 0.1, beatErrorMs, { amplitude, amplitudeSd: 1.2, amplitudeGap: null, liftAngle: 36 });
+  let log = withReading(emptyLog(), 'dialUp', withAmplitude(288, 0.2));
+  assert.deepEqual(summarise(log).medianAmplitude, { degrees: 288, positions: 1 });
+  assert.deepEqual([describeSummary(summarise(log)).amplitude, describeSummary(summarise(log)).amplitudeNote], ['288°', 'of 1 position']);
+  // A position without an amplitude does not count; its beat error still does.
+  log = withReading(log, 'dialDown', reading(2, 0.1, 0.31));
+  log = withReading(log, 'crownUp', withAmplitude(262, null));
+  let s = summarise(log);
+  // With two, midway between them.
+  assert.deepEqual(s.medianAmplitude, { degrees: 275, positions: 2 });
+  assert.deepEqual(s.largestBeatError, { ms: 0.31, position: 'dialDown' });
+  log = withReading(log, 'crownDown', withAmplitude(255.4, 0.28));
+  log = withReading(log, 'crownLeft', withAmplitude(301, 0.25));
+  log = withReading(log, 'crownRight', withAmplitude(259.6, 0.29));
+  s = summarise(log);
+  // Five amplitudes: 255.4, 259.6, 262, 288 and 301. One reading far from the rest, as a watch
+  // lying flat reads against its edge positions, does not pull the middle one.
+  assert.deepEqual(s.medianAmplitude, { degrees: 262, positions: 5 });
+  const words = describeSummary(s);
+  assert.deepEqual([words.amplitude, words.amplitudeNote, words.beatError, words.beatErrorNote], ['262°', 'of 5 positions', '0.31 ms', 'Dial down']);
+  // An amplitude is counted whatever the rate's uncertainty, as a beat error is.
+  log = withReading(log, 'dialDown', { ...withAmplitude(240, 0.5), rateSd: 5 });
+  assert.deepEqual(summarise(log).medianAmplitude, { degrees: (259.6 + 262) / 2, positions: 6 });
+  assert.deepEqual(summarise(log).leftOut, ['dialDown']);
 });
 
 test('the line under the log says what to do next', () => {
@@ -260,6 +332,10 @@ test('the line under the log says what to do next', () => {
   assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 12.7 }), 'Keep the watch still: 12 of 20 s since the lock.');
   assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 41.5, needed: 48.04 }), 'Keep the watch still: 41 of 48 s since the lock.');
   assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 0.09 }), 'Ready to save as Dial down.');
+  // Save does not wait for the beat error and the amplitude, which come later than the rate:
+  // the line says so, and the choice is the user's.
+  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 0.09, waiting: true }), 'Ready to save as Dial down. The beat error and the amplitude need 30 s of beats: wait for them, or save without.');
+  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 12.7, waiting: true }), 'Keep the watch still: 12 of 20 s since the lock.', 'nothing to choose before the rate is ready');
   assert.match(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 1.4 }), /uncertain by ±1\.4 s\/d, so it would be left out of the average/);
   assert.equal(positionStep({ ...base, saved: 'dialUp' }), 'Saved Dial up. Place the watch dial down, then press Start.');
   assert.equal(positionStep({ ...base, saved: 'crownRight', target: null }), 'Saved Crown right. All six positions are saved.');
@@ -268,9 +344,34 @@ test('the line under the log says what to do next', () => {
 
 test('the log comes back from storage as it was saved, and anything invalid in it is dropped', () => {
   let log = emptyLog();
-  log = withReading(log, 'dialUp', reading(2, 0.08, 0.15));
-  log = withReading(log, 'crownLeft', reading(-3.5, 0.2, null, { escapement: 'coaxial', beatErrorGap: 'coaxial', irregular: true }));
+  log = withReading(log, 'dialUp', reading(2, 0.08, 0.15, { amplitude: 288.4, amplitudeSd: 1.1, amplitudeGap: null, liftAngle: 36 }));
+  log = withReading(log, 'crownLeft', reading(-3.5, 0.2, null, { escapement: 'coaxial', beatErrorGap: 'failing', amplitudeGap: 'lift-range', liftAngle: 52, irregular: true }));
   assert.deepEqual(cleanLog(JSON.parse(JSON.stringify(log))), log);
+  // A log saved before 26 November 2026 has no amplitude, no scatter for its beat error, which
+  // was then the gap between the timed beats, and "co-axial" as the reason a co-axial had none.
+  // It comes back whole, with what it lacks marked as not measured.
+  const before = {
+    started: '2026-11-25T12:00:00.000Z',
+    readings: {
+      dialUp: { rate: 2.1, rateSd: 0.1, beatErrorMs: null, beatErrorGap: 'coaxial', irregular: false, beats: 120, cycles: [1, 1], windowSeconds: 20, seconds: 19.8, bph: 21600, escapement: 'coaxial', source: 'Microphone', savedAt: '2026-11-25T12:00:00.000Z' },
+      crownUp: { rate: 5.5, rateSd: 0.1, beatErrorMs: 0.44, beatErrorGap: null, irregular: false, beats: 160, cycles: [1, 1], windowSeconds: 20, seconds: 19.9, bph: 28800, escapement: 'lever', source: 'Microphone', savedAt: '2026-11-25T12:05:00.000Z' },
+    },
+  };
+  const old = cleanLog(before);
+  const oldUp = /** @type {PositionReading} */ (old.readings.dialUp);
+  const oldCrown = /** @type {PositionReading} */ (old.readings.crownUp);
+  assert.deepEqual([oldUp.beatErrorMs, oldUp.beatErrorSd, oldUp.beatErrorGap, oldUp.amplitude, oldUp.amplitudeSd, oldUp.amplitudeGap, oldUp.liftAngle], [null, null, 'coaxial', null, null, 'unmeasured', null]);
+  assert.deepEqual([oldCrown.beatErrorMs, oldCrown.beatErrorSd, oldCrown.beatErrorGap, oldCrown.amplitudeGap], [0.44, null, null, 'unmeasured']);
+  assert.equal(describeReading(oldUp).detail, 'Over a 20 s window · 120 beats · no beat error: not measured for co-axial then · no amplitude: not measured');
+  assert.deepEqual(describeReading(oldCrown), { main: '+5.5 s/d ±0.1 · 0.44 ms', detail: 'Over a 20 s window · 160 beats · no amplitude: not measured' });
+  assert.deepEqual(summarise(old).largestBeatError, { ms: 0.44, position: 'crownUp' });
+  // An amplitude without its scatter, or a reason the app does not know, is not kept.
+  const odd = JSON.parse(JSON.stringify(log));
+  odd.readings.dialUp.amplitudeSd = null;
+  odd.readings.crownLeft.beatErrorGap = 'because';
+  const cleaned = cleanLog(odd);
+  assert.deepEqual([/** @type {PositionReading} */ (cleaned.readings.dialUp).amplitude, /** @type {PositionReading} */ (cleaned.readings.dialUp).amplitudeGap], [null, 'unmeasured']);
+  assert.equal(/** @type {PositionReading} */ (cleaned.readings.crownLeft).beatErrorGap, 'unmeasured');
   // A reading saved before the cycles were kept comes back with them unknown.
   const older = JSON.parse(JSON.stringify(log));
   delete older.readings.dialUp.cycles;
