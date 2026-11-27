@@ -11,11 +11,12 @@ continuously, or saves a reading for each of the six positions a watch is checke
 steps are in the code. The app now reads both while it measures, but its screen does not show
 them yet; a line of fine print on the Signal card says what reading them costs.
 
-Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4,
-the timegrapher replaying its three demo recordings of the time, all made with Voice Memos, in
-milestone 5, a live measurement of the Omega in milestone 6, and a six-position run of the Omega
-and the theme setting in milestone 7), and in Chrome on a computer at phone size, where the
-microphone was also tested with a recording played in as a simulated microphone.
+Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4, the
+timegrapher replaying its three demo recordings of the time, all made with Voice Memos, in
+milestone 5, a live measurement of the Omega in milestone 6, a six-position run of the Omega and
+the theme setting in milestone 7, and the two demos of today with the cost of reading the Omega's
+amplitude in milestone 8), and in Chrome on a computer at phone size, where the microphone was also
+tested with a recording played in as a simulated microphone.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -252,8 +253,11 @@ The limits so far:
   simulated co-axial with two sounds lined up 4 to 6 s over 9 to 12 s, with a reading every 18 s.
   The whole pipeline then used about 20% and about 40% of real time, against 8% without the
   stage. The Omega's capture had its first reading, 2.8 s of computing, 6 s after it started. A
-  reading describes the beats up to the moment it started. No phone has timed this yet: on an
-  iPhone 17 Pro Max the pipeline alone took about 1.45 times as long as on this computer.
+  reading describes the beats up to the moment it started. On an iPhone 17 Pro Max on 26 November,
+  the Omega demo was read four times in its minute, the last in 1.4 s of computing over 2.9 s, with
+  the whole analysis at 16% of real time; this computer takes about 3 s for such a reading, though
+  on the pipeline alone the phone takes 1.1 to 1.45 times as long as this computer. That is one
+  recording and the cost of one reading; the heavier cases have not been timed on a phone.
 - **Its memory:** 18.5 MB for the envelopes kept, and 8 to 14 MB more while a reading is worked
   out. In Chrome the page's process held 10 to 25 MB more with the stage than without, at about
   300 MB. Not measured in Safari.
@@ -497,10 +501,13 @@ delivers it at 44.1 kHz), the live reading after 50 s was +6.9 s/day and 0.40 ms
 itself, streamed through the pipeline, reads +6.88 s/day and 0.38 ms at the same point, and the
 saved minute replayed under Your file read +6.9 s/day and 0.40 ms. With 3 s of digital silence
 inserted into the recording at 40 s, the app showed the interruption, resumed when the sound
-came back and locked again 9 s later. The automated tests drive the same code with a stand-in
-for the microphone: a simulated watch cut off for 2 s gives no readings during the gap, no
-confident dots in it and a fresh lock after it, and its saved minute matches the analysed audio
-sample for sample and replays to the same reading within 0.1 s/day.
+came back and locked again 9 s later. The automated tests drive the same code with a stand-in for
+the microphone: a simulated watch cut off for 2 s gives no readings during the gap, no confident
+dots in it and a fresh lock after it, and its saved minute matches the analysed audio sample for
+sample and replays to the same reading within 0.1 s/day. In six-position mode a reading can be
+saved a full window after that fresh lock: 20.5 s after it in the tests, and in Chrome, with the
+same simulated watch played in as the microphone, "Ready to save as Dial up" came 20 s after the
+lock at 36 s, at +12.0 ± 0.1 s/day against a true +12.
 
 On the iPhone 17 Pro Max with iOS 27.2, on 17 November 2026, the Omega was measured live in
 co-axial mode and the run stopped before a minute. The live reading was +0.8 ± 0.09 s/day over
@@ -553,7 +560,8 @@ heard since the lock, none from before the watch was placed or while it settled.
 continuous mode also uses the beats timed in the stretch the lock was found in, about the 8 s
 before "Locked".) The window is the one set in the settings (10, 20, 40 or 60 s), or longer when a
 faint watch's ticks are averaged over several cycles, so a reading always runs for the longer of
-the two. A lost lock starts the count again. The button "Save as Dial up" becomes available then:
+the two. A lost lock starts the count again, and so does a microphone interruption, from the lock
+found when the sound is back. The button "Save as Dial up" becomes available then:
 with the default 20 s window and a lock after 8 s, about 28.5 s after Start. Saving stops the run,
 leaves the saved reading on the screen and suggests the next position without a reading. Tapping
 a row chooses the position the next reading is saved as, to skip one or to measure one again; a
@@ -652,7 +660,7 @@ decided on 26 November. Two limits follow from the captures' lengths:
 - **The ETA's 30 s are too short for an amplitude.** A reading needs 30 s of beats after the lock,
   which comes at 8 s. The demo shows rate and beat error only, until a longer capture is recorded.
 - **The Omega's 60 s leave time for three readings on a computer,** the first about 45 s in and the
-  last just before the end. A slower phone may fit two.
+  last just before the end, and for four on an iPhone 17 Pro Max.
 
 In Chrome on a computer, with nothing changed in Settings, the ETA demo ran at 50° and ended at
 +1.7 ± 0.05 s/day and 0.31 ms, with the analysis at 8% of real time. The Omega demo ran at 36° and
@@ -661,8 +669,13 @@ three times: the first reading was on the screen about 45 s after Start, after 2
 over 4.4 s, and could be shown; the second was held back, more than 5% of its draws having lost the
 unlock; the third, 3.1 s of computing over 6.2 s, could be shown. Setting the lift angle to 40°
 during the ETA demo changed the line under the readings to 40° at once, and the next start of the
-demo was at 50° again, with the setting still as stored. The new demos have not been tried on a
-phone.
+demo was at 50° again, with the setting still as stored.
+
+On an iPhone 17 Pro Max on 26 November 2026, the ETA demo ran at 50° and ended at +1.7 ± 0.05 s/day
+and 0.31 ms, 112 times the noise spread, with the analysis at 9% of real time. The Omega demo ran
+at 36° and ended at +0.9 ± 0.09 s/day, 66 times the noise spread, with the analysis at 16% of real
+time and the fine print "amplitude read 4 times, last in 1.4 s of computing over 2.9 s, both to
+show". Settings still held the default 52° afterwards.
 
 The theme is Auto by default, which follows the phone's light or dark setting, or Light or Dark
 whatever the phone is set to. It changes at once, the charts and the browser's bars included, and

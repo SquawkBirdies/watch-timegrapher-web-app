@@ -12,6 +12,7 @@ import { LiveInput, KEEP_SECONDS, SILENCE_SECONDS } from '../js/audio/live.js';
 import { synthesizeWatch } from '../js/audio/simulator.js';
 import { Pipeline } from '../js/dsp/pipeline.js';
 import { Measurement, shiftEvent, guidance, stateText, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from '../js/ui/model.js';
+import { readiness } from '../js/ui/positions.js';
 import { clean, DEFAULTS, SAVE_MINUTES } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 
@@ -306,7 +307,7 @@ test('switching input or restarting starts the timeline and the kept audio again
 
 // ---- A live run with an interruption, end to end ----------------------------------------------
 
-test('a live run blanks its readings when the microphone is cut off, locks again after the gap, and its saved minute replays to the same reading', async () => {
+test('a live run blanks its readings when the microphone is cut off, locks again after the gap, lets a position be saved a full window after that lock, and its saved minute replays to the same reading', async () => {
   const fs = 48000;
   const truth = { bph: 28800, rate: 12, beatOffsetMs: 0.3 };
   const w = synthesizeWatch({ ...truth, gain: 1.6, seconds: 75, sampleRate: fs, seed: 61 });
@@ -322,16 +323,27 @@ test('a live run blanks its readings when the microphone is cut off, locks again
   let lastReadings = null;
   /** @type {number|null} */
   let blankAt = null;
+  // The six-position log's Save, judged at each reading after the gap as the screen judges it,
+  // and as it was judged when the start of a reading's audio stayed on its segment's own clock.
+  const averagingSeconds = 20;
+  /** @type {number|null} */
+  let saveReadyAt = null;
+  let readyOnSegmentClock = 0;
   const input = new LiveInput(
     {
       // As the screen does it: each segment has its own pipeline, whose events are moved to
       // the run's timeline.
       onAudio: (channels) => {
-        if (!pipeline) pipeline = new Pipeline(fs, 1, {});
+        if (!pipeline) pipeline = new Pipeline(fs, 1, { averagingSeconds });
         for (const e of pipeline.push(channels)) {
           const shifted = shiftEvent(e, offset);
           measurement.apply(shifted);
-          if (shifted.type === 'readings') lastReadings = shifted;
+          if (shifted.type !== 'readings' || e.type !== 'readings') continue;
+          lastReadings = shifted;
+          if (offset === 0) continue;
+          const tracking = measurement.state === 'tracking';
+          if (saveReadyAt === null && readiness(tracking, shifted, averagingSeconds, measurement.lockSince).ready) saveReadyAt = shifted.t;
+          if (readiness(tracking, { ...shifted, windowStart: e.windowStart }, averagingSeconds, measurement.lockSince).ready) readyOnSegmentClock++;
         }
         measurement.setPosition(input.position());
       },
@@ -378,6 +390,19 @@ test('a live run blanks its readings when the microphone is cut off, locks again
   assert.ok(live && live.rate !== null && live.rateSd !== null);
   assert.ok(/** @type {[number, number]} */ (live.window)[0] > gap[1], 'the readings after the gap use only audio after it');
   assert.ok(Math.abs(live.rate - truth.rate) <= 3 * live.rateSd + 0.05, `live ${live.rate.toFixed(2)} ± ${live.rateSd.toFixed(2)}`);
+
+  // In six-position mode Save becomes ready when the lock found after the gap has lasted the
+  // averaging window, as in a run with no gap: every time the readings carry is on the run's
+  // timeline. With the start of their audio left on the second segment's clock, which begins
+  // at the gap's end, that start always lay before the lock and Save never became ready.
+  const lockSince = /** @type {number} */ (measurement.lockSince);
+  assert.ok(lockSince > gap[1], `the lock after the gap appeared at ${lockSince.toFixed(1)} s`);
+  const ready = /** @type {number} */ (/** @type {unknown} */ (saveReadyAt));
+  assert.ok(ready !== null && ready - lockSince >= averagingSeconds - 0.01 && ready - lockSince < averagingSeconds + 1.5, `Save became ready ${ready === null ? 'never' : (ready - lockSince).toFixed(2) + ' s after the lock'}`);
+  const windowStart = /** @type {number} */ (live.windowStart);
+  assert.ok(windowStart >= lockSince - 0.01 && Math.abs(live.t - windowStart - averagingSeconds) < 0.01, `the last reading's audio runs from ${windowStart.toFixed(2)} to ${live.t.toFixed(2)} s`);
+  assert.deepEqual(readiness(true, live, averagingSeconds, lockSince), { ready: true, covered: averagingSeconds, needed: averagingSeconds });
+  assert.equal(readyOnSegmentClock, 0, 'never ready while the start of the audio was on the segment clock');
 
   // The saved recording is the last minute since the interruption, exactly as it was analysed:
   // replayed in other chunk sizes it gives the same reading.
@@ -466,9 +491,12 @@ test('events move to the run timeline, and an interruption blanks the readings b
   assert.equal(/** @type {any} */ (shiftEvent({ ...beats, replaceFrom: null }, 2)).replaceFrom, null);
   const status = { type: /** @type {const} */ ('status'), state: /** @type {const} */ ('tracking'), reason: 'locked', bph: 28800, cyclesAveraged: [1, 1], t: 9 };
   assert.equal(/** @type {any} */ (shiftEvent(status, 3)).t, 12);
-  const readings = /** @type {any} */ ({ type: 'readings', t: 9, window: [1, 9], rate: 4 });
+  const readings = /** @type {any} */ ({ type: 'readings', t: 9, window: [1, 9], windowStart: 0.5, rate: 4 });
   assert.deepEqual(/** @type {any} */ (shiftEvent(readings, 3)).window, [4, 12]);
   assert.equal(/** @type {any} */ (shiftEvent({ ...readings, window: null }, 3)).window, null);
+  // Where the readings' audio begins moves too: the six-position log sets it against the lock.
+  assert.equal(/** @type {any} */ (shiftEvent(readings, 3)).windowStart, 3.5);
+  assert.equal(/** @type {any} */ (shiftEvent({ ...readings, windowStart: null }, 3)).windowStart, null);
   // The beats a reading of the sounds rests on move with the rest.
   const withSounds = { ...readings, sounds: { amplitude: 288, window: [2, 8] } };
   assert.deepEqual(/** @type {any} */ (shiftEvent(withSounds, 3)).sounds, { amplitude: 288, window: [5, 11] });
