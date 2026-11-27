@@ -233,7 +233,7 @@ const omegaSafariLive = () => {
     // than their stated +-0.09, so the watch's own rate moves; a 40 s window, as for the other
     // Omega recordings. Each reading of the sounds is finished in the audio block it starts in,
     // so that the test does not depend on the computer's speed, and one is started every 10 s:
-    // three in this capture, of two to three seconds' computing each.
+    // four in this capture, of one to three seconds' computing each.
     omegaLive = stream(cap.channels, cap.sampleRate, { chunk: 4096, options: { escapement: 'coaxial', averagingSeconds: 40, liftAngle: 36, sounds: { share: Infinity, fillingSeconds: 10 } } });
   }
   return omegaLive;
@@ -277,43 +277,51 @@ test('Omega 3861, Safari capture, in real time and co-axial: locks within 10 s, 
   assert.ok(early && ((early.beatErrorMs !== null && early.amplitude !== null) || (early.beatErrorGap === 'failing' && early.amplitudeGap === 'failing')), `${early?.beatErrorGap}, ${early?.amplitudeGap}`);
 });
 
-test('Omega 3861, Safari capture, in real time: nothing from the sounds inside its beats until 30 s after the lock; from 50 s of beats 0.32 +- 0.05 ms and 288 +- 1 degrees, both shown', () => {
+test('Omega 3861, Safari capture, in real time: nothing from the sounds inside its beats until 15 s after the lock, and its readings from 15 and 25 s of beats held back for the unlocks they lose; from 45 s of beats 0.31 +- 0.05 ms and 288 +- 1 degrees, both shown', () => {
   const r = omegaSafariLive();
   const lock = r.status[0].t;
   const locked = r.readings.filter((x) => x.window !== null);
   assert.ok(locked.every((x) => x.sounds !== null && x.sounds.liftAngle === 36));
-  const early = locked.filter((x) => x.t < lock + 29.5);
-  assert.ok(early.length > 25 && early.every((x) => x.sounds && x.sounds.detail === null && x.sounds.amplitude === null && x.sounds.beatErrorMs === null && x.sounds.amplitudeWhy === 'waiting' && x.sounds.beatErrorWhy === 'waiting'), 'a dash for both, for want of beats');
-  // One reading as soon as both beat types have 30 s of beats since the lock, then one every 10 s.
+  const early = locked.filter((x) => x.t < lock + 14.5);
+  assert.ok(early.length > 12 && early.every((x) => x.sounds && x.sounds.detail === null && x.sounds.amplitude === null && x.sounds.beatErrorMs === null && x.sounds.amplitudeWhy === 'waiting' && x.sounds.beatErrorWhy === 'waiting'), 'a dash for both, for want of beats');
+  // One reading as soon as both beat types have 15 s of beats since the lock, then one every 10 s.
   const windows = [...new Set(locked.map((x) => (x.sounds && x.sounds.window ? x.sounds.window[1] : null)).filter((v) => v !== null))];
-  assert.equal(windows.length, 3, 'three readings');
+  assert.equal(windows.length, 4, 'four readings');
   const of = (/** @type {number} */ i) => /** @type {NonNullable<typeof locked[0]['sounds']>} */ (/** @type {typeof locked[0]} */ (locked.find((x) => x.sounds && x.sounds.window && x.sounds.window[1] === windows[i])).sounds);
   const first = /** @type {typeof locked[0]} */ (locked.find((x) => x.sounds && x.sounds.detail !== null));
-  assert.ok(first.t > lock + 29.5 && first.t < lock + 31.5, `locked at ${lock.toFixed(1)} s, first reading at ${first.t.toFixed(1)} s`);
-  for (let i = 0; i < 3; i++) {
+  assert.ok(first.t > lock + 14.5 && first.t < lock + 16.5, `locked at ${lock.toFixed(1)} s, first reading at ${first.t.toFixed(1)} s`);
+  for (let i = 0; i < 4; i++) {
     const s = of(i);
     assert.ok(s.window && s.detail && s.detail.why === null && s.detail.amplitude !== null && s.detail.beatOffsetMs !== null && s.detail.failing !== null);
-    // Only beats heard since the lock appeared, 30, 40 and 50 s of them.
-    assert.ok(s.window[0] >= lock && s.window[0] < lock + 0.4 && Math.abs(s.window[1] - s.window[0] - (30 + 10 * i)) < 1.5, `beats from ${s.window[0].toFixed(1)} to ${s.window[1].toFixed(1)} s`);
-    // Both locks move against the timestamps, as in the whole capture, and are lined up again.
-    assert.equal(s.detail.lining, 'lined');
-    // Whatever is held back, what was read is the watch's: 0.31 to 0.34 ms and 288 to 290 degrees.
+    // Only beats heard since the lock appeared, 15, 25, 35 and 45 s of them.
+    assert.ok(s.window[0] >= lock && s.window[0] < lock + 0.4 && Math.abs(s.window[1] - s.window[0] - (15 + 10 * i)) < 1.5, `beats from ${s.window[0].toFixed(1)} to ${s.window[1].toFixed(1)} s`);
+    // Both locks move against the timestamps, as in the whole capture, and are lined up again
+    // once there are two 10 s blocks of beats to compare: not in 15 s.
+    assert.equal(s.detail.lining, i === 0 ? 'steady' : 'lined');
+    // The first two readings are held back: 72% and 22% of their draws lose the faint unlock.
+    // That is why the first reading waited for 30 s of beats until 27 November 2026; it now
+    // waits 15 s, which shows the Omega nothing sooner and nothing worse.
+    if (i < 2) {
+      assert.ok(s.amplitudeWhy === 'failing' && s.beatErrorWhy === 'failing' && s.detail.failing > 0.2, `reading ${i}: ${s.amplitudeWhy}, ${s.detail.failing} of the draws lost the unlock`);
+      continue;
+    }
+    // What was read is the watch's: 0.31 to 0.34 ms and 288 to 290 degrees.
     assert.ok(Math.abs(Math.abs(s.detail.beatOffsetMs) - 0.33) <= 0.04 && Math.abs(s.detail.amplitude - 289) <= 2, `read ${s.detail.beatOffsetMs.toFixed(3)} ms and ${s.detail.amplitude.toFixed(1)} degrees`);
     // The placement check: with every beat on the trend of its timestamps the beat error reads
-    // 0.05 ms away with 30 s of beats and 0.01 ms away with 40 and 50 s. That is added to the
-    // stated scatter, which goes from 0.056 to 0.074 ms for the first and by 0.001 for the others.
-    assert.ok(s.detail.placementMs !== null && s.detail.beatErrorSd !== null && Math.abs(s.detail.placementMs) <= (i === 0 ? 0.06 : 0.02) && s.detail.beatErrorSd >= Math.abs(s.detail.placementMs), `reading ${i}: the two readings differ by ${s.detail.placementMs}`);
+    // 0.025 ms away with 35 s of beats and 0.009 ms away with 45 s. That is added to the stated
+    // scatter, which covers it.
+    assert.ok(s.detail.placementMs !== null && s.detail.beatErrorSd !== null && Math.abs(s.detail.placementMs) <= (i === 2 ? 0.04 : 0.02) && s.detail.beatErrorSd >= Math.abs(s.detail.placementMs), `reading ${i}: the two readings differ by ${s.detail.placementMs}`);
     // And the amplitude's two readings differ by less than a degree.
     assert.ok(s.detail.amplitudePlacement !== null && Math.abs(s.detail.amplitudePlacement) <= 1, `reading ${i}: amplitudes ${s.detail.amplitudePlacement} degrees apart`);
     // A reading is shown, or held back because too many of its draws lost the faint unlock:
-    // with 30 to 45 s of beats 3 to 7% of them do, against the 5% allowed, and one beat more
+    // with 30 to 45 s of beats 1 to 7% of them do, against the 5% allowed, and one beat more
     // or less in the reading decides which.
     assert.ok((s.amplitude !== null && s.beatErrorMs !== null) || (s.amplitudeWhy === 'failing' && s.beatErrorWhy === 'failing' && s.amplitude === null && s.beatErrorMs === null && s.detail.failing > 0.05), `reading ${i}: ${s.amplitudeWhy}`);
   }
-  // With 50 s of beats every draw finds the sounds, and both readings are shown. The whole
+  // With 45 s of beats 1% of the draws lose the sounds, and both readings are shown. The whole
   // capture, 60 s from its start with its beats timed all at once, reads 0.34 +- 0.04 ms and
   // 288 +- 1 degrees.
-  const s = of(2);
+  const s = of(3);
   assert.ok(s.amplitude !== null && s.amplitudeSd !== null && s.beatErrorMs !== null && s.beatErrorSd !== null && s.liftMs && s.liftSd && s.detail && s.detail.failing !== null && s.detail.unlockDb !== null);
   assert.deepEqual([s.amplitudeWhy, s.beatErrorWhy], [null, null]);
   assert.ok(Math.abs(s.beatErrorMs - 0.34) <= 0.05, `beat error ${s.beatErrorMs.toFixed(3)} ms`);
@@ -325,20 +333,23 @@ test('Omega 3861, Safari capture, in real time: nothing from the sounds inside i
   // The marks on the averaged beat are the same sounds: the last waveform event carries them.
   const wave = r.waveforms[r.waveforms.length - 1];
   assert.ok(wave.marks && wave.marks.every((m, j) => Math.abs(m.lockMs - m.unlockMs - /** @type {[number, number]} */ (s.liftMs)[j]) < 1e-9), 'marks from unlock to lock');
-  assert.ok(r.waveforms.filter((w) => w.t < first.t - 1.1).every((w) => w.marks === null), 'and none before a reading is shown');
-  // The stage did its three readings and nothing else changed: the checks of the test above
+  const firstShown = /** @type {typeof locked[0]} */ (locked.find((x) => x.sounds && x.sounds.amplitude !== null));
+  assert.ok(r.waveforms.filter((w) => w.t < firstShown.t - 1.1).every((w) => w.marks === null), 'and none before a reading is shown');
+  // The stage did its four readings and nothing else changed: the checks of the test above
   // were made on this same run.
   const load = /** @type {NonNullable<typeof r.pipeline.sounds>} */ (r.pipeline.sounds).load();
-  assert.equal(load.readings, 3);
+  assert.equal(load.readings, 4);
   // On the screen at the end: whole degrees and hundredths of a millisecond, each with its
-  // scatter and the 50 s of beats it rests on.
+  // scatter and the 45 s of beats it rests on.
   const shown = soundsReadout(true, r.last, 36);
   assert.match(shown.amplitude, /^28[789]$/);
-  assert.match(shown.amplitudeNote, /^±[01]\.\d° over 50 s$/);
+  assert.match(shown.amplitudeNote, /^±[01]\.\d° over 45 s$/);
   assert.match(shown.beatError, /^0\.3[0-9]$/);
-  assert.match(shown.beatErrorNote, /^±0\.0[3-7] over 50 s$/);
-  // Until the first reading: a dash for each, and why.
-  assert.deepEqual(soundsReadout(true, early[early.length - 1], 36), { amplitude: '—', amplitudeNote: 'needs 30 s of beats', beatError: '—', beatErrorNote: 'needs 30 s of beats' });
+  assert.match(shown.beatErrorNote, /^±0\.0[3-7] over 45 s$/);
+  // Until the first reading: a dash for each, and why; then, while the readings are held
+  // back, the reason for that.
+  assert.deepEqual(soundsReadout(true, early[early.length - 1], 36), { amplitude: '—', amplitudeNote: 'needs 15 s of beats', beatError: '—', beatErrorNote: 'needs 15 s of beats' });
+  assert.deepEqual(soundsReadout(true, first, 36), { amplitude: '—', amplitudeNote: 'sounds not clear enough', beatError: '—', beatErrorNote: 'sounds not clear enough' });
 });
 
 test('Omega 3861, Safari capture, as a co-axial: no tick is named until an amplitude is shown, then the beat with the longer time from unlock to lock; a run begun 3.8 s later numbers its beats the other way round and names the same beat', () => {

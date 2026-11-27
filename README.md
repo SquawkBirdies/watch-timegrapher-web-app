@@ -9,9 +9,10 @@ also be driven by a simulated watch, by two demo recordings or by a recording of
 measures continuously, or saves a reading for each of the six positions a watch is checked in.
 Milestone 8, amplitude and a beat error measured from the unlock, is under way: the first four of
 its six steps are in the code. Since the fourth, the screen shows both, for Swiss-lever and co-axial
-escapements alike, each with its scatter or with a dash and the reason; they first appear 30 s or
-more after the lock. Following the amplitude over time and telling the escapement from the sound are
-the two steps left. Neither reading has been compared with a timing machine.
+escapements alike, each with its scatter or with a dash and the reason; they first appear 15 s or
+more after the lock, and start again when the beat error steps, as after an adjustment, at a
+sensitivity set in Settings. Following the amplitude over time and telling the escapement from the
+sound are the two steps left. Neither reading has been compared with a timing machine.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4, the
 timegrapher replaying its three demo recordings of the time, all made with Voice Memos, in milestone
@@ -183,12 +184,19 @@ In real time the stage works like this:
   and before the clean-up, for the last 60 to 64 s: 18.5 MB. When a reading starts, each
   confident beat's stretch is cut out of them at its timestamp's own place, and every beat's
   again at its place on the trend, for the placement check.
-- **Which beats.** Those heard since the lock appeared, at most the last 60 s of them, and only
-  beats that were timed alone. The beats of the 8 s of audio a lock is found in are left out, so
-  that a reading rests on nothing from before the watch was placed, as the six-position log
-  asks. A lost lock clears everything.
-- **When.** The first reading starts when each beat type has 30 s of beats. The next start 5 s
-  apart while the beats still reach back less than a minute, and 10 s apart after that.
+- **Which beats.** Those heard since the lock appeared, at most the last 60 s of them (45 s at High
+  sensitivity, below), and only beats that were timed alone. The beats of the 8 s of audio a lock is
+  found in are left out, so that a reading rests on nothing from before the watch was placed, as the
+  six-position log asks. A lost lock clears everything.
+- **When.** The first reading starts when each beat type has 15 s of beats; until 27 November it
+  waited for 30 s (below). The next start 5 s apart while the beats still reach back less than the
+  stretch, and 10 s apart after that.
+- **When the watch changes.** Once a second the gap of each tick-tock cycle between its timed
+  beats is compared with the gaps of the beats the latest reading rests on. When the last 5 s
+  disagree with them for 3 s running, by more than a threshold, the stretch starts again from where
+  the gaps stepped, as at a new lock, and both readings show a dash until the next reading
+  (`js/dsp/steps.js`, rule B of issue 36). See [Following an
+  adjustment](#following-an-adjustment-27-november).
 - **How its computing is spread.** A reading with its 200 draws takes from half a second to
   several seconds of computing, and the same thread has audio to keep up with. So a reading is
   taken a few milliseconds at a time, for at most half of the time that passes, and after it the
@@ -205,25 +213,26 @@ In real time the stage works like this:
 
 | In real time, each reading finished at once | Lock | First reading | Read |
 | --- | --- | --- | --- |
-| Omega 3861, Safari capture, co-axial, 36° | 8.1 s | 38.8 s, from 30 s of beats | reliably shown from 49 s, with 41 s of beats; at the end 0.31 ± 0.04 ms and 288.4 ± 1.0° from 51 s of beats |
-| Simulated lever, 0.50 ms and 270°, at 50° | 8.1 s | 38.8 s | 0.49 ± 0.01 ms and 269.6 ± 0.2°, shown from the first reading |
-| ETA 2836-2, Safari capture | 8.1 s | none: the capture is 30 s long | |
-| ETA 2836-2, Voice Memos recording | 8.1 s | 38.8 s | no reading for its first minute: the first sound found comes at no believable time before the lock (`lift-range`), 0.05 s of computing a try; then its timestamps average cycles |
+| Omega 3861, Safari capture, co-axial, 36° | 8.1 s | 23.4 s, from 15 s of beats, held back with those at 20 and 25 s | first shown at 38.8 s, from 30 s of beats, as before; reliably shown from 49 s, with 41 s of beats; at the end 0.31 ± 0.04 ms and 288.4 ± 1.0° from 51 s of beats |
+| Simulated lever, 28,800 vph, 0.50 ms and 270°, at 50°, loudness 3 | 8.1 s | 23.4 s | 0.51 ± 0.03 ms and 268.5 ± 1.0°, shown from the first reading; 38.8 s with a first reading at 30 s |
+| ETA 2836-2, Safari capture | 8.1 s | 23.4 s | 0.23 ± 0.03 ms and 265.0 ± 0.6°, then 0.27 ± 0.04 ms and 265.8 ± 0.7° from 20 s of beats; none before 27 November, the capture being 30 s long |
+| ETA 2836-2, Voice Memos recording | 8.1 s | 23.4 s | no reading for its first minute: the first sound found comes at no believable time before the lock (`lift-range`), 0.05 s of computing a try; then its timestamps average cycles |
 | The two Omega 3861 Voice Memos recordings | 52 s and 12 s | none: timestamps that each average several cycles | a dash, with that reason |
 
 The times are those of the readings event that first carried the reading. In the app a reading
 appears later by twice its computing, as below.
 
-With 30 to 40 s of its beats, 4 to 10% of the Omega's draws lose its faint unlock, against the
-5% a reading is allowed: read every second, it was shown twice in ten and held back eight times,
-then shown every time from 41 s of beats on. So the first number of a watch like it can appear,
-give way to a dash and come back. What was read was 0.30 to 0.34 ms and 288° to 290° throughout.
-The placement check takes the first reading's stated scatter from 0.056 to 0.074 ms, the two
-readings being 0.05 ms apart with 30 s of beats, and the later ones' by 0.001 to 0.006 ms. The
-amplitude's goes from 1.45 to 1.49° for the first reading and by 0.03° at most for the others.
-Read from the beats before the lock as well, the same capture would have had its first reading
-at 30.6 s instead of 38.8 s, and been reliably shown from 37.8 s instead of 49 s
-(`sounds: { sinceLock: false }`).
+With 15, 20 and 25 s of its beats, 72%, 51% and 22% of the Omega's draws lose its faint unlock, so a
+first reading at 15 s shows it nothing sooner and nothing different. With 30 to 40 s of its beats, 4
+to 10% of them do, against the 5% a reading is allowed: read every second, it was shown twice in ten
+and held back eight times, then shown every time from 41 s of beats on. So the first number of a
+watch like it can appear, give way to a dash and come back. What was read was 0.30 to 0.34 ms and
+288° to 290° throughout. The placement check takes the first reading's stated scatter from 0.056 to
+0.074 ms, the two readings being 0.05 ms apart with 30 s of beats, and the later ones' by 0.001 to
+0.006 ms. The amplitude's goes from 1.45 to 1.49° for the first reading and by 0.03° at most for the
+others. Read from the beats before the lock as well, with the first reading at 30 s of beats, the
+same capture would have had its first reading at 30.6 s instead of 38.8 s, and been reliably shown
+from 37.8 s instead of 49 s (`sounds: { sinceLock: false }`).
 
 What has been checked, on a computer:
 
@@ -298,10 +307,15 @@ The limits so far:
   prototype. Over the first and last seven beats of a stretch the trend has timestamps on one side
   only and lags a rate that is changing, by up to 0.03 ms in the tests.
 - **A stretch under 20 s has one block and nothing to line up on.** A made-up watch of 15 s
-  whose amplitude falls by 36° reads it 6° low and shows it. In real time a reading has 30 s of
-  beats or more.
-- **Nothing for the first 30 s after a lock,** and for a watch whose unlock is as faint as the
-  Omega's, nothing steady before about 40 s. Each lost lock starts that wait again.
+  whose amplitude falls by 36° reads it 6° low and shows it, at a scatter of under 2°. Since 27
+  November the first reading in real time, after a lock or a restart, has 15 s of beats, so an
+  amplitude that moves that fast in those 15 s, as it may just after a watch is wound or put down,
+  is read low and shown; the readings 5 and 10 s later, from two and three blocks, are lined up.
+  No reading of a steady simulated watch was off its truth by more than 3 times its scatter at
+  any length tried.
+- **Nothing for the first 15 s after a lock,** or after a restart, and for a watch whose unlock is
+  as faint as the Omega's, nothing before about 31 s and nothing steady before about 40 s. Each
+  lost lock starts that wait again.
 - **A reading is not quick, and it is not fresh.** On a computer, in Node, a reading of 60 s of
   beats takes 0.4 to 0.9 s of computing when no sound moves, 4 s when two are lined up (the
   Omega's capture) and 8 s when three are, at 28,800 vph, since every draw then lines its own
@@ -533,7 +547,8 @@ dash with the reason under it:
 
 | Under the dash | When |
 | --- | --- |
-| needs 30 s of beats | the lock is younger than that, or its first reading is still being worked out; "needed" once the source has stopped |
+| needs 15 s of beats | the lock is younger than that, or its first reading is still being worked out; "needed" once the source has stopped |
+| changed: reading again | the gaps between the timed beats stepped, as when the watch is adjusted, and both readings start again from the beats after the step, for 15 s or more (since 27 November) |
 | beats too faint | a beat type's timestamps each average several cycles, so no single beat can be placed |
 | too few clear beats | a lock old enough to have them has fewer than 10 confident beats of a type |
 | sounds not found | no unlock, or no lock to pair with it, in the averaged beats |
@@ -545,7 +560,7 @@ dash with the reason under it:
 | check the beat rate | a beat lies halfway between the tick and the tock, so the beat rate in use is half the watch's own |
 | lift angle changed | under the amplitude only: the run has ended and the lift angle was changed in Settings afterwards (decided on 26 November). During a run a new lift angle is read again at once |
 
-Two things follow for a Swiss lever. Its beat error now comes 30 s or more after the lock, with the
+Two things follow for a Swiss lever. Its beat error now comes 15 s or more after the lock, with the
 amplitude, where the gap between the timed beats came with the lock; and its value moves to the
 unlock: the ETA's Safari capture reads 0.275 ± 0.028 ms from its unlocks, whole, against 0.31 ms
 between its timed beats. A watch whose beats must be averaged over several cycles has neither
@@ -621,14 +636,15 @@ noise of the averaged beat, 5 to 17% of the draws lost it, and the readings were
 
 **The audio diagnostic** takes a lift angle as well (decided on 26 November), 52° unless another is
 typed, and gives the app's own amplitude and beat error in its reading line and in its report, as
-"amplitude 288° ±1.1° over 50 s" or "amplitude — (needs 30 s of beats)". The report keeps the gap
+"amplitude 288° ±1.1° over 50 s" or "amplitude — (needs 15 s of beats)". The report keeps the gap
 between the timed beats beside them, under that name, with each beat's time from unlock to lock and
 what reading the sounds cost. Until this step the page ran the pipeline without a lift angle and
 called that gap the beat error. The page now starts with the 60-second recording (decided on 26
-November): the two readings come about 40 s in, and a 30-second recording ends with "needed 30 s of
-beats". Its "longest single step" is the longest the analysis held up the recording; the reading
-finished whole where the recording ends counts in the load but not there (since 27 November).
-Before, on the iPhone, that finish set it, at 2126 ms.
+November). Since 27 November the two readings come about 23 s in for a clear watch and about 39 s in
+for one as faint as the Omega, which a 30-second recording ends before. Its "longest single step" is
+the longest the analysis held up the recording; the reading finished whole where the recording ends
+counts in the load but not there (since 27 November). Before, on the iPhone, that finish set it, at
+2126 ms.
 
 **Where the audio ends,** at Stop and at the end of a recording, the reading of the beats' sounds
 that is being worked out is finished and shown (decided on 26 November); until then it was dropped,
@@ -723,36 +739,107 @@ What this step leaves as it is, and its limits:
   iPhone, and 2.2 to 3.5 s for the Omega on this computer. Start pressed in that time waits for it.
   No reading is started where the audio ends, so the last one shown can rest on beats up to about 10
   s before the end.
-- **After a change, the beat error is slow and the amplitude first stale, then blank.** Both rest on
-  up to a minute of beats. With the simulator's beat error moved from 0.40 to 1.00 ms, the reading
-  passed through 0.42 ms after 9 s, 0.51 after 18 s, 0.79 after 34 s and 0.97 after 54 s, and
-  reached 1.00 after 64 s, each stated at ±0.02 to ±0.07 ms: the scatter says how the beats of that
-  minute agree, not how far the watch has moved within it. The gap between the timed beats had
-  followed within 14 s. With its amplitude moved from 270° to 220°, the old reading stayed for 9 s,
-  at its old scatter, a dash followed for 20 s, and 219° was shown from 28 s after the change; on
-  the iPhone, with 215° set, the old 269° stayed about 20 s, the dash about 20 s more, and 214° came
-  about 40 s after the change. A watchmaker turning a regulator or moving a stud will see the same.
-  The fifth step follows the amplitude over time, in 10 s blocks, and is the planned mend for the
-  amplitude; it does nothing for the beat error. Following a change of beat error sooner is a piece
-  of work of its own, to come before that step (decided on 26 November). Two rules are to be
-  measured for it, on simulated adjustments and on the irregular watches: a dash while the gap
-  between the timed beats disagrees with the minute's reading, and starting the minute again when
-  that gap steps. Either may cost dashes or wrong restarts on watches that are only irregular, which
-  is what the measuring is for.
+- **After a change, the beat error was slow and the amplitude first stale, then blank.** Both rest
+  on up to a minute of beats. With the simulator's beat error moved from 0.40 to 1.00 ms, the
+  reading passed through 0.42 ms after 9 s, 0.51 after 18 s, 0.79 after 34 s and 0.97 after 54 s,
+  each stated at ±0.02 to ±0.07 ms: the scatter says how the beats of that minute agree, not how
+  far the watch has moved within it. With its amplitude moved from 270° to 220°, the old reading
+  stayed for 9 s, a dash followed for 20 s, and 219° was shown from 28 s after the change; on the
+  iPhone, with 215° set, the old 269° stayed about 20 s, the dash about 20 s more, and 214° came
+  about 40 s after the change. Since 27 November the stretch starts again when the beat error
+  steps, and the beat error comes about 16 s after such a change ([Following an
+  adjustment](#following-an-adjustment-27-november)). An amplitude change on a Swiss lever moves no
+  gap, so it still waits for the old beats to leave. The fifth step follows the amplitude over time,
+  in 10 s blocks, and is the planned mend for that.
 - **A Swiss lever within about 0.05 ms of in beat may never be named,** and its two lines then
   nearly coincide. On 24 November, of simulated levers 20 s after the lock, all 24 at 0.1 to 0.2 ms
   were named, 10 of 12 at 0.05 ms, and none of 12 in perfect beat. The names follow the sign of the
   gap, so a watch adjusted through zero would swap them at its next new lock.
-- **A co-axial's beats stay grey for 30 s or more after every lock,** and for good when no amplitude
-  can be shown. The rule was checked on one watch, the Omega 3861, and on simulated ones.
+- **A co-axial's beats stay grey for 15 s or more after every lock,** 31 s on the Omega's capture,
+  and for good when no amplitude can be shown. The rule was checked on one watch, the Omega 3861,
+  and on simulated ones.
 - **The names say nothing of which way the balance swings,** which sound alone cannot tell. They
   only name the same beat from run to run. A watch set to the wrong escapement is named by the wrong
   rule.
 - **The trace is still drawn from the timed beats,** so the gap between its two lines is the gap
   between each beat's loudest sounds, not the beat error on the readout: 0.42 ms against 0.27 ms on
   the ETA's capture, and 3.4 ms against 0.3 ms on the Omega's. The caption says so.
-- **On the audio diagnostic a 30 s recording is too short for the two readings,** which come about
-  40 s in; it ends with "needed 30 s of beats". The page starts with 60 s.
+- **On the audio diagnostic a 30 s recording is too short for a faint watch's two readings,** which
+  come about 39 s in for the Omega; a clear watch's come about 23 s in. The page starts with 60 s.
+
+### Following an adjustment (27 November)
+
+A watchmaker adjusting the beat error moves the gap between the tick and the tock at once, and the
+timed beats show it beat by beat, but the beat error from the unlocks rests on up to a minute of
+beats. Until now it showed the old value, then a mixture, for 44 to 54 s after a change of 0.6 ms
+on a simulated lever, stated as if right (issue 36 of the co-axial investigation). Now, once a
+second, the pipeline compares the gap of each tick-tock cycle between its timed beats over the last
+5 s with the gaps of the beats the latest reading rests on, using only beats timed alone and
+confidently. When the two disagree for 3 s running, by more than K standard errors of their
+difference and by more than 0.03 ms, the stretch of beats starts again from where the gaps stepped:
+the split of the last 20 s that best separates two levels, moved past any gaps just after it that
+lie nearer the old level. Both readings show "changed: reading again" until a reading from 15 s of
+the new beats comes. A co-axial's gap moves with its amplitude, so a change of its amplitude
+restarts it too; a Swiss lever's does not.
+
+How readily it restarts, and how long the stretch is, is the new setting "Amplitude and beat error
+sensitivity", proposed by Lawrence Fan; its presets were chosen by him on 27 November from an
+experiment on 26 recordings. The rate keeps its own averaging window: it is timed beat by beat from
+each beat's loudest sound, while the amplitude and the beat error come from the faint unlock,
+averaged over many beats. A change of the setting during a run keeps the readings shown and applies
+from the next reading. The audio diagnostic uses Medium.
+
+| Sensitivity | High | Medium (default) | Low |
+| --- | --- | --- | --- |
+| Stretch of beats | 45 s | 60 s | 60 s |
+| First reading, after a lock or a restart | 15 s | 15 s | 15 s |
+| Threshold K | 4 | 6 | 8 |
+| After a 0.6 or 0.2 ms change | right at 16 s (26 s at 18,000 vph), after 4 to 8 s of the old value and 8 to 12 s of dash | the same | the same |
+| After a 0.1 ms change | right at 16 s, 8 s wrong first | right at 18 s, 18 s wrong first | not found: 44 s wrong |
+| Restarts in 15 minutes of real watches left alone | 9: 34 s of beat error and 90 s of amplitude dash | 2: 22 s of each | 1: 5 s of each |
+| Scatter on the Omega, beat error and amplitude | ±0.017 to 0.024 ms, ±0.9° | ±0.014 to 0.020 ms, ±0.8 to 0.9° | ±0.014 to 0.019 ms, ±0.7 to 0.8° |
+| A Swiss lever's amplitude after a 55° drop | right at 19 s | right at 24 s | right at 24 s |
+| Computing per reading | about 0.6 of Medium's | | |
+
+The experiment ran the real-time pipeline in Node over each recording, with every reading
+finished in the audio block it started in, so the times are seconds of audio. The recordings were
+the two Safari captures; Lawrence's two 5-minute and two 60 s captures of the Omega and a 5-minute
+capture of an 18,000 vph Mitoma, kept on his computer and not published; simulated levers at
+18,000, 21,600 and 28,800 vph with 0.3 ms of beat jitter; the co-axial of the balance model; and
+nine simulated changes of beat error and amplitude. It tried stretches of 30, 45 and 60 s, first
+readings at 15, 20 and 30 s and K of 4, 6 and 8. A 30 s stretch was too short: the simulated
+co-axial never showed a beat error with it, and the Omega's Safari capture showed a dash 45 to 100%
+of the time. A first reading at 15 s cost nothing seen. "Real watches left alone" are the two
+5-minute Omega captures and the Mitoma's. The full tables are in the investigation's "Option 1
+experiment".
+
+In Node, built: a simulated lever at 28,800 vph and 270°, moved from 0.40 to 1.00 ms 60 s in,
+showed the dash 4.4 s after the change and 0.97 ms ±0.03 15.7 s after it, then 0.98 to 1.00 ms.
+Without the rule it showed 0.42 ms ±0.02 at that moment, and 0.96 ms only 55 s after the change.
+Of the six recordings, at the default:
+
+- **The ETA's Safari capture** gains two readings, 0.23 ms ±0.03 and 265.0° ±0.6 at 23.4 s and
+  0.27 ms ±0.04 and 265.8° ±0.7 at 28.6 s, where it ended before its first.
+- **The Omega's Safari capture** shows the same values at the same times. From 23.4 s to 38.8 s
+  its dash says "sounds not clear enough" instead of "needs 30 s of beats".
+- **The ETA's Voice Memos recording** gives its reason for a dash, `lift-range`, from 23.4 s
+  instead of 38.8 s.
+- **The two Omega Voice Memos recordings and the no-watch capture** are unchanged.
+- **Rule B never fires** on any of the six, at any sensitivity.
+
+Its limits:
+
+- **A restart costs both readings a dash,** for 8 to 12 s on a clear watch (20 s at 18,000 vph), and
+  much longer on a faint one or a co-axial, which need 30 to 50 s of new beats to read: on the faint
+  simulated lever, whose beat error is never shown, a restart blanked its amplitude for 55 to 80 s;
+  on the simulated co-axial whose rest position moved, the right value came 56 s after the change, a
+  dash until then, against 39 s with 15 s wrong and 24 s of dash without the rule. One idea, not
+  measured: a restart that blanks only the beat error.
+- **Restarts come on their own,** most at High. On the Omega they follow its amplitude, which
+  wandered 14 to 17° over five minutes in both captures, so they mark real changes of the watch.
+- **A change under about 0.05 ms is never found,** and the old value stays until its beats have
+  left: 20 s at High, 44 s at Medium and Low.
+- **Not yet seen on the phone.**
 
 ## Live microphone
 
@@ -892,11 +979,13 @@ after asking. Exporting it is planned for a later version.
 Since milestone 8's fourth step (26 November) the beat error is the one measured from the unlocks,
 for either escapement, and each row also keeps the amplitude, both with their scatter and the lift
 angle the amplitude was worked out with: "+1.7 s/d ±0.07 · 0.31 ms · 288°", and under it "beat error
-±0.04 ms · amplitude ±1.1° at 36° lift". Both need 30 s of beats since the lock, 10 s more than the
-default window, and Save does not wait for them, as decided on 26 November. When the rate is ready
-and they are not, the line above the button says "The beat error and the amplitude need 30 s of
-beats: wait for them, or save without." A position saved without them keeps a dash for each and says
-"saved before 30 s of beats"; a reading the pipeline held back keeps its reason, as on the readout.
+±0.04 ms · amplitude ±1.1° at 36° lift". Both need 15 s of beats since the lock (30 s until 27
+November), 5 s less than the default window, and Save does not wait for them, as decided on 26
+November. When the rate is ready and they are not, as on a faint watch, the line above the button
+says "The beat error and the amplitude need 15 s of beats: wait for them, or save without." A
+position saved without them keeps a dash for each and says "saved before 15 s of beats", or "saved
+while reading again after a change" after a restart; a reading the pipeline held back keeps its
+reason, as on the readout.
 The reason comes from the readings, not from the escapement setting, so a co-axial is no longer
 marked "beat error not shown: co-axial". The summary's largest beat error and median amplitude count
 the positions that have one, and each is a dash, with "not read in any position", when none has. The
@@ -979,7 +1068,8 @@ source can be the microphone, a simulated watch whose rate, beat error, amplitud
 and loudness can be changed while it runs, one of two demo recordings, or a recording chosen from
 the phone, replayed at real speed or faster. A switch above the readings
 chooses continuous measuring or the six-position log (see [Six positions](#six-positions)).
-Settings (beat rate, escapement, lift angle, mains frequency, averaging window, theme), the
+Settings (beat rate, escapement, lift angle, mains frequency, averaging window, amplitude and beat
+error sensitivity, theme), the
 chosen microphone, the mode, the six-position log and whether the magnetism notice has been read
 are kept on the device.
 
@@ -995,10 +1085,10 @@ reading, and playing it nearly doubled the pipeline's computing (in Node, withou
 10% of real time against 5% for the Omega's capture, and 13% against 7% for the ETA's). Both were
 decided on 26 November. Two limits follow from the captures' lengths:
 
-- **The ETA's 30 s are too short for an amplitude or a beat error.** A reading of the sounds inside
-  the beats needs 30 s of beats after the lock, which comes at 8 s. Since the fourth step of
-  milestone 8 the beat error comes from that reading too, so the demo shows the rate and the trace
-  only, with a dash for both, until a longer capture is recorded.
+- **The ETA's 30 s leave time for two readings.** A reading of the sounds inside the beats needs
+  15 s of beats after the lock, which comes at 8 s: in Node the first comes 23.4 s in, 0.23 ms and
+  265°, and the second 28.6 s in. Until 27 November it needed 30 s of beats, and the demo showed
+  a dash for both.
 - **The Omega's 60 s leave time for three readings on a computer,** the first about 45 s in and the
   last just before the end, and for four on an iPhone 17 Pro Max.
 
@@ -1078,6 +1168,8 @@ js/dsp/amplitude.js    the unlock and the lock; beat error from the unlocks and 
                        their scatter, the gates and the lining up (milestone 8)
 js/dsp/soundstage.js   the same in real time: the envelopes kept, the beats read since the
                        lock, each reading spread over the audio blocks (milestone 8)
+js/dsp/steps.js        rule B: the stretch of beats starts again when the beat error steps;
+                       the sensitivity presets
 js/dsp/names.js        which beat is the tick: the longer gap after it on a Swiss lever, the
                        longer time from unlock to lock on a co-axial (milestone 8)
 js/dsp/offline.js      runs all stages over a whole recording or a window of it
@@ -1150,8 +1242,9 @@ Done by Lawrence Fan:
 - the idea, the goals and the requirements
 - the design decisions recorded in the plan, including the magnetism warning, the minimum iOS
   version and the choice of plain JavaScript
-- suggestions taken into the design, including the Kalman beat tracker, the beat-rate override
-  and the continuous mode beside the six-position log
+- suggestions taken into the design, including the Kalman beat tracker, the beat-rate override,
+  the continuous mode beside the six-position log, and the sensitivity setting for the amplitude
+  and the beat error
 - the six recordings in `tests/fixtures/` (five of watches, one with no watch), which are the
   only test data not produced by AI-written code
 - every check on the iPhone

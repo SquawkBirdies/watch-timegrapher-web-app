@@ -45,14 +45,14 @@ const FULL_WINDOW_TOLERANCE_SECONDS = 0.01;
 /**
  * Why a saved reading has no beat error, or no amplitude: the pipeline's own reason as it stood
  * when the reading was saved (`waiting` for a reading saved before the pipeline had the beats
- * for it), or `unmeasured` when the pipeline gave none. `coaxial` is found only in logs saved
+ * for it, `changed` the same after the watch changed), or `unmeasured` when the pipeline gave none. `coaxial` is found only in logs saved
  * before 26 November 2026, when a co-axial's beat error was not measured.
  * @typedef {StageWhy|'unmeasured'|'coaxial'} ReadingGap
  */
 
 /** Every reason a stored reading may carry. */
 const GAPS = /** @type {ReadonlyArray<ReadingGap>} */ ([
-  'unmeasured', 'coaxial', 'waiting', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound',
+  'unmeasured', 'coaxial', 'waiting', 'changed', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound',
   'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement',
 ]);
 
@@ -301,12 +301,13 @@ export function describeReading(r) {
 
 /**
  * Why a saved reading lacks a beat error or an amplitude, in words. A saved reading is past,
- * so the readout's "needs 30 s of beats" becomes what happened.
+ * so the readout's "needs 15 s of beats" becomes what happened.
  * @param {ReadingGap} gap
  * @returns {string}
  */
 function gapWords(gap) {
   if (gap === 'waiting') return `saved before ${BEATS_NEEDED_SECONDS} s of beats`;
+  if (gap === 'changed') return 'saved while reading again after a change';
   if (gap === 'unmeasured') return 'not measured';
   if (gap === 'coaxial') return 'not measured for co-axial then';
   return whyWords(gap);

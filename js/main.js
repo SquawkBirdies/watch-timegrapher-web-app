@@ -24,6 +24,7 @@ import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAG
  * @typedef {import('./dsp/pipeline.js').PipelineEvent} PipelineEvent
  * @typedef {import('./dsp/session.js').Load} Load
  * @typedef {import('./dsp/estimate.js').Escapement} Escapement
+ * @typedef {import('./store.js').Sensitivity} Sensitivity
  * @typedef {import('./ui/positions.js').PositionId} PositionId
  */
 
@@ -344,7 +345,7 @@ async function start() {
     id,
     sampleRate: source.sampleRate,
     channelCount: kind === 'simulator' ? 1 : /** @type {RecordingSource} */ (source).channelCount,
-    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: thisRun.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: thisRun.liftAngle },
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: thisRun.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: thisRun.liftAngle, sensitivity: settings.sensitivity },
   });
   player = new Player(source, {
     speed: thisRun.kind === 'simulator' ? 1 : speed,
@@ -491,7 +492,7 @@ function beginLiveSession(r, offset) {
     id: sessionId,
     sampleRate: r.sampleRate,
     channelCount: 1,
-    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: r.liftAngle },
+    options: { humHz: settings.humHz, bph: settings.bph || undefined, escapement: r.escapement, averagingSeconds: settings.averagingSeconds, liftAngle: r.liftAngle, sensitivity: settings.sensitivity },
   });
   schedule();
 }
@@ -830,7 +831,7 @@ function renderPositions(tracking, src) {
     needed: state.needed,
     ready: canSave,
     rateSd: r ? r.rateSd : null,
-    waiting: !!(r && r.sounds && (r.sounds.amplitudeWhy === 'waiting' || r.sounds.beatErrorWhy === 'waiting')),
+    waiting: !!(r && r.sounds && ['waiting', 'changed'].some((w) => w === r.sounds?.amplitudeWhy || w === r.sounds?.beatErrorWhy)),
   });
   // The drawing beside the instruction is of the position to measure next.
   if (ui.positionStepIcon.dataset.position !== (target || '')) {
@@ -1174,6 +1175,7 @@ function showSettings() {
   set('liftAngle', settings.liftAngle);
   set('humHz', settings.humHz);
   set('averagingSeconds', settings.averagingSeconds);
+  set('sensitivity', settings.sensitivity);
   set('theme', settings.theme);
   ui.settingsRestart.hidden = !(run && run.running);
 }
@@ -1201,9 +1203,10 @@ ui.settingsForm.addEventListener('change', () => {
   if (settings.bph !== before.bph || settings.humHz !== before.humHz || simulatorLift) {
     restart();
   } else if (run && run.running) {
-    /** @type {{averagingSeconds?: number, escapement?: Escapement, liftAngle?: number}} */
+    /** @type {{averagingSeconds?: number, escapement?: Escapement, liftAngle?: number, sensitivity?: Sensitivity}} */
     const changes = {};
     if (settings.averagingSeconds !== before.averagingSeconds) changes.averagingSeconds = settings.averagingSeconds;
+    if (settings.sensitivity !== before.sensitivity) changes.sensitivity = settings.sensitivity;
     // The sounds inside the beats are read again with the new lift angle.
     if (settings.liftAngle !== before.liftAngle) {
       changes.liftAngle = settings.liftAngle;

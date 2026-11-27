@@ -431,7 +431,7 @@ export function stageNote(stage, sounds) {
  * them: FIRST_READING_SECONDS of js/dsp/soundstage.js, repeated here so that the page does not
  * load the pipeline's code, which runs in the worker. A test holds the two together.
  */
-export const BEATS_NEEDED_SECONDS = 30;
+export const BEATS_NEEDED_SECONDS = 15;
 
 /**
  * Why a reading taken from the sounds inside the beats shows a dash, in plain language. The
@@ -445,6 +445,9 @@ export function whyWords(why) {
       return '';
     case 'waiting':
       return `needs ${BEATS_NEEDED_SECONDS} s of beats`;
+    case 'changed':
+      // The stretch of beats started again because the beat error stepped (js/dsp/steps.js).
+      return 'changed: reading again';
     case 'averaged':
       return 'beats too faint';
     case 'few-beats':
@@ -523,7 +526,7 @@ export function soundsReadout(tracking, readings, liftAngle, running = true) {
 /**
  * The amplitude and the beat error as a phrase each, for text with no column to put a note
  * under, such as the audio diagnostic's reading line and its report: "amplitude 288° ±1.1° over
- * 50 s", or "amplitude — (needs 30 s of beats)".
+ * 50 s", or "amplitude — (needs 15 s of beats)".
  * @param {SoundsReadout} r
  * @returns {{amplitude: string, beatError: string}}
  */

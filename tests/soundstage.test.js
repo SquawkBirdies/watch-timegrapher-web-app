@@ -116,22 +116,22 @@ function assertSameReading(report, s, what) {
   assert.equal(d.lining, s.lining.state, what);
 }
 
-test('the stage shows nothing until each beat type has 30 s of beats, then reads the last minute of them as the whole-recording stage would', () => {
+test('the stage shows nothing until each beat type has 15 s of beats, then reads the last minute of them as the whole-recording stage would', () => {
   const w = madeUpWatch({ seconds: 80, gapMs: 0.4, seed: 21 });
   /** @type {{t: number, why: string|null}[]} */
   const early = [];
   const { stage, reports } = feed(w, {
     stage: { everySeconds: 20, fillingSeconds: 20 },
     each: (s, t) => {
-      if (t < 29.5) early.push({ t, why: s.report(false, false).amplitudeWhy });
+      if (t < FIRST_READING_SECONDS - 0.5) early.push({ t, why: s.report(false, false).amplitudeWhy });
     },
   });
-  assert.ok(early.length > 600 && early.every((e) => e.why === 'waiting'), 'waiting, and saying so, for the first 30 s');
-  // A reading every 20 s, as set here, from the moment both types have their 30 s: three in 80 s.
-  assert.equal(reports.length, 3);
+  assert.ok(early.length > 280 && early.every((e) => e.why === 'waiting'), 'waiting, and saying so, for the first 15 s');
+  // A reading every 20 s, as set here, from the moment both types have their 15 s: four in 80 s.
+  assert.equal(reports.length, 4);
   // The beats start 0.1 s in, and the stage looks four times a second.
   assert.ok(reports[0].t > FIRST_READING_SECONDS - 0.2 && reports[0].t < FIRST_READING_SECONDS + 0.4, `first reading at ${reports[0].t.toFixed(2)} s`);
-  assert.deepEqual(reports.map((r) => Math.round(r.t - reports[0].t)), [0, 20, 40]);
+  assert.deepEqual(reports.map((r) => Math.round(r.t - reports[0].t)), [0, 20, 40, 60]);
   for (const { t, report } of reports) {
     assert.ok(report.window && report.detail);
     assert.ok(report.amplitude !== null && report.beatErrorMs !== null && report.amplitudeWhy === null && report.beatErrorWhy === null, `shown at ${t.toFixed(1)} s`);
@@ -147,30 +147,32 @@ test('the stage shows nothing until each beat type has 30 s of beats, then reads
     assert.ok(/** @type {number} */ (report.beatErrorSd) >= Math.abs(report.detail.placementMs));
     assert.ok(report.detail.amplitudePlacement !== null && Math.abs(report.detail.amplitudePlacement) < 0.3 && /** @type {number} */ (report.amplitudeSd) >= Math.abs(report.detail.amplitudePlacement), `amplitudes ${report.detail.amplitudePlacement} degrees apart`);
   }
-  // The first reading rests on the 30 s since the start; the last on the minute before it, by
+  // The first reading rests on the 15 s since the start; the last on the minute before it, by
   // which time the envelopes kept have been moved up in their buffer more than once.
   const first = /** @type {[number, number]} */ (reports[0].report.window);
-  const last = /** @type {[number, number]} */ (reports[2].report.window);
-  assert.ok(first[0] < 0.3 && first[1] > 29.5 && first[1] < reports[0].t);
+  const last = /** @type {[number, number]} */ (reports[3].report.window);
+  assert.ok(first[0] < 0.3 && first[1] > FIRST_READING_SECONDS - 0.5 && first[1] < reports[0].t);
   assert.ok(last[1] - last[0] > STACK_SECONDS - 0.5 && last[1] - last[0] <= STACK_SECONDS, `the last reading spans ${(last[1] - last[0]).toFixed(1)} s`);
   assert.ok(stage.base > 0, 'the envelopes from the start are gone');
   const load = stage.load();
-  assert.equal(load.readings, 3);
+  assert.equal(load.readings, 4);
   assert.ok(load.seconds > 0 && load.lastSeconds !== null && load.lastSeconds > 0 && load.lastAudioSeconds === 0, 'each reading was finished in the block it started in');
 });
 
 test('a reading worked out a few steps at a time, while the audio goes on, is the reading worked out at once, and so is one finished where the audio ends', () => {
   const w = madeUpWatch({ seconds: 45, gapMs: -0.3, liftMs: (t) => 7.2 + 0.02 * t, seed: 22 });
-  // Every sound lined up again and fewer draws: the costliest steps there are, in less time.
+  // Every sound lined up again and fewer draws: the costliest steps there are, in less time. A
+  // first reading at 30 s of beats, as before 27 November 2026, gives each reading at least three
+  // blocks of beats to line up; how a reading is spread does not depend on it.
   const reading = /** @type {import('../js/dsp/amplitude.js').ReadOptions} */ ({ lineUp: 'always', resamples: 30 });
-  const atOnce = feed(w, { stage: { reading } });
+  const atOnce = feed(w, { stage: { reading, firstSeconds: 30 } });
   // A clock that the test keeps: each block of audio is 42.7 ms, and every look at the clock
   // comes a millisecond after the last, so every step of a reading takes a millisecond.
   let ms = 0;
   let blocks = 0;
   let working = 0;
   const spread = feed(w, {
-    stage: { reading, share: 0.5, clock: () => ++ms },
+    stage: { reading, firstSeconds: 30, share: 0.5, clock: () => ++ms },
     tick: () => {
       ms += (1e3 * BLOCK) / fe;
       blocks++;
@@ -212,7 +214,7 @@ test('a reading worked out a few steps at a time, while the audio goes on, is th
   const ended = feed(
     { ...w, rows: w.rows.map((row) => row.subarray(0, cut)) },
     {
-      stage: { reading, share: 0.5, clock: () => (slow += 1e3) },
+      stage: { reading, firstSeconds: 30, share: 0.5, clock: () => (slow += 1e3) },
       tick: () => {
         slow += (1e3 * BLOCK) / fe;
       },
@@ -244,11 +246,11 @@ test('only beats heard since the lock appeared are read, unless the stage is tol
   const since = feed(w, { since: 10, stage: { reading } });
   assert.ok(since.reports.length >= 1);
   // The first tick and the first tock after the lock come up to a beat later.
-  assert.ok(since.reports[0].t > 39.8 && since.reports[0].t < 40.75, `first reading at ${since.reports[0].t.toFixed(2)} s`);
+  assert.ok(since.reports[0].t > 10 + FIRST_READING_SECONDS - 0.2 && since.reports[0].t < 10 + FIRST_READING_SECONDS + 0.75, `first reading at ${since.reports[0].t.toFixed(2)} s`);
   assert.ok(since.reports.every((r) => r.report.window && r.report.window[0] >= 10 && r.report.window[0] < 10.2));
   // Told also to leave the placement check out, as the stage was before it had one.
   const all = feed(w, { since: 10, stage: { reading: { ...reading, placementCheck: false }, sinceLock: false } });
-  assert.ok(all.reports[0].t > 29.8 && all.reports[0].t < 30.4, `with the earlier beats, at ${all.reports[0].t.toFixed(2)} s`);
+  assert.ok(all.reports[0].t > FIRST_READING_SECONDS - 0.2 && all.reports[0].t < FIRST_READING_SECONDS + 0.4, `with the earlier beats, at ${all.reports[0].t.toFixed(2)} s`);
   assert.ok(all.reports[0].report.window && all.reports[0].report.window[0] < 0.3);
   assert.ok(since.reports[0].report.detail && since.reports[0].report.detail.placementMs !== null);
   for (const { t, report } of all.reports) assertSameReading(report, whole(w, report, 50, { ...reading, placementCheck: false }), `without the check, at ${t.toFixed(1)} s`);
@@ -257,8 +259,8 @@ test('only beats heard since the lock appeared are read, unless the stage is tol
   const whys = [];
   const ticksOnly = feed(w, { types: [0], stage: { reading }, each: (s, t) => whys.push({ t, why: s.report(false, false).amplitudeWhy }) });
   assert.equal(ticksOnly.reports.length, 0);
-  assert.ok(whys.filter((x) => x.t < 35).every((x) => x.why === 'waiting'));
-  assert.ok(whys.filter((x) => x.t > 36.5).every((x) => x.why === 'few-beats'));
+  assert.ok(whys.filter((x) => x.t < FIRST_READING_SECONDS + 5).every((x) => x.why === 'waiting'));
+  assert.ok(whys.filter((x) => x.t > FIRST_READING_SECONDS + 6.5).every((x) => x.why === 'few-beats'));
 });
 
 test('a lost lock, timestamps that average several cycles and a new lift angle each blank what was read; a new lift angle is read at once', () => {
@@ -304,7 +306,7 @@ test('a lost lock, timestamps that average several cycles and a new lift angle e
 });
 
 test('what the pipeline knows of the watch is applied when a reading is reported: an irregular watch keeps its amplitude, a beat halfway holds both back and takes the marks away', () => {
-  const w = madeUpWatch({ seconds: 31.5, gapMs: 0.25, seed: 25 });
+  const w = madeUpWatch({ seconds: FIRST_READING_SECONDS + 1.5, gapMs: 0.25, seed: 25 });
   const { stage, reports } = feed(w, { stage: { reading: { resamples: 20 } } });
   assert.equal(reports.length, 1);
   const plain = stage.report(false, false);
@@ -386,7 +388,7 @@ const leverEvents = (chunk, stage) => leverRun(chunk, stage).events;
  */
 const withoutTimings = (events) => events.map((e) => (e.type === 'readings' && e.sounds && e.sounds.detail ? { ...e, sounds: { ...e.sounds, detail: { ...e.sounds.detail, computeSeconds: 0 } } } : e));
 
-test('in the pipeline, a simulated lever shows nothing for 30 s after the lock, then its beat error from the unlocks and its amplitude, right within 0.03 ms and 1 degree', () => {
+test('in the pipeline, a simulated lever shows nothing for 15 s after the lock, then its beat error from the unlocks and its amplitude, right within 0.03 ms and 1 degree', () => {
   const events = leverEvents(4096, true);
   const truth = lever().truth;
   const lockEvent = events.find((e) => e.type === 'status');
@@ -394,10 +396,10 @@ test('in the pipeline, a simulated lever shows nothing for 30 s after the lock, 
   const lock = lockEvent.t;
   const readings = /** @type {ReadingsEvent[]} */ (events.filter((e) => e.type === 'readings' && e.t < CHANGE_AT / 48000));
   assert.ok(readings.every((e) => e.sounds !== null && e.sounds.liftAngle === 50));
-  const early = readings.filter((e) => e.t < lock + 29.5);
-  assert.ok(early.length > 25 && early.every((e) => e.sounds && e.sounds.amplitude === null && e.sounds.beatErrorMs === null && e.sounds.amplitudeWhy === 'waiting' && e.sounds.detail === null), 'a dash, and why, until the lock is 30 s old');
+  const early = readings.filter((e) => e.t < lock + FIRST_READING_SECONDS - 0.5);
+  assert.ok(early.length > 12 && early.every((e) => e.sounds && e.sounds.amplitude === null && e.sounds.beatErrorMs === null && e.sounds.amplitudeWhy === 'waiting' && e.sounds.detail === null), 'a dash, and why, until the lock is 15 s old');
   const first = readings.find((e) => e.sounds && e.sounds.detail !== null);
-  assert.ok(first && first.sounds && first.sounds.window && first.t > lock + 29.5 && first.t < lock + 31.5, `first reading at ${first?.t.toFixed(1)} s, locked at ${lock.toFixed(1)} s`);
+  assert.ok(first && first.sounds && first.sounds.window && first.t > lock + FIRST_READING_SECONDS - 0.5 && first.t < lock + FIRST_READING_SECONDS + 1.5, `first reading at ${first?.t.toFixed(1)} s, locked at ${lock.toFixed(1)} s`);
   // Only beats heard since the lock appeared, as the six-position log needs: the beats of the
   // 8 s the lock was found in are not read.
   assert.ok(first.sounds.window[0] >= lock && first.sounds.window[0] < lock + 0.3, `beats from ${first.sounds.window[0].toFixed(2)} s`);
@@ -443,7 +445,7 @@ test('in the pipeline, the marks on the averaged beat come with the amplitude an
   assert.ok(around.length >= 2 && around[0].marks === null && around[around.length - 1].marks !== null, `${around.length} waveform events at the change`);
 });
 
-test('on the screen, that lever is named at the lock by the longer gap after its tick; amplitude and beat error show a dash and why for 30 s, then the watch\'s own within 1 degree and 0.03 ms; the six-position log keeps a dash for both when saved early and both when saved later', () => {
+test('on the screen, that lever is named at the lock by the longer gap after its tick; amplitude and beat error show a dash and why for 15 s, then the watch\'s own within 1 degree and 0.03 ms; the six-position log keeps both, with Save ready 5 s after they come', () => {
   const events = leverEvents(4096, true);
   const truth = lever().truth;
   const changeT = CHANGE_AT / 48000;
@@ -466,41 +468,47 @@ test('on the screen, that lever is named at the lock by the longer gap after its
   assert.ok(seen.every((x) => x.names.length === 2 && x.names.includes('tick') && x.names.includes('tock')), 'no dot without a name');
   assert.ok(Math.abs(Math.abs(truth.lockGapMs) - 0.5) < 0.01);
   assert.equal(parityOf(m.episodes[0].beats, truth.lock, tick), truth.lockGapMs > 0 ? 0 : 1, 'the beat followed by the longer gap');
-  // The readout: a dash and the reason until the first reading of the sounds, 30 s after the lock.
+  // The readout: a dash and the reason until the first reading of the sounds, 15 s after the lock.
   const firstShown = seen.findIndex((x) => x.words.amplitude !== '—');
-  assert.ok(firstShown > 25 && seen[firstShown].reading.t > lock + 29.5 && seen[firstShown].reading.t < lock + 31.5);
-  for (const x of seen.slice(0, firstShown)) assert.deepEqual(x.words, { amplitude: '—', amplitudeNote: 'needs 30 s of beats', beatError: '—', beatErrorNote: 'needs 30 s of beats' });
+  assert.ok(firstShown > 12 && seen[firstShown].reading.t > lock + FIRST_READING_SECONDS - 0.5 && seen[firstShown].reading.t < lock + FIRST_READING_SECONDS + 1.5);
+  for (const x of seen.slice(0, firstShown)) assert.deepEqual(x.words, { amplitude: '—', amplitudeNote: 'needs 15 s of beats', beatError: '—', beatErrorNote: 'needs 15 s of beats' });
   // Then both, in the digits the screen gives, with their scatter and the beats they rest on.
   for (const x of seen.slice(firstShown)) {
     assert.ok(Math.abs(Number(x.words.amplitude) - truth.meanAmplitude) <= 1, `amplitude ${x.words.amplitude}, truly ${truth.meanAmplitude.toFixed(1)}`);
     assert.ok(Math.abs(Number(x.words.beatError) - Math.abs(truth.unlockGapMs)) <= 0.03, `beat error ${x.words.beatError} ms, truly ${Math.abs(truth.unlockGapMs).toFixed(3)}`);
-    assert.match(x.words.amplitudeNote, /^±0\.\d° over 3\d s$/);
-    assert.match(x.words.beatErrorNote, /^±0\.0[1-3] over 3\d s$/);
+    assert.match(x.words.amplitudeNote, /^±0\.\d° over [1-3]\d s$/);
+    assert.match(x.words.beatErrorNote, /^±0\.0[1-3] over [1-3]\d s$/);
   }
   // After the run, a lift angle set to 52 degrees leaves a dash for the amplitude made at 50.
   const last = seen[seen.length - 1];
   const changed = soundsReadout(true, last.reading, 52, false);
   assert.deepEqual([changed.amplitude, changed.amplitudeNote, changed.beatError], ['—', 'lift angle changed', last.words.beatError]);
 
-  // The six-position log. Save is ready 20 s after the lock, 10 s before the sounds are read:
-  // the line says what is still to come, and a position saved then keeps a dash for both.
+  // The six-position log. Save is ready 20 s after the lock, 5 s after the sounds are read
+  // since 27 November 2026, when the first reading came 10 s after Save was ready: the line says
+  // nothing more is to come, and a position saved then keeps both. One saved before the
+  // readings come keeps a dash for both (tests/positions.test.js).
   const firstReady = seen.findIndex((x) => x.ready);
-  assert.ok(firstReady > 0 && firstReady < firstShown && seen[firstReady].reading.t < lock + 21);
+  assert.ok(firstReady > firstShown && seen[firstReady].reading.t < lock + 21);
   const context = { bph: 28800, escapement: /** @type {const} */ ('lever'), source: 'Simulator', now: new Date('2026-11-26T12:00:00Z') };
   const sounds = /** @type {NonNullable<ReadingsEvent['sounds']>} */ (seen[firstReady].reading.sounds);
-  assert.match(positionStep({ target: 'dialUp', saved: null, running: true, tracking: true, covered: 20, needed: 20, ready: true, rateSd: seen[firstReady].reading.rateSd, waiting: sounds.amplitudeWhy === 'waiting' }), /^Ready to save as Dial up\. The beat error and the amplitude need 30 s of beats: wait for them, or save without\.$/);
+  assert.equal(positionStep({ target: 'dialUp', saved: null, running: true, tracking: true, covered: 20, needed: 20, ready: true, rateSd: seen[firstReady].reading.rateSd, waiting: sounds.amplitudeWhy === 'waiting' }), 'Ready to save as Dial up.');
   const early = takeReading(seen[firstReady].reading, context);
-  assert.ok(early);
-  assert.deepEqual([early.beatErrorMs, early.beatErrorGap, early.amplitude, early.amplitudeGap, early.liftAngle], [null, 'waiting', null, 'waiting', 50]);
-  assert.match(describeReading(early).detail, / · no beat error or amplitude: saved before 30 s of beats$/);
+  assert.ok(early && early.beatErrorMs !== null && early.amplitude !== null);
+  assert.deepEqual([early.beatErrorGap, early.amplitudeGap, early.liftAngle], [null, null, 50]);
   // Saved once they are on the screen, the position keeps both as they were shown.
   const late = takeReading(last.reading, context);
   assert.ok(late && late.beatErrorMs !== null && late.beatErrorSd !== null && late.amplitude !== null && late.amplitudeSd !== null);
   assert.ok(Math.abs(late.beatErrorMs - Math.abs(truth.unlockGapMs)) <= 0.03 && Math.abs(late.amplitude - truth.meanAmplitude) <= 1);
   assert.deepEqual([late.beatErrorGap, late.amplitudeGap, late.liftAngle], [null, null, 50]);
   assert.equal(describeReading(late).main.split(' · ').slice(1).join(' · '), `${last.words.beatError} ms · ${last.words.amplitude}°`);
-  // The summary takes its largest beat error and its median amplitude from the position that has them.
-  const log = withReading(withReading(emptyLog(), 'dialUp', early), 'dialDown', late);
+  // A position saved a moment before the readings came keeps a dash for both, and the summary
+  // takes its largest beat error and its median amplitude from the position that has them.
+  const dashed = takeReading(seen[firstShown - 1].reading, context);
+  assert.ok(dashed);
+  assert.deepEqual([dashed.beatErrorMs, dashed.beatErrorGap, dashed.amplitude, dashed.amplitudeGap], [null, 'waiting', null, 'waiting']);
+  assert.match(describeReading(dashed).detail, / · no beat error or amplitude: saved before 15 s of beats$/);
+  const log = withReading(withReading(emptyLog(), 'dialUp', dashed), 'dialDown', late);
   const summary = describeSummary(summarise(log));
   assert.deepEqual([summary.beatError, summary.beatErrorNote, summary.amplitude, summary.amplitudeNote], [`${last.words.beatError} ms`, 'Dial down', `${last.words.amplitude}°`, 'of 1 position']);
 

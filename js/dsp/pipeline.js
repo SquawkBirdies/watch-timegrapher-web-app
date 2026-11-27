@@ -38,6 +38,7 @@ import { SCATTER_LIMIT_MS } from './irregular.js';
 import { BeatTracker } from './tracker.js';
 import { robustLine, median, mean, std, percentile } from './mathutil.js';
 import { SoundStage } from './soundstage.js';
+import { SENSITIVITY, DEFAULT_SENSITIVITY, StepWatch, timedGaps } from './steps.js';
 import { tickByGap, tickByLift } from './names.js';
 
 /**
@@ -71,7 +72,14 @@ import { tickByGap, tickByLift } from './names.js';
  * @property {number} [liftAngle] lift angle in degrees. With it the sounds inside each beat are
  *   read too, for the beat error from the unlocks and the amplitude (`sounds` in the readings);
  *   without it that stage does not run
- * @property {import('./soundstage.js').StageOptions} [sounds] how that stage runs
+ * @property {import('./soundstage.js').StageOptions} [sounds] how that stage runs; its
+ *   `windowSeconds` and `firstSeconds`, when given, replace the sensitivity's
+ * @property {import('./steps.js').Sensitivity} [sensitivity] how readily the amplitude and the
+ *   beat error start their stretch of beats again after a change, and how long it is
+ *   (js/dsp/steps.js); 'medium' when absent
+ * @property {boolean} [followSteps] false keeps their stretch of beats through a change of the
+ *   watch, as before 27 November 2026, so that a reading mixes old and new beats until the old
+ *   have left it
  */
 
 /**
@@ -303,6 +311,7 @@ export class Pipeline {
       blockSize: 2048,
       bands: /** @type {number[][]|undefined} */ (undefined),
       escapement: /** @type {import('./estimate.js').Escapement} */ ('lever'),
+      sensitivity: DEFAULT_SENSITIVITY,
       /** Re-analyse at once when the watch starts or stops running irregularly. */
       watchChanges: true,
       ...options,
@@ -386,13 +395,22 @@ export class Pipeline {
     this.events = [];
     /** Seconds spent in the lock analyses, for the speed check. */
     this.analysisSeconds = 0;
+    const preset = SENSITIVITY[this.options.sensitivity] || SENSITIVITY[DEFAULT_SENSITIVITY];
     /**
      * Stage 10, the sounds inside each beat; null without a lift angle.
      * @type {SoundStage|null}
      */
-    this.sounds = this.options.liftAngle === undefined ? null : new SoundStage(this.bank, this.cleanup.delay, this.options.liftAngle, this.options.sounds);
+    this.sounds = this.options.liftAngle === undefined ? null : new SoundStage(this.bank, this.cleanup.delay, this.options.liftAngle, { windowSeconds: preset.windowSeconds, firstSeconds: preset.firstSeconds, ...this.options.sounds });
     /** The stage's version when its report last went out with the readings, once a second. */
     this.soundsSent = -1;
+    /**
+     * Rule B: starts the stage's stretch of beats again when the watch changes; null without
+     * the stage, or when switched off.
+     * @type {StepWatch|null}
+     */
+    this.steps = this.sounds && this.options.followSteps !== false ? new StepWatch(preset.K) : null;
+    /** Rule B is judged once a second, from this cleaned position on. */
+    this.nextStep = 0;
   }
 
   /**
@@ -422,13 +440,15 @@ export class Pipeline {
   }
 
   /**
-   * Change the settings that can change while measuring: the averaging window, the escapement
-   * and the lift angle. They apply from the next reading; a new lift angle blanks the beat error
-   * from the unlocks and the amplitude until they have been read again with it. Another
-   * escapement names the tick by another rule, so the beats lose their names until that rule
-   * gives them. Other settings need a new pipeline, and so does a lift angle for a pipeline
-   * that was made without one.
-   * @param {{averagingSeconds?: number, escapement?: import('./estimate.js').Escapement, liftAngle?: number}} changes
+   * Change the settings that can change while measuring: the averaging window, the escapement,
+   * the lift angle and the sensitivity. They apply from the next reading; a new lift angle
+   * blanks the beat error from the unlocks and the amplitude until they have been read again
+   * with it. Another escapement names the tick by another rule, so the beats lose their names
+   * until that rule gives them. Another sensitivity keeps the readings shown, which rest on the
+   * same beats as before, and sets the next reading's stretch and the threshold of rule B. Other
+   * settings need a new pipeline, and so does a lift angle for a pipeline that was made without
+   * one.
+   * @param {{averagingSeconds?: number, escapement?: import('./estimate.js').Escapement, liftAngle?: number, sensitivity?: import('./steps.js').Sensitivity}} changes
    */
   setOptions(changes) {
     if (changes.averagingSeconds !== undefined) this.options.averagingSeconds = changes.averagingSeconds;
@@ -442,6 +462,17 @@ export class Pipeline {
       const before = this.sounds.version;
       this.sounds.setLiftAngle(changes.liftAngle);
       if (this.sounds.version !== before && this.state === 'tracking' && this.lock) this.events.push(this.waveform());
+    }
+    const want = changes.sensitivity;
+    if (want !== undefined && want !== this.options.sensitivity && SENSITIVITY[want]) {
+      const preset = SENSITIVITY[want];
+      this.options.sensitivity = want;
+      const own = this.options.sounds || {};
+      if (this.sounds) this.sounds.setLengths(own.windowSeconds ?? preset.windowSeconds, own.firstSeconds ?? preset.firstSeconds);
+      if (this.steps) {
+        this.steps.K = preset.K;
+        this.steps.held = 0;
+      }
     }
   }
 
@@ -557,6 +588,11 @@ export class Pipeline {
    */
   stepSounds(stage, lock) {
     const before = stage.version;
+    if (this.steps && this.count >= this.nextStep) {
+      this.nextStep = this.count + Math.round(this.fe);
+      const at = this.steps.judge(timedGaps(this.dots, (p) => this.toSeconds(p)), stage.made ? stage.made.window : null);
+      if (at) stage.restart(Math.round(at.p));
+    }
     if (lock.types.some((ty) => ty.tracked && ty.K > 1)) {
       stage.averaged();
     } else {
@@ -1213,7 +1249,7 @@ export class Pipeline {
     }
     // Beats outlive their audio when the averaging window is longer than the history, and for as
     // long as stage 10 reads their sounds, which it keeps the envelopes for.
-    const oldest = this.count - Math.max(this.historyLength, this.averagingSpan(), this.sounds ? this.sounds.window : 0);
+    const oldest = this.count - Math.max(this.historyLength, this.averagingSpan(), this.sounds ? this.sounds.reach : 0);
     if (this.dots.length && this.dots[0].p < oldest) this.dots = this.dots.filter((d) => d.p >= oldest);
     if (fresh.length && lock.confirmed) this.events.push({ type: 'beats', beats: fresh.map((d) => this.beat(d)), replaceFrom: null });
   }
@@ -1231,6 +1267,7 @@ export class Pipeline {
       this.trackingSince = this.count;
       // Stage 10 reads only beats heard from here on.
       if (this.sounds) this.sounds.reset(this.count);
+      if (this.steps) this.steps.clear();
       this.state = 'tracking';
       this.nextReading = this.count;
       this.announce(this.dots.filter((d) => d.p >= lock.start), lock.start);
@@ -1257,6 +1294,7 @@ export class Pipeline {
     this.nextRefresh = Infinity;
     this.nextReading = Infinity;
     if (this.sounds) this.sounds.reset(this.count);
+    if (this.steps) this.steps.clear();
     const t = this.toSeconds(this.count);
     this.events.push({ type: 'status', state: 'listening', reason, bph: null, cyclesAveraged: null, t });
     this.events.push({ type: 'readings', t, window: null, windowStart: null, windowSeconds: null, signal: null, irregular: false, sounds: null, tick: null, fits: [null, null], rate: null, rateSd: null, jitterMs: null, beatErrorMs: null, beatOffsetMs: null, beatErrorDetail: null });

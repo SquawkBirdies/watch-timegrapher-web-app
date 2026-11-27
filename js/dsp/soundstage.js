@@ -20,14 +20,21 @@ import { MIN_BEATS, timedBeats, trendBeats, readBeatsSteps, noReading, heldBack 
  * @typedef {import('./amplitude.js').Held} Held
  */
 
-/** How far back the beats of a reading reach, in seconds. */
+/**
+ * How far back the beats of a reading reach, in seconds, unless the sensitivity setting
+ * (js/dsp/steps.js) makes it shorter; the envelopes and beats are kept this long in any case,
+ * so that the setting can be changed while measuring.
+ */
 export const STACK_SECONDS = 60;
 /**
- * Each beat type must have beats over this long before a reading is tried, in seconds. With
- * 20 s the Omega 3861's reading was held back, and a stretch under 20 s has a single 10 s block
- * to compare, so a sound that moves cannot be lined up.
+ * Each beat type must have beats over this long before a reading is tried, in seconds: after a
+ * lock, and after the stretch starts again. It was 30 s until 27 November 2026, because at 20 s
+ * the Omega 3861's reading was held back; an experiment on 26 recordings then found that 15 s
+ * shows nothing worse: clear watches read 16 to 21 s after the lock instead of 31 s, and the
+ * Omega's readings at 15 to 30 s of beats are held back for the unlocks they lose, so that its
+ * first value comes at 31 s as before, the same value. Every sensitivity preset uses it.
  */
-export const FIRST_READING_SECONDS = 30;
+export const FIRST_READING_SECONDS = 15;
 /**
  * Shortest time from the start of one reading to the start of the next, in seconds of audio,
  * once the beats reach back the whole STACK_SECONDS. A reading of a minute of beats changes
@@ -63,6 +70,8 @@ const GIVE_UP_SECONDS = 5;
  * How the real-time stage runs.
  * @typedef {Object} StageOptions
  * @property {number} [windowSeconds] how far back a reading's beats reach; STACK_SECONDS when absent
+ * @property {number} [reachSeconds] how long the envelopes are kept, the longest that
+ *   `windowSeconds` can later be set to: STACK_SECONDS, or `windowSeconds` if that is longer
  * @property {number} [firstSeconds] FIRST_READING_SECONDS when absent
  * @property {number} [everySeconds] READING_EVERY_SECONDS when absent
  * @property {number} [fillingSeconds] FILLING_EVERY_SECONDS when absent, or `everySeconds` if
@@ -80,9 +89,10 @@ const GIVE_UP_SECONDS = 5;
 
 /**
  * Why the stage shows no number: `waiting` while the lock is too young to have enough beats, or
- * while its first reading is being worked out; otherwise why there is no reading, or why the
- * reading is held back.
- * @typedef {'waiting'|NoReading|Held} StageWhy
+ * while its first reading is being worked out; `changed` the same after the stretch of beats
+ * has started again because the watch changed (js/dsp/steps.js); otherwise why there is no
+ * reading, or why the reading is held back.
+ * @typedef {'waiting'|'changed'|NoReading|Held} StageWhy
  */
 
 /**
@@ -160,6 +170,7 @@ export class SoundStage {
    */
   constructor(bank, delay, liftAngle, options = {}) {
     const { windowSeconds = STACK_SECONDS, firstSeconds = FIRST_READING_SECONDS, everySeconds = READING_EVERY_SECONDS, share = STAGE_SHARE, rest = REST_SHARE, sinceLock = true, clock = () => performance.now(), reading = {} } = options;
+    const { reachSeconds = Math.max(STACK_SECONDS, windowSeconds) } = options;
     const { fillingSeconds = Math.min(FILLING_EVERY_SECONDS, everySeconds) } = options;
     const fe = bank.envelopeRate;
     this.fe = fe;
@@ -172,6 +183,8 @@ export class SoundStage {
     this.sinceLock = sinceLock;
     this.clock = clock;
     this.readOptions = reading;
+    /** Envelope samples kept, and the most a reading's beats can be set to reach back over. */
+    this.reach = Math.round(Math.max(reachSeconds, windowSeconds) * fe);
     /** Envelope samples a reading's beats reach back over. */
     this.window = Math.round(windowSeconds * fe);
     this.first = Math.round(firstSeconds * fe);
@@ -183,7 +196,7 @@ export class SoundStage {
      * Envelope kept: the window, the stretch before its first beat, and Cleanup's delay, by
      * which the envelopes run ahead of the positions the pipeline counts in.
      */
-    this.keep = this.window + Math.ceil(STRETCH_BEFORE_S * fe) + delay + Math.round(0.1 * fe);
+    this.keep = this.reach + Math.ceil(STRETCH_BEFORE_S * fe) + delay + Math.round(0.1 * fe);
     this.capacity = this.keep + Math.round(4 * fe);
     /** The envelopes as the filter bank made them. Element 0 of each is envelope sample `base`. */
     this.rows = this.pick.map(() => new Float32Array(this.capacity));
@@ -193,8 +206,10 @@ export class SoundStage {
 
     /** Cleaned position at which the current lock appeared. */
     this.since = 0;
-    /** @type {'waiting'|'few-beats'|'averaged'} why there is no reading, while there is none */
+    /** @type {'waiting'|'changed'|'few-beats'|'averaged'} why there is no reading, while there is none */
     this.idle = 'waiting';
+    /** The stretch started again because the watch changed, and nothing has been read since. */
+    this.restarted = false;
     /** @type {null | {steps: Generator<void, SoundsReading, void>, startedAt: number, every: number, window: [number, number], computeMs: number}} */
     this.job = null;
     /** @type {SoundsReading|null} the latest reading */
@@ -241,7 +256,33 @@ export class SoundStage {
     this.since = since;
     this.nextAt = since;
     this.idle = 'waiting';
+    this.restarted = false;
     this.drop();
+  }
+
+  /**
+   * The watch changed: start the stretch of beats again from where it changed, as at a new
+   * lock, so that no reading mixes beats from before the change with beats from after it.
+   * @param {number} since cleaned position of the first beat after the change
+   */
+  restart(since) {
+    this.reset(since);
+    this.idle = 'changed';
+    this.restarted = true;
+    // The reason shown changes even when there was nothing to drop.
+    this.version++;
+  }
+
+  /**
+   * The sensitivity setting changed while measuring. The reading shown stays, since its beats
+   * have not changed; the next reading reaches back over the new stretch, which is never more
+   * than the envelopes kept.
+   * @param {number} windowSeconds
+   * @param {number} firstSeconds
+   */
+  setLengths(windowSeconds, firstSeconds) {
+    this.window = Math.min(this.reach, Math.round(windowSeconds * this.fe));
+    this.first = Math.round(firstSeconds * this.fe);
   }
 
   /**
@@ -293,7 +334,7 @@ export class SoundStage {
    * @param {() => StageInput} gather the pipeline's beats, asked for only when a reading starts
    */
   step(now, seconds, gather) {
-    if (this.idle === 'averaged') this.idle = 'waiting';
+    if (this.idle === 'averaged') this.idle = this.restarted ? 'changed' : 'waiting';
     if (!this.job && now >= this.nextAt) this.start(now, gather());
     if (this.job) this.work(now, seconds);
   }
@@ -313,7 +354,7 @@ export class SoundStage {
       // Too few beats, yet or any more: what was read from more of them is not shown on. A lock
       // that has lasted long enough to have them is not waiting for them.
       this.drop();
-      this.idle = now - this.since > this.first + Math.round(GIVE_UP_SECONDS * this.fe) ? 'few-beats' : 'waiting';
+      this.idle = now - this.since > this.first + Math.round(GIVE_UP_SECONDS * this.fe) ? 'few-beats' : this.restarted ? 'changed' : 'waiting';
       this.nextAt = now + Math.round(LOOK_EVERY_SECONDS * this.fe);
       return;
     }
@@ -421,6 +462,7 @@ export class SoundStage {
    */
   publish(reading, window, computeSeconds, audioSeconds) {
     this.reading = reading;
+    this.restarted = false;
     this.made = { window, computeSeconds, audioSeconds };
     this.version++;
   }

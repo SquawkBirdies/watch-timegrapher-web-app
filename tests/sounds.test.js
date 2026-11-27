@@ -738,7 +738,9 @@ test('when the time from unlock to lock changes while the beats are taken, the p
 });
 
 test('a stretch of 15 s has one block and nothing to line up on, so a changing amplitude is read low and shown: a limit', () => {
-  // The same change as above in half the time. The real-time stage reads 30 s of beats or more.
+  // The same change as above in half the time. Since 27 November 2026 the real-time stage's
+  // first reading, after a lock or after the stretch starts again, rests on 15 s of beats, so an
+  // amplitude that moves this fast in those 15 s is read low and shown there too.
   const watch = madeUpWatch({ seconds: 15, liftMs: (t) => 6.9 + t / 15 });
   const truth = amplitudeOf(50, 28800, 0.5 * (watch.truth.liftMs[0] + watch.truth.liftMs[1]));
   const s = readMadeUp(watch);
