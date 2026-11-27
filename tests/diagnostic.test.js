@@ -59,6 +59,25 @@ test('a session reports the same events as the pipeline, plus its computing time
   assert.deepEqual(new Session(48000, 1, { liftAngle: 52 }).load().stage, { seconds: 0, readings: 0, lastSeconds: null, lastAudioSeconds: null, longestStepSeconds: 0 });
 });
 
+test('finishing where the audio ends counts in the computing time but not as the longest step', () => {
+  const session = new Session(48000, 1);
+  session.busySeconds = 0.5;
+  session.longestSeconds = 0.02;
+  // A pipeline whose last reading takes 30 ms to finish.
+  session.pipeline = /** @type {any} */ ({
+    sounds: null,
+    finish() {
+      const t0 = performance.now();
+      while (performance.now() - t0 < 30);
+      return [];
+    },
+  });
+  assert.deepEqual(session.finish(), []);
+  const load = session.load();
+  assert.ok(load.busySeconds >= 0.5 + 0.03, `${load.busySeconds} s busy`);
+  assert.equal(load.longestSeconds, 0.02);
+});
+
 test('the speed test reads the simulated watch correctly and reports its speed, with the stage that reads the sounds inside the beats at work', () => {
   // 45 s: the stage starts its first reading 30 s after the lock, and takes its share of the
   // time from then on, as in the app.
