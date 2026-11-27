@@ -91,7 +91,8 @@ const GIVE_UP_SECONDS = 5;
  * @typedef {Object} SoundsReport
  * @property {number} liftAngle lift angle the stage is set to, in degrees
  * @property {number|null} amplitude in degrees
- * @property {number|null} amplitudeSd its scatter over the resamples
+ * @property {number|null} amplitudeSd its scatter over the resamples, with the difference the
+ *   placement check found added to it
  * @property {StageWhy|null} amplitudeWhy why there is no amplitude; null when there is one
  * @property {number|null} beatErrorMs the beat error measured from the unlocks
  * @property {number|null} beatOffsetMs how much later than midway between the ticks' unlocks
@@ -112,12 +113,15 @@ const GIVE_UP_SECONDS = 5;
  * @typedef {Object} SoundsDetail
  * @property {NoReading|null} why why no reading was made
  * @property {number|null} amplitude
- * @property {number|null} amplitudeSd
+ * @property {number|null} amplitudeSd its scatter over the resamples, with the placement
+ *   check's difference added
  * @property {number|null} beatOffsetMs
  * @property {number|null} beatErrorSd its scatter over the resamples, with the placement
  *   check's difference added
  * @property {number|null} placementMs the beat error's reading less its second reading, made
  *   with every beat on the trend of its timestamps; null when that was not made or found no sounds
+ * @property {number|null} amplitudePlacement the amplitude less its second reading, in degrees;
+ *   null with it
  * @property {[number, number]|null} liftMs
  * @property {[number, number]} counts beats of each type
  * @property {number|null} failing share of the resamples that did not find the sounds
@@ -426,6 +430,7 @@ export class SoundStage {
       beatOffsetMs: r.unlockGapMs,
       beatErrorSd: r.scatter ? r.scatter.unlockGapMs : null,
       placementMs: r.placement ? r.placement.differenceMs : null,
+      amplitudePlacement: r.placement ? r.placement.amplitudeDifference : null,
       liftMs: r.liftMs,
       counts: r.counts,
       failing: r.failing,

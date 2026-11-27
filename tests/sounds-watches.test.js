@@ -291,13 +291,17 @@ test('31 of the 46 beat errors are shown, as the prototype shows on the same env
   assert.ok(wrong.unlockGapMs !== null && Math.abs(wrong.unlockGapMs) > 2.5 && wrong.failing !== null && wrong.failing > 0.9 && !wrong.showBeatError);
 });
 
-test('the placement check is made for every one of the 46 that has a scatter, and holds none of their beat errors back: on watches like the Omega and on levers the two readings agree', () => {
+test('the placement check is made for every one of the 46 that has a scatter, and holds none of their beat errors or amplitudes back: on watches like the Omega and on levers the two readings agree', () => {
   for (const run of fortySix()) {
     const s = run.sounds;
     if (!s.scatter) continue;
     assert.ok(s.placement, `${run.watch.name}: not checked`);
     assert.ok(s.beatErrorHeld !== 'placement' && s.beatErrorHeld !== 'unplaced', `${run.watch.name}: held back for ${s.beatErrorHeld}`);
-    assert.ok(s.scatter.unlockGapMs >= s.placement.resampledScatterMs);
+    assert.ok(s.amplitudeHeld !== 'placement' && s.amplitudeHeld !== 'unplaced', `${run.watch.name}: amplitude held back for ${s.amplitudeHeld}`);
+    assert.ok(s.scatter.unlockGapMs >= s.placement.resampledScatterMs && s.scatter.amplitude >= s.placement.resampledAmplitudeScatter);
+    // The amplitudes shown: a co-axial's two readings differ by up to 1.3 degrees, the one on
+    // the trend mostly the higher; a lever's by 0.1 degrees.
+    if (s.showAmplitude) assert.ok(s.placement.amplitudeDifference !== null && Math.abs(s.placement.amplitudeDifference) < (run.watch.liftAngle === 50 ? 0.5 : 1.6), `${run.watch.name}: amplitudes ${s.placement.amplitudeDifference} degrees apart`);
     if (!s.showBeatError) continue;
     // The largest difference among those shown: 0.062 ms (a co-axial in beat, seed 3, which is
     // 0.137 ms off at +-0.067 from its resamples and +-0.091 with the difference).
@@ -364,6 +368,8 @@ test('every amplitude shown for the 46 lies within 2 degrees of the truth, and t
     assert.ok(s.amplitude !== null && s.scatter);
     // The worst: 1.6 degrees (a co-axial in beat, seed 3).
     assert.ok(Math.abs(s.amplitude - run.meanAmplitude) <= 2, `${run.watch.name}: ${s.amplitude.toFixed(1)}, truly ${run.meanAmplitude.toFixed(1)}`);
+    // The largest stated scatter: 1.9 degrees (a co-axial 2.0 ms out, seed 11), 1.4 from its
+    // draws alone. The errors are 0.68 times the stated scatter, rms, and 0.89 times the draws'.
     assert.ok(s.scatter.amplitude < 2, `${run.watch.name}: +-${s.scatter.amplitude.toFixed(1)}`);
   }
   // A swing of 10 degrees either way every 23 s moves the unlock against the timestamps.
@@ -373,7 +379,7 @@ test('every amplitude shown for the 46 lies within 2 degrees of the truth, and t
   }
 });
 
-test('a simulated lever the pipeline finds irregular keeps its amplitude, and its beat error is held back though its draws agree', () => {
+test('a simulated lever the pipeline finds irregular keeps its amplitude, stated at +-0.8 degrees, and its beat error is held back though its draws agree', () => {
   // Each beat 0.5 ms off the regular grid (standard deviation): issue 11 of the investigation.
   const run = lever('lever with 0.5 ms of beat jitter', () => leverWatch({ restOffsetDeg: 1.7, beatJitterMs: 0.5, seed: 72 }));
   const s = run.sounds;
@@ -382,7 +388,13 @@ test('a simulated lever the pipeline finds irregular keeps its amplitude, and it
   assert.deepEqual([s.showBeatError, s.beatErrorHeld, s.showAmplitude, s.amplitudeHeld], [false, 'irregular', true, null]);
   // The gap between unlocks was read, and its scatter alone would have passed the gate.
   assert.ok(s.scatter.unlockGapMs < 0.1, `scatter ${s.scatter.unlockGapMs} ms`);
-  assert.ok(Math.abs(s.amplitude - 270) <= 0.5 && s.scatter.amplitude < 0.5, `amplitude ${s.amplitude} +- ${s.scatter.amplitude}`);
+  // Its amplitude is right, and its draws agree to 0.2 degrees. On the trend the beats of a
+  // watch like this are smeared and its amplitude reads 0.8 degrees lower. The placement check
+  // cannot tell beats that scatter from timestamps that do, so the amplitude is stated at
+  // +-0.8 degrees: right, shown, and less precise than its draws alone would have it.
+  assert.ok(s.placement && s.placement.amplitudeDifference !== null);
+  assert.ok(Math.abs(s.amplitude - 270) <= 0.5 && s.placement.resampledAmplitudeScatter < 0.5, `amplitude ${s.amplitude} +- ${s.placement.resampledAmplitudeScatter}`);
+  assert.ok(Math.abs(s.placement.amplitudeDifference) < 1.5 && s.scatter.amplitude < 1.5, `on the trend ${s.placement.amplitude}, stated +- ${s.scatter.amplitude}`);
 });
 
 test('a simulated lever whose amplitude falls from 290 to 250 degrees in 40 s is lined up again and read right', () => {

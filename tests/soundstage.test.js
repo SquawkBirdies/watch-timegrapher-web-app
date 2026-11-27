@@ -101,8 +101,12 @@ function assertSameReading(report, s, what) {
   same(d.beatErrorSd, s.scatter.unlockGapMs, 'its scatter');
   // The placement check's second reading, from the beats cut out on the trend when the reading
   // started: the difference it found, or none when the check was left out.
-  if (s.placement && s.placement.differenceMs !== null) same(d.placementMs, s.placement.differenceMs, 'the difference with the beats on the trend');
-  else assert.equal(d.placementMs, null, what);
+  if (s.placement && s.placement.differenceMs !== null && s.placement.amplitudeDifference !== null) {
+    same(d.placementMs, s.placement.differenceMs, 'the difference with the beats on the trend');
+    same(d.amplitudePlacement, s.placement.amplitudeDifference, 'the amplitude\'s difference with the beats on the trend');
+  } else {
+    assert.deepEqual([d.placementMs, d.amplitudePlacement], [null, null], what);
+  }
   same(/** @type {[number, number]} */ (d.liftMs)[0], s.liftMs[0], 'tick unlock to lock');
   same(/** @type {[number, number]} */ (d.liftMs)[1], s.liftMs[1], 'tock unlock to lock');
   assert.equal(d.failing, s.failing, what);
@@ -138,6 +142,7 @@ test('the stage shows nothing until each beat type has 30 s of beats, then reads
     // envelope sample, which the trend leaves out: the two readings differ by 0.01 ms at most.
     assert.ok(report.detail.placementMs !== null && Math.abs(report.detail.placementMs) < 0.01, `difference with the beats on the trend ${report.detail.placementMs}`);
     assert.ok(/** @type {number} */ (report.beatErrorSd) >= Math.abs(report.detail.placementMs));
+    assert.ok(report.detail.amplitudePlacement !== null && Math.abs(report.detail.amplitudePlacement) < 0.3 && /** @type {number} */ (report.amplitudeSd) >= Math.abs(report.detail.amplitudePlacement), `amplitudes ${report.detail.amplitudePlacement} degrees apart`);
   }
   // The first reading rests on the 30 s since the start; the last on the minute before it, by
   // which time the envelopes kept have been moved up in their buffer more than once.

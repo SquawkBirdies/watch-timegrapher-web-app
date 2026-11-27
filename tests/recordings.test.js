@@ -228,6 +228,8 @@ test('Omega 3861, Safari capture, in real time: nothing from the sounds inside i
     // 0.05 ms away with 30 s of beats and 0.01 ms away with 40 and 50 s. That is added to the
     // stated scatter, which goes from 0.056 to 0.074 ms for the first and by 0.001 for the others.
     assert.ok(s.detail.placementMs !== null && s.detail.beatErrorSd !== null && Math.abs(s.detail.placementMs) <= (i === 0 ? 0.06 : 0.02) && s.detail.beatErrorSd >= Math.abs(s.detail.placementMs), `reading ${i}: the two readings differ by ${s.detail.placementMs}`);
+    // And the amplitude's two readings differ by less than a degree.
+    assert.ok(s.detail.amplitudePlacement !== null && Math.abs(s.detail.amplitudePlacement) <= 1, `reading ${i}: amplitudes ${s.detail.amplitudePlacement} degrees apart`);
     // A reading is shown, or held back because too many of its draws lost the faint unlock:
     // with 30 to 45 s of beats 3 to 7% of them do, against the 5% allowed, and one beat more
     // or less in the reading decides which.
@@ -317,6 +319,8 @@ test('Omega 3861, Safari capture, whole: 0.34 +- 0.04 ms from its unlocks and 28
   // 0.357 ms, 0.014 ms from the reading, which takes its scatter from 0.043 to 0.045 ms.
   assert.ok(s.placement && s.placement.unlockGapMs !== null && s.placement.differenceMs !== null);
   assert.ok(Math.abs(s.placement.differenceMs) <= 0.025 && s.scatter.unlockGapMs - s.placement.resampledScatterMs < 0.005, `the two readings differ by ${s.placement.differenceMs.toFixed(3)} ms`);
+  // The amplitude on the trend is 288.1 degrees, 0.45 from the reading: +-1.15 becomes +-1.24.
+  assert.ok(s.placement.amplitudeDifference !== null && Math.abs(s.placement.amplitudeDifference) <= 1 && s.scatter.amplitude - s.placement.resampledAmplitudeScatter < 0.3, `amplitudes ${s.placement.amplitudeDifference} degrees apart`);
   assert.ok(s.failing <= 0.02, `${s.failing} of the draws did not find the sounds`);
   assert.deepEqual([s.showBeatError, s.showAmplitude, s.beatErrorHeld, s.amplitudeHeld], [true, true, null, null]);
   // Over its five blocks of 10 s both locks move against the timestamps and both unlocks stay,
@@ -347,6 +351,8 @@ test('ETA 2836-2, Safari capture, whole: 0.27 +- 0.03 ms from its unlocks and 26
   // The placement check: on the trend of its timestamps the beat error reads 0.270 ms, 0.005 ms
   // from the reading, and its scatter stays at 0.03 ms.
   assert.ok(s.placement && s.placement.differenceMs !== null && Math.abs(s.placement.differenceMs) <= 0.015 && s.scatter.unlockGapMs - s.placement.resampledScatterMs < 0.003, `the two readings differ by ${s.placement && s.placement.differenceMs}`);
+  // Its amplitude on the trend is 265.7 degrees, 0.2 from the reading: +-0.51 becomes +-0.55.
+  assert.ok(s.placement.amplitudeDifference !== null && Math.abs(s.placement.amplitudeDifference) <= 0.6 && s.scatter.amplitude - s.placement.resampledAmplitudeScatter < 0.2, `amplitudes ${s.placement.amplitudeDifference} degrees apart`);
   assert.deepEqual([s.showBeatError, s.showAmplitude, s.failing], [true, true, 0]);
   // Nothing moves over its two blocks of 10 s, so the plain average stands. Its 10 s stretches
   // read apart from one another all the same (issue 1 of the co-axial investigation, open).

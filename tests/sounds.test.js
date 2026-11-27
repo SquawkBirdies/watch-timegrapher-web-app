@@ -525,14 +525,20 @@ test('a reading taken a step at a time is the reading taken at once, and it says
   assert.deepEqual(heldBack({ ...s, failing: 0.06 }, true, true), { beatError: 'failing', amplitude: 'failing' });
   assert.deepEqual(heldBack({ ...s, failing: null, scatter: null }, false, false), { beatError: 'unchecked', amplitude: 'unchecked' });
   assert.deepEqual(heldBack({ ...s, amplitude: null }, true, true), { beatError: null, amplitude: null }, 'nothing was read, so nothing is held back');
-  // The placement check's reasons come after the resamples' own, and touch only the beat error.
-  assert.ok(s.scatter);
-  const placed = { unlockGapMs: s.unlockGapMs - 0.2, differenceMs: 0.2, resampledScatterMs: 0.01, why: null };
-  const widened = { ...s, scatter: { ...s.scatter, unlockGapMs: Math.hypot(0.01, 0.2) }, placement: placed };
+  // The placement check's reasons come after the resamples' own, for each reading by itself.
+  assert.ok(s.scatter && s.amplitude !== null);
+  const placed = { unlockGapMs: s.unlockGapMs - 0.2, differenceMs: 0.2, resampledScatterMs: 0.01, amplitude: s.amplitude - 0.1, amplitudeDifference: 0.1, resampledAmplitudeScatter: 0.05, why: null };
+  const widened = { ...s, scatter: { ...s.scatter, unlockGapMs: Math.hypot(0.01, 0.2), amplitude: Math.hypot(0.05, 0.1) }, placement: placed };
   assert.deepEqual(heldBack(widened, false, false), { beatError: 'placement', amplitude: null });
   assert.deepEqual(heldBack({ ...widened, placement: { ...placed, resampledScatterMs: 0.11 } }, false, false), { beatError: 'scatter', amplitude: null }, 'the resamples alone scatter too far');
   assert.deepEqual(heldBack(widened, true, false), { beatError: 'irregular', amplitude: null });
-  assert.deepEqual(heldBack({ ...s, placement: { unlockGapMs: null, differenceMs: null, resampledScatterMs: 0.01, why: 'few-sounds' } }, false, false), { beatError: 'unplaced', amplitude: null });
+  // The amplitude's two readings 20 degrees apart: held back, in an irregular watch too.
+  const apart = { ...s, scatter: { ...s.scatter, amplitude: Math.hypot(0.05, 20) }, placement: { ...placed, differenceMs: 0, amplitudeDifference: 20 } };
+  assert.deepEqual(heldBack(apart, false, false), { beatError: null, amplitude: 'placement' });
+  assert.deepEqual(heldBack(apart, true, false), { beatError: 'irregular', amplitude: 'placement' });
+  assert.deepEqual(heldBack({ ...apart, placement: { ...apart.placement, resampledAmplitudeScatter: 6 } }, false, false), { beatError: null, amplitude: 'scatter' });
+  const none = { unlockGapMs: null, differenceMs: null, resampledScatterMs: 0.01, amplitude: null, amplitudeDifference: null, resampledAmplitudeScatter: 0.05, why: /** @type {const} */ ('few-sounds') };
+  assert.deepEqual(heldBack({ ...s, placement: none }, false, false), { beatError: 'unplaced', amplitude: 'unplaced' });
   // Too few timestamps, or timestamps that each average several cycles: nothing to stack.
   const few = timedBeats(watch.rows, watch.envelopeRate, watch.beats.map((b) => ({ ...b, ok: b.ok.map((_, i) => (i < 9 ? 1 : 0)) })), watch.toPosition);
   assert.deepEqual([few.why, 'counts' in few && few.counts], ['few-beats', [9, 9]]);
@@ -577,20 +583,25 @@ test('every beat of a type is placed on the trend of its confident timestamps, a
   assert.ok(Math.max(...off) < 0.03 && Math.max(...off) > 0.01, `at the ends ${Math.max(...off)} ms`);
 });
 
-test('the placement check reads the beat error a second time with every beat on the trend, changes no reading and adds the difference to the stated scatter', () => {
+test('the placement check reads the beat error and the amplitude a second time with every beat on the trend, changes neither reading and adds each difference to its stated scatter', () => {
   const { watch, reading: s } = steadyWatch();
   const without = readMadeUp(watch, { placementCheck: false });
-  assert.ok(s.placement && s.scatter && without.scatter && s.unlockGapMs !== null && s.placement.unlockGapMs !== null && s.placement.differenceMs !== null);
+  assert.ok(s.placement && s.scatter && without.scatter && s.unlockGapMs !== null && s.amplitude !== null && s.placement.unlockGapMs !== null && s.placement.differenceMs !== null);
+  assert.ok(s.placement.amplitude !== null && s.placement.amplitudeDifference !== null);
   assert.equal(without.placement, null);
-  // The reading, its draws and the amplitude's scatter are what they were without the check.
+  // The readings, their draws and the draws' scatter are what they were without the check.
   assert.deepEqual([s.unlockGapMs, s.lockGapMs, s.liftMs, s.amplitude, s.failing, s.lining], [without.unlockGapMs, without.lockGapMs, without.liftMs, without.amplitude, without.failing, without.lining]);
-  assert.deepEqual([s.scatter.amplitude, s.scatter.liftMs, s.scatter.lockGapMs, s.placement.resampledScatterMs], [without.scatter.amplitude, without.scatter.liftMs, without.scatter.lockGapMs, without.scatter.unlockGapMs]);
+  assert.deepEqual([s.scatter.liftMs, s.scatter.lockGapMs, s.placement.resampledScatterMs, s.placement.resampledAmplitudeScatter], [without.scatter.liftMs, without.scatter.lockGapMs, without.scatter.unlockGapMs, without.scatter.amplitude]);
   // This watch's timestamps are its beats' own times, and each beat falls anywhere within an
   // envelope sample, 0.08 ms. The trend leaves that out of each beat's place, which smears the
   // sounds a little: the two readings differ by 0.005 ms.
   assert.ok(Math.abs(s.placement.differenceMs) < 0.01, `difference ${s.placement.differenceMs} ms`);
   assert.equal(s.placement.differenceMs, s.unlockGapMs - s.placement.unlockGapMs);
   assert.equal(s.scatter.unlockGapMs, Math.hypot(without.scatter.unlockGapMs, s.placement.differenceMs));
+  // The amplitude likewise: its two readings are 0.05 degrees apart.
+  assert.ok(Math.abs(s.placement.amplitudeDifference) < 0.2, `amplitudes ${s.placement.amplitudeDifference} degrees apart`);
+  assert.equal(s.placement.amplitudeDifference, s.amplitude - s.placement.amplitude);
+  assert.equal(s.scatter.amplitude, Math.hypot(without.scatter.amplitude, s.placement.amplitudeDifference));
   // The trend's beats include those the pipeline was not confident of.
   const some = watch.beats.map((b) => ({ ...b, ok: b.ok.map((_, i) => (i % 4 === 1 ? 0 : 1)) }));
   const timed = timedBeats(watch.rows, watch.envelopeRate, some, watch.toPosition);
@@ -601,7 +612,7 @@ test('the placement check reads the beat error a second time with every beat on 
   assert.equal(trendBeats(watch.rows, watch.envelopeRate, watch.beats.map((b) => ({ ...b, ok: b.ok.map((_, i) => (i < 9 ? 1 : 0)) })), watch.toPosition).why, 'few-beats');
 });
 
-test('timestamps that are late for one tock in three move the beat error by more than twice what the resamples say; the second reading moves a tenth as far, and the stated scatter then covers the shift', () => {
+test('timestamps that are late for one tock in three move the beat error by more than twice what the resamples say, and the stated scatter then covers the shift; 1.2 ms late, both readings are wrong, their draws agree, and both are held back', () => {
   const { watch, reading: steadyReading } = steadyWatch();
   assert.ok(steadyReading.unlockGapMs !== null && steadyReading.amplitude !== null && steadyReading.placement && steadyReading.placement.unlockGapMs !== null);
   // What the beats on the trend read when no timestamp is late.
@@ -630,17 +641,20 @@ test('timestamps that are late for one tock in three move the beat error by more
   assert.ok(far.unlockGapMs < -0.7 && far.placement.resampledScatterMs < 0.02 && far.failing === 0, `read ${far.unlockGapMs} +-${far.placement.resampledScatterMs} ms`);
   assert.ok(Math.abs(far.placement.unlockGapMs - onTrend) < 0.006, `the second reading ${far.placement.unlockGapMs} ms`);
   assert.deepEqual([far.showBeatError, far.beatErrorHeld], [false, 'placement']);
-  // A limit: the check is of the beat error alone. The amplitude, read 20 degrees low from the
-  // same early copy, is still shown.
-  assert.ok(far.showAmplitude && far.amplitude < steadyReading.amplitude - 15, `amplitude ${far.amplitude}`);
+  // The amplitude is read 20 degrees low from the same early copy, with draws that agree to
+  // 0.1 degrees. On the trend it reads what the watch has, and the difference holds it back.
+  assert.ok(far.amplitude < steadyReading.amplitude - 15 && far.placement.resampledAmplitudeScatter < 0.2, `amplitude ${far.amplitude} +-${far.placement.resampledAmplitudeScatter}`);
+  assert.ok(far.placement.amplitude !== null && Math.abs(far.placement.amplitude - steadyReading.amplitude) < 0.5, `the second reading ${far.placement.amplitude} degrees`);
+  assert.deepEqual([far.showAmplitude, far.amplitudeHeld], [false, 'placement']);
 
-  // When the beats on the trend give no reading, the beat error cannot be checked.
+  // When the beats on the trend give no reading, neither reading can be checked.
   const timed = timedBeats(watch.rows, watch.envelopeRate, watch.beats, watch.toPosition);
   assert.ok(timed.why === null);
   const unchecked = readBeats(timed.beats, watch.envelopeRate, timed.gapMs, watch.bph, 50, { onTrend: { why: 'few-beats', counts: [9, 9] } });
   assert.ok(unchecked.placement && unchecked.scatter);
-  assert.deepEqual([unchecked.placement.differenceMs, unchecked.placement.why, unchecked.showBeatError, unchecked.beatErrorHeld, unchecked.showAmplitude], [null, 'few-beats', false, 'unplaced', true]);
-  assert.equal(unchecked.scatter.unlockGapMs, steadyReading.placement.resampledScatterMs, 'and nothing is added to its scatter');
+  assert.deepEqual([unchecked.placement.differenceMs, unchecked.placement.amplitudeDifference, unchecked.placement.why], [null, null, 'few-beats']);
+  assert.deepEqual([unchecked.showBeatError, unchecked.beatErrorHeld, unchecked.showAmplitude, unchecked.amplitudeHeld], [false, 'unplaced', false, 'unplaced']);
+  assert.deepEqual([unchecked.scatter.unlockGapMs, unchecked.scatter.amplitude], [steadyReading.placement.resampledScatterMs, steadyReading.placement.resampledAmplitudeScatter], 'and nothing is added to their scatter');
 });
 
 test('a reading with too few draws to judge it is never to be shown', () => {
@@ -663,14 +677,20 @@ test('an irregular watch keeps its amplitude and loses its beat error; a beat fo
   assert.deepEqual([halfway.showBeatError, halfway.beatErrorHeld, halfway.showAmplitude, halfway.amplitudeHeld], [false, 'halfway', false, 'halfway']);
 });
 
-test('beats that fall at scattered times scatter the beat error past its gate and leave the amplitude alone', () => {
+test('beats that fall at scattered times scatter the beat error past its gate; the amplitude is right and shown, and stated less precisely, since on the trend such beats are smeared', () => {
   // Each whole beat 0.6 ms off the grid (standard deviation), its timestamp with it. Drawn
   // again, the 80 beats of each type put the gap between them anywhere within 0.12 ms.
   const s = readMadeUp(madeUpWatch({ seconds: 20, beatJitterMs: 0.6 }));
   assert.ok(s.scatter && s.amplitude !== null);
   assert.ok(s.scatter.unlockGapMs > 0.1 && s.scatter.unlockGapMs < 0.2, `scatter ${s.scatter.unlockGapMs} ms`);
   assert.deepEqual([s.showBeatError, s.beatErrorHeld, s.showAmplitude, s.amplitudeHeld], [false, 'scatter', true, null]);
-  assert.ok(Math.abs(s.amplitude - amplitudeOf(50, 28800, 7.4)) < 0.5 && s.scatter.amplitude < 0.2, `amplitude ${s.amplitude} +- ${s.scatter.amplitude}`);
+  // The amplitude's draws agree to 0.03 degrees and it is right. With every beat on the trend
+  // the sounds of a watch like this are smeared, and the amplitude reads 2.6 degrees lower:
+  // the placement check cannot tell beats that scatter from timestamps that do, so it states
+  // this amplitude at +-2.6 degrees. That is its cost.
+  assert.ok(s.placement && s.placement.amplitudeDifference !== null);
+  assert.ok(Math.abs(s.amplitude - amplitudeOf(50, 28800, 7.4)) < 0.5 && s.placement.resampledAmplitudeScatter < 0.2, `amplitude ${s.amplitude} +- ${s.placement.resampledAmplitudeScatter}`);
+  assert.ok(s.placement.amplitudeDifference > 1 && s.scatter.amplitude > 1 && s.scatter.amplitude < 4, `stated +- ${s.scatter.amplitude} degrees`);
 });
 
 test('an unlock that many draws of the beats lose holds both readings back, though the draws that find it agree', () => {

@@ -6,8 +6,8 @@
 // 0 for endSeconds to read to the end, and 0 for bph to have the beat rate detected. lineUp is
 // `moved` (the default: beats are lined up again on the sounds whose 10 s blocks show them
 // moving), `always` or `never`; resamples is 200 unless given, and 0 gives the reading alone.
-// placement is `check` (the default: the beat error is read a second time with every beat on the
-// trend of its timestamps, and the difference added to its scatter) or `none`.
+// placement is `check` (the default: the beat error and the amplitude are read a second time with
+// every beat on the trend of its timestamps, and each difference added to its scatter) or `none`.
 
 import { readWav } from '../tests/helpers/wav.js';
 import { analyze } from '../js/dsp/offline.js';
@@ -87,6 +87,9 @@ function describeSounds(s) {
   lines.push(`  gap between the locks ${signed(s.lockGapMs, 2)}${pm(sd?.lockGapMs, 2)} ms`);
   lines.push(`  unlock to lock: tick ${s.liftMs[0].toFixed(2)}${pm(sd?.liftMs[0], 2)} ms, tock ${s.liftMs[1].toFixed(2)}${pm(sd?.liftMs[1], 2)} ms, ratio ${(s.liftMs[0] / s.liftMs[1]).toFixed(3)}`);
   lines.push(`  amplitude ${s.amplitude.toFixed(0)}${pm(sd?.amplitude, 0)} degrees (tick alone ${s.amplitudes[0].toFixed(0)}, tock alone ${s.amplitudes[1].toFixed(0)})${back(s.amplitudeHeld)}`);
+  if (placed && placed.amplitude !== null && placed.amplitudeDifference !== null && sd) {
+    lines.push(`    with the beats on the trend of their timestamps: ${placed.amplitude.toFixed(1)} degrees, ${signed(-placed.amplitudeDifference, 1)} from the reading; scatter ${placed.resampledAmplitudeScatter.toFixed(2)} over the resamples, ${sd.amplitude.toFixed(2)} with that difference`);
+  }
   lines.push((s.failing === null || s.otherSound === null ? '  ' : `  resamples in which the sounds were not found: ${(100 * s.failing).toFixed(1)}% (another sound in ${(100 * s.otherSound).toFixed(1)}%); `) +
     `the weaker unlock stands ${s.unlockDb.toFixed(1)} dB over the noise of the average`);
   return lines;

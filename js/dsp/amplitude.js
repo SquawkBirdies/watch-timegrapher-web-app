@@ -24,9 +24,9 @@
 // A noisy timestamp smears the averaged sounds, and when the unlock helps the earlier stages
 // time the beat it also lines the unlock's noise up. The beat error then moves one way, by an
 // amount the resamples cannot see: they draw the beats with their timestamps, so they see the
-// scatter and not the shift. The beat error is therefore read a second time with every beat
-// placed on the trend of its type's timestamps, and the difference between the two readings is
-// added to the stated scatter (the placement check).
+// scatter and not the shift. Both readings are therefore made a second time with every beat
+// placed on the trend of its type's timestamps, and the difference between the two readings of
+// each is added to its stated scatter (the placement check).
 //
 // A port of tools/prototype/coaxial/events.py (`lift_limits`, `pair_beats`, `amplitude`,
 // `block_shifts`, `moved`, `reliable`, `beat_shifts`, `running_median`, `beat_times` and
@@ -134,9 +134,9 @@ export const TREND_BEATS = 15;
  *   formula has the wrong rate
  * - `scatter`: the resamples that found the sounds scatter too far
  * - `unplaced`: with every beat placed on the trend of its timestamps the sounds were not
- *   found, so the beat error could not be checked; only the beat error is held for this
- * - `placement`: the resamples agree, but the beat error moves too far when every beat is placed
- *   on the trend of its timestamps; only the beat error is held for this
+ *   found, so neither reading could be checked
+ * - `placement`: the resamples agree, but the reading moves too far when every beat is placed
+ *   on the trend of its timestamps
  * @typedef {'unchecked'|'failing'|'irregular'|'halfway'|'scatter'|'unplaced'|'placement'} Held
  */
 
@@ -191,14 +191,19 @@ export const TREND_BEATS = 15;
  */
 
 /**
- * What the placement check came to: the beat error read a second time, with every beat on the
- * trend of its type's timestamps.
+ * What the placement check came to: the beat error and the amplitude read a second time, with
+ * every beat on the trend of its type's timestamps.
  * @typedef {Object} Placement
  * @property {number|null} unlockGapMs the second reading of the gap between the unlocks; null
  *   when it found no sounds
  * @property {number|null} differenceMs the reading less the second reading; null with it
  * @property {number} resampledScatterMs the beat error's scatter over the resamples alone,
  *   before the difference was added to it
+ * @property {number|null} amplitude the second reading of the amplitude, in degrees; null when
+ *   it found no sounds
+ * @property {number|null} amplitudeDifference the amplitude less its second reading; null with it
+ * @property {number} resampledAmplitudeScatter the amplitude's scatter over the resamples
+ *   alone, before the difference was added to it
  * @property {NoReading|null} why why the second reading found no sounds
  */
 
@@ -226,8 +231,8 @@ export const TREND_BEATS = 15;
  * @property {boolean} [placementCheck] false leaves the placement check out, as before it was
  *   added; `measureSounds` and the real-time stage make it otherwise
  * @property {StackedBeats|null} [onTrend] the same beats placed on the trend of their timestamps
- *   (`trendBeats`): given, the beat error is read a second time from them once the resamples
- *   have given it a scatter, and the difference is added to that scatter
+ *   (`trendBeats`): given, the beat error and the amplitude are read a second time from them
+ *   once the resamples have given them a scatter, and each difference is added to its scatter
  * @property {(outcome: NoReading | 'other-sound' | {unlockGapMs: number, lockGapMs: number, liftMs: [number, number], places: Places}) => void} [each]
  *   called with each resample's outcome
  */
@@ -279,8 +284,8 @@ export const TREND_BEATS = 15;
  * @property {number|null} otherSound share of the resamples that found another sound, which is part of `failing`
  * @property {{unlockGapMs: number, lockGapMs: number, liftMs: [number, number], amplitude: number}|null} scatter
  *   each reading's standard deviation over the resamples that found the sounds; null when fewer
- *   than MIN_RESAMPLES_KEPT did. After the placement check, `unlockGapMs` also holds the
- *   difference between the two readings, added as the root of the sum of squares
+ *   than MIN_RESAMPLES_KEPT did. After the placement check, `unlockGapMs` and `amplitude` also
+ *   hold the difference between their two readings, added as the root of the sum of squares
  * @property {Placement|null} placement what the placement check came to; null when it was not made
  * @property {boolean} showBeatError true when the resamples support the beat error
  * @property {boolean} showAmplitude true when they support the amplitude
@@ -670,7 +675,7 @@ function readingsOf(places, gapMs) {
  * know of the watch. The first reason that applies is the one given: sounds that are often not
  * found leave nothing to say about the watch, and what the pipeline knows of the watch comes
  * before the scatter of a reading it would not show anyway.
- * The placement check comes last: a beat error whose resamples already scatter too far is held
+ * The placement check comes last: a reading whose resamples already scatter too far is held
  * for that, one that could not be checked is held for that, and one that the resamples support
  * is held when the difference between its two readings takes its scatter over the limit.
  * @param {Pick<SoundsReading, 'amplitude'|'failing'|'scatter'|'placement'>} reading one with its
@@ -695,10 +700,15 @@ export function heldBack(reading, irregular, halfway) {
   else if (resampled > MAX_BEAT_ERROR_SCATTER_MS) beatError = 'scatter';
   else if (placed && placed.differenceMs === null) beatError = 'unplaced';
   else if (reading.scatter.unlockGapMs > MAX_BEAT_ERROR_SCATTER_MS) beatError = 'placement';
-  return {
-    beatError,
-    amplitude: failing ? 'failing' : halfway ? 'halfway' : reading.scatter.amplitude > MAX_AMPLITUDE_SCATTER ? 'scatter' : null,
-  };
+  const resampledAmplitude = placed ? placed.resampledAmplitudeScatter : reading.scatter.amplitude;
+  /** @type {Held|null} */
+  let amplitude = null;
+  if (failing) amplitude = 'failing';
+  else if (halfway) amplitude = 'halfway';
+  else if (resampledAmplitude > MAX_AMPLITUDE_SCATTER) amplitude = 'scatter';
+  else if (placed && placed.amplitudeDifference === null) amplitude = 'unplaced';
+  else if (reading.scatter.amplitude > MAX_AMPLITUDE_SCATTER) amplitude = 'placement';
+  return { beatError, amplitude };
 }
 
 /**
@@ -925,18 +935,23 @@ export function* readBeatsSteps(beats, envelopeRate, timestampGapMs, bph, liftAn
 
   if (onTrend && out.scatter) {
     // The placement check: the same reading with every beat on the trend of its timestamps,
-    // from the same envelopes and with no resamples. The trend is not used for the reading
-    // itself: it smears a watch whose beats really scatter, by 0.12 ms with 0.3 ms of jitter.
-    // The draws carry on from the reading's own, so one seed still gives one result.
+    // from the same envelopes and with no resamples. The trend is not used for the readings
+    // themselves: it smears a watch whose beats really scatter, by 0.12 ms with 0.3 ms of
+    // jitter. The draws carry on from the reading's own, so one seed still gives one result.
     const second = onTrend.why === null ? yield* readBeatsSteps(onTrend.beats, envelopeRate, onTrend.gapMs, bph, liftAngle, { resamples: 0, lineUp, draw }) : null;
     const resampledScatterMs = out.scatter.unlockGapMs;
-    if (second && second.unlockGapMs !== null) {
+    const resampledAmplitudeScatter = out.scatter.amplitude;
+    if (second && second.unlockGapMs !== null && second.amplitude !== null) {
       const differenceMs = reading.unlockGapMs - second.unlockGapMs;
-      out.placement = { unlockGapMs: second.unlockGapMs, differenceMs, resampledScatterMs, why: null };
-      out.scatter = { ...out.scatter, unlockGapMs: Math.hypot(resampledScatterMs, differenceMs) };
+      // The amplitude too (decided on 26 November): timestamps that are wrong for many beats
+      // of one type can put another sound where the unlock is looked for, and the draws then
+      // agree on a time from unlock to lock that is not the watch's.
+      const amplitudeDifference = out.amplitude - second.amplitude;
+      out.placement = { unlockGapMs: second.unlockGapMs, differenceMs, resampledScatterMs, amplitude: second.amplitude, amplitudeDifference, resampledAmplitudeScatter, why: null };
+      out.scatter = { ...out.scatter, unlockGapMs: Math.hypot(resampledScatterMs, differenceMs), amplitude: Math.hypot(resampledAmplitudeScatter, amplitudeDifference) };
     } else {
-      // No sounds on the trend: the beat error cannot be checked, and is held back.
-      out.placement = { unlockGapMs: null, differenceMs: null, resampledScatterMs, why: second ? second.why : onTrend.why };
+      // No sounds on the trend: neither reading can be checked, and both are held back.
+      out.placement = { unlockGapMs: null, differenceMs: null, resampledScatterMs, amplitude: null, amplitudeDifference: null, resampledAmplitudeScatter, why: second ? second.why : onTrend.why };
     }
   }
   const held = heldBack(out, irregular, halfway);
