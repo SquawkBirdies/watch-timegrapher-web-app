@@ -12,7 +12,7 @@
 // to catch up in.
 
 import { STRETCH_BEFORE_S, soundRowIndices } from './sounds.js';
-import { MIN_BEATS, timedBeats, readBeatsSteps, noReading, heldBack } from './amplitude.js';
+import { MIN_BEATS, timedBeats, trendBeats, readBeatsSteps, noReading, heldBack } from './amplitude.js';
 
 /**
  * @typedef {import('./amplitude.js').SoundsReading} SoundsReading
@@ -91,12 +91,14 @@ const GIVE_UP_SECONDS = 5;
  * @typedef {Object} SoundsReport
  * @property {number} liftAngle lift angle the stage is set to, in degrees
  * @property {number|null} amplitude in degrees
- * @property {number|null} amplitudeSd its scatter over the resamples
+ * @property {number|null} amplitudeSd its scatter over the resamples, with the difference the
+ *   placement check found added to it
  * @property {StageWhy|null} amplitudeWhy why there is no amplitude; null when there is one
  * @property {number|null} beatErrorMs the beat error measured from the unlocks
  * @property {number|null} beatOffsetMs how much later than midway between the ticks' unlocks
  *   the tocks' unlocks fall; its size is the beat error
- * @property {number|null} beatErrorSd its scatter over the resamples
+ * @property {number|null} beatErrorSd its scatter over the resamples, with the difference the
+ *   placement check found added to it
  * @property {StageWhy|null} beatErrorWhy why there is no beat error; null when there is one
  * @property {[number, number]|null} liftMs with the amplitude: the time from unlock to lock in
  *   the tick and in the tock
@@ -111,9 +113,15 @@ const GIVE_UP_SECONDS = 5;
  * @typedef {Object} SoundsDetail
  * @property {NoReading|null} why why no reading was made
  * @property {number|null} amplitude
- * @property {number|null} amplitudeSd
+ * @property {number|null} amplitudeSd its scatter over the resamples, with the placement
+ *   check's difference added
  * @property {number|null} beatOffsetMs
- * @property {number|null} beatErrorSd
+ * @property {number|null} beatErrorSd its scatter over the resamples, with the placement
+ *   check's difference added
+ * @property {number|null} placementMs the beat error's reading less its second reading, made
+ *   with every beat on the trend of its timestamps; null when that was not made or found no sounds
+ * @property {number|null} amplitudePlacement the amplitude less its second reading, in degrees;
+ *   null with it
  * @property {[number, number]|null} liftMs
  * @property {[number, number]} counts beats of each type
  * @property {number|null} failing share of the resamples that did not find the sounds
@@ -320,7 +328,8 @@ export class SoundStage {
     const filled = this.count - this.base;
     const rows = this.rows.map((row) => row.subarray(0, filled));
     // `toSeconds` undone, without Cleanup's delay: where each timestamp lies in the envelopes.
-    const timed = timedBeats(rows, this.fe, series, (t) => (t * this.sampleRate - (this.dec - 1) / 2) / this.dec - this.base);
+    const toPosition = (/** @type {number} */ t) => (t * this.sampleRate - (this.dec - 1) / 2) / this.dec - this.base;
+    const timed = timedBeats(rows, this.fe, series, toPosition);
     // Until the beats reach back the whole window, the next reading will have more of them.
     const every = span < this.window - 2 * input.period ? this.fillingEvery : this.every;
     this.nextAt = now + every;
@@ -328,9 +337,12 @@ export class SoundStage {
       this.publish(noReading(input.bph, this.liftAngle, timed.counts, timed.why), window, 0, 0);
       return;
     }
+    // The placement check's beats are cut out now as well: by the time the resamples are done
+    // the oldest of them may have left the envelopes kept.
+    const onTrend = this.readOptions.placementCheck === false ? null : trendBeats(rows, this.fe, series, toPosition);
     // What the pipeline knows of the watch is applied when the reading is reported, as it
     // stands then.
-    const steps = readBeatsSteps(timed.beats, this.fe, timed.gapMs, input.bph, this.liftAngle, { ...this.readOptions, irregular: false, halfway: false });
+    const steps = readBeatsSteps(timed.beats, this.fe, timed.gapMs, input.bph, this.liftAngle, { ...this.readOptions, irregular: false, halfway: false, onTrend });
     this.job = { steps, startedAt: now, every, window, computeMs: 0 };
     this.credit = 0;
     this.workedAt = NaN;
@@ -417,6 +429,8 @@ export class SoundStage {
       amplitudeSd: r.scatter ? r.scatter.amplitude : null,
       beatOffsetMs: r.unlockGapMs,
       beatErrorSd: r.scatter ? r.scatter.unlockGapMs : null,
+      placementMs: r.placement ? r.placement.differenceMs : null,
+      amplitudePlacement: r.placement ? r.placement.amplitudeDifference : null,
       liftMs: r.liftMs,
       counts: r.counts,
       failing: r.failing,

@@ -124,8 +124,8 @@ shows them is the fourth step.
 
 | Recording, first channel, whole | Beat error from the unlocks | Amplitude | Unlock to lock, tick and tock | May be shown |
 | --- | --- | --- | --- | --- |
-| Omega 3861, Safari capture, at 36° | 0.343 ± 0.043 ms | 287.7 ± 1.2° | 6.96 ± 0.03 and 6.33 ± 0.04 ms | both; lined up again on its two locks |
-| ETA 2836-2, Safari capture, at 50° | 0.275 ± 0.027 ms | 265.9 ± 0.5° | 7.49 ± 0.01 and 7.50 ± 0.03 ms | both; nothing moved |
+| Omega 3861, Safari capture, at 36° | 0.343 ± 0.045 ms | 287.7 ± 1.2° | 6.96 ± 0.03 and 6.33 ± 0.04 ms | both; lined up again on its two locks |
+| ETA 2836-2, Safari capture, at 50° | 0.275 ± 0.028 ms | 265.9 ± 0.6° | 7.49 ± 0.01 and 7.50 ± 0.03 ms | both; nothing moved |
 | The three Voice Memos recordings | none | none | timestamps that each average several cycles | |
 | No watch, Safari capture | none | none | no beats timed | |
 
@@ -140,6 +140,21 @@ How a reading is made and judged:
   sound and counts as failing. The beat error is also held back when the pipeline finds the
   watch irregular, and the amplitude kept. Both are held back when it finds a beat halfway
   between the tick and the tock, which means the beat rate in use is half the watch's own.
+- **The placement check.** Each beat is averaged where its timestamp puts it. Timestamps that
+  scatter smear the averaged sounds, and when the unlock helps to time a beat they also line its
+  noise up, so the beat error moves one way. Timestamps that are wrong for many beats of one type
+  can even put another sound where the unlock is looked for. The draws cannot see either: they draw
+  the beats with their timestamps. So both readings are made a second time from the same envelopes,
+  without draws, with every beat placed on the trend of its type's timestamps: a straight line, and
+  the median of each 15 timestamps' distances from it. The difference between the two readings of
+  the beat error is added to its stated scatter, as the root of the sum of the squares, before the
+  0.1 ms gate, and the amplitude's to its scatter before the 5° gate (the amplitude since 26
+  November). When the second reading finds no sounds neither can be checked and both are held back.
+  The readings themselves are not changed: the trend is no place for the beats of a watch whose
+  beats really scatter. On the Omega's capture the second reading is 0.357 ms and 288.1°, and the
+  scatters go from 0.043 to 0.045 ms and from 1.15 to 1.24°; on the ETA's, 0.270 ms and 265.7°,
+  from 0.027 to 0.028 ms and from 0.51 to 0.55°. `{ sounds: { placementCheck: false } }` leaves the
+  check out.
 - **Lining up.** An average of beats is biased when the amplitude changes while they are taken:
   the timestamps follow each beat's loudest sound, and the other sounds move against it. So the
   beats are cut into 10 s blocks, each sound is matched in each block, and a sound whose blocks
@@ -153,7 +168,8 @@ In real time the stage works like this:
 
 - **What it keeps.** The envelopes of the six bands from 5 kHz up, as the filter bank made them
   and before the clean-up, for the last 60 to 64 s: 18.5 MB. When a reading starts, each
-  confident beat's stretch is cut out of them at its timestamp's own place.
+  confident beat's stretch is cut out of them at its timestamp's own place, and every beat's
+  again at its place on the trend, for the placement check.
 - **Which beats.** Those heard since the lock appeared, at most the last 60 s of them, and only
   beats that were timed alone. The beats of the 8 s of audio a lock is found in are left out, so
   that a reading rests on nothing from before the watch was placed, as the six-position log
@@ -189,6 +205,9 @@ With 30 to 40 s of its beats, 4 to 10% of the Omega's draws lose its faint unloc
 5% a reading is allowed: read every second, it was shown twice in ten and held back eight times,
 then shown every time from 41 s of beats on. So the first number of a watch like it can appear,
 give way to a dash and come back. What was read was 0.30 to 0.34 ms and 288° to 290° throughout.
+The placement check takes the first reading's stated scatter from 0.056 to 0.074 ms, the two
+readings being 0.05 ms apart with 30 s of beats, and the later ones' by 0.001 to 0.006 ms. The
+amplitude's goes from 1.45 to 1.49° for the first reading and by 0.03° at most for the others.
 Read from the beats before the lock as well, the same capture would have had its first reading
 at 30.6 s instead of 38.8 s, and been reliably shown from 37.8 s instead of 49 s
 (`sounds: { sinceLock: false }`).
@@ -202,44 +221,69 @@ What has been checked, on a computer:
   at once. In the pipeline, a simulated lever's events are the same whether the audio comes in
   chunks of 1,024 or 4,096 samples, and its timestamps, rate and beat error are the same with
   the stage as without. So are those of the six recordings.
-- **Against the prototype.** Given each beat where the prototype puts it, and the prototype's
-  own draws, the port gives every one of the 200 resampled readings within 2 hundred-millionths
-  of a millisecond of the prototype's on envelopes made as the app makes them
-  (`analyze.py --app`), which is rounding: on the two captures, lined up where a sound moves and
-  with every sound lined up, and on 59 simulated watches, with the same share of draws failing
-  and the same verdicts. The prototype reads the captures at 0.340 ± 0.044 ms and 287.6 ± 1.2°,
-  and 0.273 ± 0.026 ms and 265.7 ± 0.5°. The port puts each beat at its timestamp's own place in
-  the envelope instead, three eighths of an envelope sample (0.03 ms) earlier, the same for every
-  beat, and makes its own draws.
-- **Against the truth, on the 46 simulated watches the prototype was judged on,** 42 co-axials
-  on the Omega's pattern and 4 levers. 31 beat errors are shown, as the prototype shows on the
-  same envelopes. Every one lies within 3 times its own stated scatter of the truth, the worst
-  2.4 times, and within 0.15 ms, the worst a co-axial in beat shown 0.14 ms off at a stated
-  ±0.07 ms. Over the 31 the errors are 1.06 times the stated scatter, rms. The 31 amplitudes
-  shown lie within 1.6°. Nothing is shown for the 6 whose unlock is set 2 dB over the background
-  or level with it, or for the 3 of 20 s; one of the 6 took another sound for an unlock and read
-  3.05 ms off, and 95% of its draws disagree with it.
+- **Against the prototype.** Given each beat where the prototype puts it, and the prototype's own
+  draws, the port gives every one of the 200 resampled readings within 2 hundred-millionths of a
+  millisecond of the prototype's on envelopes made as the app makes them (`analyze.py --app`),
+  which is rounding: on the two captures, lined up where a sound moves and with every sound lined
+  up, and on 59 simulated watches, with the same share of draws failing and the same verdicts. The
+  prototype reads the captures at 0.340 ± 0.044 ms and 287.6 ± 1.2°, and 0.273 ± 0.026 ms and 265.7
+  ± 0.5°. The port puts each beat at its timestamp's own place in the envelope instead, three
+  eighths of an envelope sample (0.03 ms) earlier, the same for every beat, and makes its own
+  draws. The placement check was compared the same way, on the same two captures and 59 watches:
+  the trend's beat times agree to a hundred-million-millionth of a second, the second reading and
+  the widened scatter to 5 billionths of a millisecond, and the verdicts on the beat error are the
+  same. The prototype does not check the amplitude this way; there the app goes further.
+- **Against the truth, on the 46 simulated watches the prototype was judged on,** 42 co-axials on
+  the Omega's pattern and 4 levers. 31 beat errors are shown, as the prototype shows on the same
+  envelopes, with the placement check as without it: it holds none of them back. Every one lies
+  within 3 times its own stated scatter of the truth, the worst 2.2 times (2.4 times the scatter of
+  its draws alone), and within 0.15 ms, the worst a co-axial in beat shown 0.14 ms off at a stated
+  ±0.09 ms (±0.07 from its draws). Over the 31 the errors are 0.89 times the stated scatter, rms,
+  and 1.06 times that of the draws alone. The check holds no amplitude back either. A co-axial's
+  two readings of the amplitude differ by up to 1.3°, the one on the trend mostly the higher, which
+  takes the stated scatter of the 27 shown from 0.4 to 1.4° to 0.5 to 1.9°. Their errors are 0.68
+  times the stated scatter, rms, and 0.89 times the draws' alone, so a co-axial's amplitude is now
+  stated about a third less precisely than its errors would allow. The four levers' scatter stays
+  at 0.2 to 0.3°. The 31 amplitudes shown lie within 1.6°. Nothing is shown for the 6 whose unlock
+  is set 2 dB over the background or level with it, or for the 3 of 20 s; one of the 6 took another
+  sound for an unlock and read 3.05 ms off, and 95% of its draws disagree with it.
+- **The watches the placement check is for.** Six simulated co-axials whose unlock is as loud as
+  their lock, 20 dB over the background where the Omega-like ones' is 5, with every sound then made
+  5 dB quieter so that their timestamps scatter by 0.1 ms; three in beat and three 0.5 ms out.
+  Their beat errors read 0.017 to 0.075 ms off, all one way: 3.3 times the scatter of their draws,
+  rms, the worst 5.3 times. The second reading lies on the truth's side of the first each time, and
+  with the difference added the errors are 1.3 times the stated scatter, rms, the worst 1.8 times;
+  all six are still shown. Of the 16 such watches the investigation used, 14 are read here (two
+  have timestamps that average cycles): 3.1 times the draws' scatter, 1.2 times the stated one, all
+  14 shown. A made-up watch with one tock timestamp in three 0.2 ms late reads 0.042 ms off at
+  ±0.013 ms from its draws and ±0.045 ms stated. With that timestamp 1.2 ms late the early copy of
+  the unlock is taken for the unlock: the beat error reads on the wrong side of zero and the
+  amplitude 20° low, the draws agree on both, to 0.01 ms and 0.1°, and the check holds both back.
 - **Levers.** The 4 among the 46 and 8 whose impulse is as loud as the drop or up to 9 dB
   louder are all shown, within 0.011 ms at a stated ±0.008 to ±0.011 ms, and within 0.3°. The 5
   whose unlock is lost or whose impulse cannot be heard give no reading.
-- **Watches that do not hold still.** A simulated lever with each beat 0.5 ms off the grid,
-  which the pipeline finds irregular, keeps its amplitude, 269.7 ± 0.2° against 270°, and shows
-  no beat error. One swinging by 30° either way every 40 s, too fast for 10 s blocks to follow,
-  reads its amplitude 10° high; a quarter of its draws take another sound, and nothing is shown.
+- **Watches that do not hold still.** A simulated lever with each beat 0.5 ms off the grid, which
+  the pipeline finds irregular, keeps its amplitude, 269.7° against 270°, stated at ±0.8° where its
+  draws alone say ±0.2°, and shows no beat error. One swinging by 30° either way every 40 s, too
+  fast for 10 s blocks to follow, reads its amplitude 10° high; a quarter of its draws take another
+  sound, and nothing is shown.
 
 The limits so far:
 
 - **The gates limit a reading's scatter, not its error,** as the co-axial shown 0.14 ms off
   says. A stated scatter counts how the beats differ within the reading, and nothing else.
-- **Noisy timestamps can shift the beat error from the unlocks, and its scatter does not say
-  so.** Each beat is averaged where its timestamp puts it, so timestamps that scatter smear the
-  averaged sounds. In the prototype, simulated faint co-axials whose unlock is as loud as its
-  lock, with timestamps scattering by 0.10 to 0.15 ms, read 0.067 ms off on average and 0.099 ms
-  at worst, 2.8 times their stated scatter. It was not seen on the simulated levers, on the
-  simulations shaped like the Omega or on the Safari captures. The prototype reads the beat
-  error a second time with every beat on the trend of its timestamps and adds the difference to
-  the stated scatter. The app does not yet: that check costs 13 to 30% more computing, and
-  waits until a phone has timed the stage.
+- **The placement check counts the shift it can see, and cannot tell beats that scatter from
+  timestamps that do.** It compares two ways of placing the beats, not a reading with the truth: on
+  the six faint co-axials above the worst beat error is still 1.8 times its stated scatter off. A
+  watch whose beats really scatter has its two readings apart too, so they are stated less
+  precisely than its draws say, though they are right. The irregular simulated lever's amplitude,
+  0.3° from the truth, is stated at ±0.8° instead of ±0.2°, and a made-up watch's whose beats
+  scatter by 0.6 ms at ±2.6° instead of ±0.03°. On the simulated co-axials the amplitude's stated
+  scatter grows by a third at the median and by up to 2.2 times, with the errors as they were. A
+  watch that scatters too little for the pipeline to call it irregular has its beat error stated
+  less precisely or held back: the two readings were 0.12 ms apart with 0.3 ms of scatter in the
+  prototype. Over the first and last seven beats of a stretch the trend has timestamps on one side
+  only and lags a rate that is changing, by up to 0.03 ms in the tests.
 - **A stretch under 20 s has one block and nothing to line up on.** A made-up watch of 15 s
   whose amplitude falls by 36° reads it 6° low and shows it. In real time a reading has 30 s of
   beats or more.
@@ -258,9 +302,20 @@ The limits so far:
   the whole analysis at 16% of real time; this computer takes about 3 s for such a reading, though
   on the pipeline alone the phone takes 1.1 to 1.45 times as long as this computer. That is one
   recording and the cost of one reading; the heavier cases have not been timed on a phone.
+- **The placement check's cost.** In Node a reading of 60 s of beats takes 0.1 to 0.5 s longer with
+  it: 1.26 s against 0.93 s for a steady lever and 0.53 s against 0.41 s for the ETA's capture, a
+  third more; 4.6 s against 4.3 s for the Omega's capture and 9.1 s against 8.6 s with three sounds
+  lined up, a twentieth more. In Chrome, measured one after the other, a steady lever's readings
+  took 1.5 to 1.6 s of computing against 1.1 to 1.3 s without the check, and the whole analysis 20
+  to 21% of real time against 17 to 18%; a simulated co-axial with two sounds lined up, 6.3 to 6.5
+  s against 6.1 s, and 27 to 30% either way; the Omega demo, 2.9 and 3.4 s against 2.8 and 3.2 s,
+  and 20% either way. Cutting the beats out a second time adds 4 to 6 ms to the audio block a
+  reading starts in, which is not spread like the rest. Not timed on a phone.
 - **Its memory:** 18.5 MB for the envelopes kept, and 8 to 14 MB more while a reading is worked
-  out. In Chrome the page's process held 10 to 25 MB more with the stage than without, at about
-  300 MB. Not measured in Safari.
+  out, with 5 to 7 MB on top for the placement check's copy of the beats and 3 MB while its second
+  reading is made. In Chrome the page's process held 10 to 25 MB more with the stage than without,
+  at about 300 MB, and its peak was 319 MB with the check against 314 MB without. Not measured in
+  Safari.
 - **Every beat must be timed alone.** When a beat type's timestamps each average several cycles
   there is no reading, as decided on 25 November. That leaves out all three Voice Memos
   recordings, the ETA's because its ticks average two cycles.
