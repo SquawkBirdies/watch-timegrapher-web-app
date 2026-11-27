@@ -4,7 +4,7 @@
 // page, so the automated tests can run it, and nothing is measured here: every number comes from
 // the pipeline's readings.
 
-import { formatRate, formatMs, formatDuration, whyWords, BEATS_NEEDED_SECONDS } from './model.js';
+import { formatRate, formatMs, formatDuration, whyWords, BEATS_NEEDED_SECONDS, AMPLITUDE_BEATS_SECONDS } from './model.js';
 
 /**
  * @typedef {'dialUp'|'dialDown'|'crownUp'|'crownDown'|'crownLeft'|'crownRight'} PositionId
@@ -52,7 +52,7 @@ const FULL_WINDOW_TOLERANCE_SECONDS = 0.01;
 
 /** Every reason a stored reading may carry. */
 const GAPS = /** @type {ReadonlyArray<ReadingGap>} */ ([
-  'unmeasured', 'coaxial', 'waiting', 'changed', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound',
+  'unmeasured', 'coaxial', 'waiting', 'changed', 'one-block', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound',
   'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement',
 ]);
 
@@ -308,6 +308,7 @@ export function describeReading(r) {
 function gapWords(gap) {
   if (gap === 'waiting') return `saved before ${BEATS_NEEDED_SECONDS} s of beats`;
   if (gap === 'changed') return 'saved while reading again after a change';
+  if (gap === 'one-block') return `saved before ${AMPLITUDE_BEATS_SECONDS} s of beats`;
   if (gap === 'unmeasured') return 'not measured';
   if (gap === 'coaxial') return 'not measured for co-axial then';
   return whyWords(gap);
@@ -365,9 +366,24 @@ export function describeSummary(s) {
  * @property {number} needed seconds the reading covers once full
  * @property {boolean} ready the current reading can be saved
  * @property {number|null} rateSd the current reading's rate uncertainty
- * @property {boolean} [waiting] the pipeline has not yet read the beat error and the amplitude,
- *   for want of beats since the lock
+ * @property {boolean|'amplitude'} [waiting] the pipeline has not yet read the beat error and the
+ *   amplitude, for want of beats since the lock; `amplitude` when only the amplitude waits, for
+ *   its 20 s
  */
+
+/**
+ * Whether the readings of the sounds are still to come, for the line above Save: true while
+ * neither has had the beats it needs since the lock or the restart, `amplitude` while only the
+ * amplitude waits for its 20 s.
+ * @param {{amplitudeWhy: string|null, beatErrorWhy: string|null}|null} sounds
+ * @returns {boolean|'amplitude'}
+ */
+export function soundsWaiting(sounds) {
+  if (!sounds) return false;
+  const young = (/** @type {string|null} */ why) => why === 'waiting' || why === 'changed';
+  if (young(sounds.amplitudeWhy) || young(sounds.beatErrorWhy)) return true;
+  return sounds.amplitudeWhy === 'one-block' ? 'amplitude' : false;
+}
 
 /**
  * The line telling the user what to do next.
@@ -384,7 +400,7 @@ export function positionStep(s) {
   if (s.ready) {
     const uncertain = s.rateSd !== null && s.rateSd > MAX_RATE_SD ? ` Its rate is uncertain by ±${formatSd(s.rateSd)} s/d, so it would be left out of the average.` : '';
     // Save does not wait for them: the choice is the user's.
-    const waiting = s.waiting ? ` The beat error and the amplitude need ${BEATS_NEEDED_SECONDS} s of beats: wait for them, or save without.` : '';
+    const waiting = s.waiting === 'amplitude' ? ` The amplitude needs ${AMPLITUDE_BEATS_SECONDS} s of beats: wait for it, or save without.` : s.waiting ? ` The beat error and the amplitude need ${BEATS_NEEDED_SECONDS} s of beats: wait for them, or save without.` : '';
     return `Ready to save as ${positionName(s.target)}.${uncertain}${waiting}`;
   }
   if (!s.running) return `Place the watch ${place(s.target)}, then press Start.`;

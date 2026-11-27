@@ -16,7 +16,7 @@ import { LiveInput } from './audio/live.js';
 import { listMicrophones } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
 import { POSITION_ICONS } from './ui/position-icons.js';
-import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, isUncertain, emptyLog, isPosition } from './ui/positions.js';
+import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, soundsWaiting, isUncertain, emptyLog, isPosition } from './ui/positions.js';
 import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES } from './store.js';
 
 /**
@@ -831,7 +831,7 @@ function renderPositions(tracking, src) {
     needed: state.needed,
     ready: canSave,
     rateSd: r ? r.rateSd : null,
-    waiting: !!(r && r.sounds && ['waiting', 'changed'].some((w) => w === r.sounds?.amplitudeWhy || w === r.sounds?.beatErrorWhy)),
+    waiting: soundsWaiting(r ? r.sounds : null),
   });
   // The drawing beside the instruction is of the position to measure next.
   if (ui.positionStepIcon.dataset.position !== (target || '')) {

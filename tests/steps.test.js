@@ -154,7 +154,7 @@ function stepRun(how) {
   return /** @type {ReturnType<typeof stream>} */ (runs.get(how));
 }
 
-test('in the pipeline, a simulated lever adjusted from 0.4 to 1.0 ms shows a dash 2 to 8 s after the change, then 1.0 ms within 17 s of it, and never the old value once the dash has come', () => {
+test('in the pipeline, a simulated lever adjusted from 0.4 to 1.0 ms shows a dash 2 to 8 s after the change, then 1.0 ms within 17 s of it and its amplitude within 22 s, and never the old value once the dash has come', () => {
   const r = stepRun('medium');
   const shown = r.readings.filter((x) => x.sounds);
   const s = (/** @type {typeof shown[0]} */ x) => /** @type {NonNullable<typeof x.sounds>} */ (x.sounds);
@@ -177,6 +177,10 @@ test('in the pipeline, a simulated lever adjusted from 0.4 to 1.0 ms shows a das
     if (ms !== null) assert.ok(Math.abs(ms - STEP.to) <= Math.max(0.05, 3 * /** @type {number} */ (s(x).beatErrorSd)), `${ms.toFixed(3)} ms at ${x.t.toFixed(1)} s`);
     if (s(x).amplitude !== null) assert.ok(Math.abs(/** @type {number} */ (s(x).amplitude) - 270) <= 3, 'the amplitude, which did not change, comes back');
   }
+  // The amplitude waits for a second block of beats: 20 s of them.
+  assert.equal(s(right).amplitudeWhy, 'one-block');
+  const amplitude = after.find((x) => s(x).amplitude !== null);
+  assert.ok(amplitude && amplitude.t - STEP.at <= 22, `amplitude from ${amplitude ? (amplitude.t - STEP.at).toFixed(1) : '—'} s after the change`);
   // The reading after the change rests only on beats from after it.
   const window = /** @type {[number, number]} */ (s(right).window);
   assert.ok(window[0] >= STEP.at - 0.3, `beats from ${window[0].toFixed(2)} s`);

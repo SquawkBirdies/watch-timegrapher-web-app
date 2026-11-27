@@ -8,11 +8,11 @@ import assert from 'node:assert/strict';
 
 import { Pipeline } from '../js/dsp/pipeline.js';
 import { synthesizeWatch, WatchStream, liftSeconds, SIMULATED_LIFT_ANGLE } from '../js/audio/simulator.js';
-import { amplitudeOf } from '../js/dsp/amplitude.js';
+import { amplitudeOf, BLOCK_SECONDS } from '../js/dsp/amplitude.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, AMPLITUDE_BEATS_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
 import { FIRST_READING_SECONDS } from '../js/dsp/soundstage.js';
 import { tickByGap, tickByLift, NAME_SD } from '../js/dsp/names.js';
 import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
@@ -164,12 +164,17 @@ test('the readout gives the amplitude and the beat error from the sounds inside 
   const changed = readings({ amplitudeWhy: 'changed', beatErrorWhy: 'changed' });
   assert.deepEqual(soundsReadout(true, changed, 36), { amplitude: '—', amplitudeNote: 'changed: reading again', beatError: '—', beatErrorNote: 'changed: reading again' });
   assert.equal(BEATS_NEEDED_SECONDS, FIRST_READING_SECONDS, 'the words give the stage\'s own figure');
+  assert.equal(AMPLITUDE_BEATS_SECONDS, 2 * BLOCK_SECONDS, 'and the two blocks the amplitude needs');
+  // The amplitude of a reading with one block of beats waits for two.
+  const oneBlock = readings({ amplitudeWhy: 'one-block', beatErrorWhy: null, beatErrorMs: 0.41, beatErrorSd: 0.03, window: [8, 23] });
+  assert.deepEqual(soundsReadout(true, oneBlock, 36), { amplitude: '—', amplitudeNote: 'needs 20 s of beats', beatError: '0.41', beatErrorNote: '±0.03 over 15 s' });
+  assert.equal(soundsReadout(true, oneBlock, 36, false).amplitudeNote, 'needed 20 s of beats');
   // An irregular watch keeps its amplitude and loses its beat error.
   const irregular = soundsReadout(true, readings({ amplitude: 269.7, amplitudeSd: 0.84, beatErrorWhy: 'irregular', window: [8, 48] }), 36);
   assert.deepEqual(irregular, { amplitude: '270', amplitudeNote: '±0.8° over 40 s', beatError: '—', beatErrorNote: 'irregular beat' });
   // Every reason the pipeline can give has words, and they are short enough for a narrow column.
   /** @type {import('../js/dsp/soundstage.js').StageWhy[]} */
-  const reasons = ['waiting', 'changed', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound', 'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement'];
+  const reasons = ['waiting', 'changed', 'one-block', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound', 'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement'];
   for (const why of reasons) assert.ok(whyWords(why).length > 5 && whyWords(why).length <= 24 && !whyWords(why).includes('-'), `${why}: "${whyWords(why)}"`);
   assert.equal(whyWords(null), '');
   assert.equal(whyWords('lift-range'), 'check the lift angle');
