@@ -5,7 +5,7 @@
 //   {type: 'start', id, sampleRate, channelCount, options}
 //                                                         begin a session; id is optional
 //   {type: 'chunk', channels}                             audio for the session
-//   {type: 'settings', changes}                           averaging window, escapement or lift
+//   {type: 'settings', changes}                           averaging window, escapement, lift or sensitivity
 //                                                         angle changed
 //   {type: 'stop'}                                        end the session
 //   {type: 'finish', id}                                  end the session once the reading of the

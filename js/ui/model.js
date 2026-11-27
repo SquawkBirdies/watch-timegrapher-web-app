@@ -431,7 +431,13 @@ export function stageNote(stage, sounds) {
  * them: FIRST_READING_SECONDS of js/dsp/soundstage.js, repeated here so that the page does not
  * load the pipeline's code, which runs in the worker. A test holds the two together.
  */
-export const BEATS_NEEDED_SECONDS = 30;
+export const BEATS_NEEDED_SECONDS = 15;
+
+/**
+ * Seconds of beats the amplitude needs: two of the 10 s blocks its sounds are lined up on
+ * (BLOCK_SECONDS in js/dsp/amplitude.js), held together by a test.
+ */
+export const AMPLITUDE_BEATS_SECONDS = 20;
 
 /**
  * Why a reading taken from the sounds inside the beats shows a dash, in plain language. The
@@ -445,6 +451,11 @@ export function whyWords(why) {
       return '';
     case 'waiting':
       return `needs ${BEATS_NEEDED_SECONDS} s of beats`;
+    case 'one-block':
+      return `needs ${AMPLITUDE_BEATS_SECONDS} s of beats`;
+    case 'changed':
+      // The stretch of beats started again because the beat error stepped (js/dsp/steps.js).
+      return 'changed: reading again';
     case 'averaged':
       return 'beats too faint';
     case 'few-beats':
@@ -505,7 +516,7 @@ export function soundsReadout(tracking, readings, liftAngle, running = true) {
   const s = tracking && readings ? readings.sounds : null;
   if (!s) return { amplitude: '—', amplitudeNote: '', beatError: '—', beatErrorNote: '' };
   const span = s.window ? `over ${Math.round(s.window[1] - s.window[0])} s` : '';
-  const words = (/** @type {import('../dsp/soundstage.js').StageWhy|null} */ why) => (why === 'waiting' && !running ? `needed ${BEATS_NEEDED_SECONDS} s of beats` : whyWords(why));
+  const words = (/** @type {import('../dsp/soundstage.js').StageWhy|null} */ why) => (why === 'waiting' && !running ? `needed ${BEATS_NEEDED_SECONDS} s of beats` : why === 'one-block' && !running ? `needed ${AMPLITUDE_BEATS_SECONDS} s of beats` : whyWords(why));
   const out = { amplitude: '—', amplitudeNote: words(s.amplitudeWhy), beatError: '—', beatErrorNote: words(s.beatErrorWhy) };
   if (s.liftAngle !== liftAngle) {
     out.amplitudeNote = 'lift angle changed';
@@ -523,7 +534,7 @@ export function soundsReadout(tracking, readings, liftAngle, running = true) {
 /**
  * The amplitude and the beat error as a phrase each, for text with no column to put a note
  * under, such as the audio diagnostic's reading line and its report: "amplitude 288° ±1.1° over
- * 50 s", or "amplitude — (needs 30 s of beats)".
+ * 50 s", or "amplitude — (needs 15 s of beats)".
  * @param {SoundsReadout} r
  * @returns {{amplitude: string, beatError: string}}
  */

@@ -137,7 +137,13 @@ export const TREND_BEATS = 15;
  *   found, so neither reading could be checked
  * - `placement`: the resamples agree, but the reading moves too far when every beat is placed
  *   on the trend of its timestamps
- * @typedef {'unchecked'|'failing'|'irregular'|'halfway'|'scatter'|'unplaced'|'placement'} Held
+ * - `one-block`: the beats span less than two blocks, so nothing could show whether a sound
+ *   moves, and a moving one would not be lined up; only the amplitude is held for this, since
+ *   its scatter does not cover what that does to it, while the beat error's scatter doubles.
+ *   A made-up watch whose amplitude fell 36 degrees over 15 s read 6 degrees low at a scatter
+ *   under 2 (decided by Lawrence Fan on 27 November 2026, when the first reading in real time
+ *   came down to 15 s of beats)
+ * @typedef {'unchecked'|'failing'|'irregular'|'halfway'|'scatter'|'unplaced'|'placement'|'one-block'} Held
  */
 
 /**
@@ -678,8 +684,8 @@ function readingsOf(places, gapMs) {
  * The placement check comes last: a reading whose resamples already scatter too far is held
  * for that, one that could not be checked is held for that, and one that the resamples support
  * is held when the difference between its two readings takes its scatter over the limit.
- * @param {Pick<SoundsReading, 'amplitude'|'failing'|'scatter'|'placement'>} reading one with its
- *   resamples counted
+ * @param {Pick<SoundsReading, 'amplitude'|'failing'|'scatter'|'placement'> & {lining?: SoundsReading['lining']}} reading
+ *   one with its resamples counted; without `lining`, or with it null, the blocks are not judged
  * @param {boolean} irregular the pipeline found the watch's beats falling at scattered times
  * @param {boolean} halfway the pipeline found a beat halfway between the tick and the tock
  * @returns {{beatError: Held|null, amplitude: Held|null}} null for a reading to show, and for
@@ -708,6 +714,7 @@ export function heldBack(reading, irregular, halfway) {
   else if (resampledAmplitude > MAX_AMPLITUDE_SCATTER) amplitude = 'scatter';
   else if (placed && placed.amplitudeDifference === null) amplitude = 'unplaced';
   else if (reading.scatter.amplitude > MAX_AMPLITUDE_SCATTER) amplitude = 'placement';
+  else if (reading.lining && reading.lining.blocks < 2) amplitude = 'one-block';
   return { beatError, amplitude };
 }
 

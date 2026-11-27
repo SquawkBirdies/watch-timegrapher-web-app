@@ -177,14 +177,17 @@ test('when the ticking stops the readings are blanked, and the lock returns with
   const blank = r.readings.find((x) => x.t >= lost.t);
   assert.ok(blank && blank.rate === null && blank.beatErrorMs === null && blank.tick === null, 'readings blanked');
   // With a lift angle given, the stage that reads the sounds inside the beats goes blank with
-  // them, and neither lock lasts the 30 s it waits for.
+  // them. The first lock ends before the 15 s it waits for; the second starts again from
+  // nothing, and reads only its own beats.
   assert.equal(blank.sounds, null);
-  assert.ok(r.readings.filter((x) => x.window !== null).every((x) => x.sounds && x.sounds.amplitudeWhy === 'waiting' && x.sounds.detail === null), 'waiting, under both locks');
+  assert.ok(r.readings.filter((x) => x.window !== null && x.t < lost.t).every((x) => x.sounds && x.sounds.amplitudeWhy === 'waiting' && x.sounds.detail === null), 'waiting, under the first lock');
   assert.ok(!r.status.some((s) => s.state === 'tracking' && s.t > lost.t && s.t < 40), 'no lock on the silence');
   assert.ok(!r.beats.some((b) => b.t > lost.t && b.t < 40), 'no beats reported once the lock was dropped');
   const back = r.status.find((s) => s.state === 'tracking' && s.t > 40);
   assert.ok(back, 'locked again');
   assert.ok(back.t < 52, `locked again at ${back.t.toFixed(1)} s`);
+  const again = r.readings.filter((x) => x.sounds && x.sounds.window);
+  assert.ok(again.every((x) => /** @type {[number, number]} */ (x.sounds?.window)[0] >= back.t), 'the second lock reads only beats heard since it appeared');
   assert.ok(r.last);
   near(r.last.rate, 5, 0.5, 'rate after the watch returned');
 });

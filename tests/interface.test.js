@@ -8,11 +8,11 @@ import assert from 'node:assert/strict';
 
 import { Pipeline } from '../js/dsp/pipeline.js';
 import { synthesizeWatch, WatchStream, liftSeconds, SIMULATED_LIFT_ANGLE } from '../js/audio/simulator.js';
-import { amplitudeOf } from '../js/dsp/amplitude.js';
+import { amplitudeOf, BLOCK_SECONDS } from '../js/dsp/amplitude.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, AMPLITUDE_BEATS_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
 import { FIRST_READING_SECONDS } from '../js/dsp/soundstage.js';
 import { tickByGap, tickByLift, NAME_SD } from '../js/dsp/names.js';
 import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
@@ -158,15 +158,23 @@ test('the readout gives the amplitude and the beat error from the sounds inside 
   assert.deepEqual([tight.amplitude, tight.amplitudeNote, tight.beatError, tight.beatErrorNote], ['270', '±0.1° over 30 s', '0.49', '±0.01 over 30 s']);
   // Waiting for beats; once the source has stopped, they will not come.
   const waiting = readings({ amplitudeWhy: 'waiting', beatErrorWhy: 'waiting' });
-  assert.deepEqual(soundsReadout(true, waiting, 36), { amplitude: '—', amplitudeNote: 'needs 30 s of beats', beatError: '—', beatErrorNote: 'needs 30 s of beats' });
-  assert.equal(soundsReadout(true, waiting, 36, false).amplitudeNote, 'needed 30 s of beats');
+  assert.deepEqual(soundsReadout(true, waiting, 36), { amplitude: '—', amplitudeNote: 'needs 15 s of beats', beatError: '—', beatErrorNote: 'needs 15 s of beats' });
+  assert.equal(soundsReadout(true, waiting, 36, false).amplitudeNote, 'needed 15 s of beats');
+  // The same after the watch changed and the stretch of beats started again.
+  const changed = readings({ amplitudeWhy: 'changed', beatErrorWhy: 'changed' });
+  assert.deepEqual(soundsReadout(true, changed, 36), { amplitude: '—', amplitudeNote: 'changed: reading again', beatError: '—', beatErrorNote: 'changed: reading again' });
   assert.equal(BEATS_NEEDED_SECONDS, FIRST_READING_SECONDS, 'the words give the stage\'s own figure');
+  assert.equal(AMPLITUDE_BEATS_SECONDS, 2 * BLOCK_SECONDS, 'and the two blocks the amplitude needs');
+  // The amplitude of a reading with one block of beats waits for two.
+  const oneBlock = readings({ amplitudeWhy: 'one-block', beatErrorWhy: null, beatErrorMs: 0.41, beatErrorSd: 0.03, window: [8, 23] });
+  assert.deepEqual(soundsReadout(true, oneBlock, 36), { amplitude: '—', amplitudeNote: 'needs 20 s of beats', beatError: '0.41', beatErrorNote: '±0.03 over 15 s' });
+  assert.equal(soundsReadout(true, oneBlock, 36, false).amplitudeNote, 'needed 20 s of beats');
   // An irregular watch keeps its amplitude and loses its beat error.
   const irregular = soundsReadout(true, readings({ amplitude: 269.7, amplitudeSd: 0.84, beatErrorWhy: 'irregular', window: [8, 48] }), 36);
   assert.deepEqual(irregular, { amplitude: '270', amplitudeNote: '±0.8° over 40 s', beatError: '—', beatErrorNote: 'irregular beat' });
   // Every reason the pipeline can give has words, and they are short enough for a narrow column.
   /** @type {import('../js/dsp/soundstage.js').StageWhy[]} */
-  const reasons = ['waiting', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound', 'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement'];
+  const reasons = ['waiting', 'changed', 'one-block', 'few-beats', 'averaged', 'short-stretch', 'few-sounds', 'no-pair', 'lift-range', 'no-middle-sound', 'lined-few-blocks', 'lined-lost', 'lined-far', 'unchecked', 'failing', 'irregular', 'halfway', 'scatter', 'unplaced', 'placement'];
   for (const why of reasons) assert.ok(whyWords(why).length > 5 && whyWords(why).length <= 24 && !whyWords(why).includes('-'), `${why}: "${whyWords(why)}"`);
   assert.equal(whyWords(null), '');
   assert.equal(whyWords('lift-range'), 'check the lift angle');
@@ -177,7 +185,7 @@ test('the readout gives the amplitude and the beat error from the sounds inside 
   assert.deepEqual(soundsReadout(true, both, 38, false), { amplitude: '—', amplitudeNote: 'lift angle changed', beatError: '0.32', beatErrorNote: '±0.04 over 50 s' });
   // The same in a line of text, as the audio diagnostic gives it.
   assert.deepEqual(soundsInWords(soundsReadout(true, both, 36)), { amplitude: 'amplitude 288° ±1.1° over 50 s', beatError: 'beat error 0.32 ms ±0.04 over 50 s' });
-  assert.deepEqual(soundsInWords(soundsReadout(true, waiting, 36, false)), { amplitude: 'amplitude — (needed 30 s of beats)', beatError: 'beat error — (needed 30 s of beats)' });
+  assert.deepEqual(soundsInWords(soundsReadout(true, waiting, 36, false)), { amplitude: 'amplitude — (needed 15 s of beats)', beatError: 'beat error — (needed 15 s of beats)' });
   assert.deepEqual(soundsInWords(irregular), { amplitude: 'amplitude 270° ±0.8° over 40 s', beatError: 'beat error — (irregular beat)' });
   assert.deepEqual(soundsInWords(dash), { amplitude: 'amplitude —', beatError: 'beat error —' });
 });
@@ -276,8 +284,14 @@ test('the simulator\'s amplitude sets how long before its lock each beat\'s unlo
   const pipeline = new Pipeline(sim.sampleRate, 1, { liftAngle: 60, sounds: { share: Infinity } });
   const readings = /** @type {ReadingsEvent[]} */ (run(pipeline, (n) => sim.next(n), 45).filter((e) => e.type === 'readings' && e.window !== null));
   const made = readings.filter((e) => e.sounds && e.sounds.detail !== null);
-  assert.ok(made.length > 3, 'the sounds were read');
-  for (const e of made) {
+  // The first reading, from 15 s of beats, loses the unlock in 14% of its draws and is held
+  // back; the readings from 20 s of beats on show both.
+  const first = /** @type {NonNullable<ReadingsEvent['sounds']>} */ (made[0].sounds);
+  assert.ok(first.window && first.window[1] - first.window[0] < 16, 'the first rests on 15 s of beats');
+  assert.ok(first.amplitudeWhy === null || first.amplitudeWhy === 'failing', `first: ${first.amplitudeWhy}`);
+  const later = made.filter((e) => e.sounds && e.sounds.window && e.sounds.window[1] - e.sounds.window[0] > 19);
+  assert.ok(later.length > 3, 'the sounds were read');
+  for (const e of later) {
     const s = /** @type {NonNullable<ReadingsEvent['sounds']>} */ (e.sounds);
     assert.ok(s.amplitude !== null && s.beatErrorMs !== null, `shown at ${e.t.toFixed(1)} s: ${s.amplitudeWhy}, ${s.beatErrorWhy}`);
     assert.ok(Math.abs(s.amplitude - 270) <= 2, `amplitude ${s.amplitude.toFixed(1)}`);
@@ -627,19 +641,20 @@ test('the signal meter judges the better-timed beat type and names the fainter o
 
 test('stored settings are checked, and anything invalid falls back to the default', () => {
   assert.deepEqual(clean({}), DEFAULTS);
-  assert.deepEqual(clean({ bph: '36000', escapement: 'coaxial', liftAngle: '50', humHz: '50', averagingSeconds: '60' }), {
+  assert.deepEqual(clean({ bph: '36000', escapement: 'coaxial', liftAngle: '50', humHz: '50', averagingSeconds: '60', sensitivity: 'high' }), {
     bph: 36000,
     escapement: 'coaxial',
     liftAngle: 50,
     humHz: 50,
     averagingSeconds: 60,
+    sensitivity: 'high',
     microphoneId: '',
     magnetNoticeSeen: false,
     saveMinutes: 1,
     mode: 'continuous',
     theme: 'auto',
   });
-  assert.deepEqual(clean({ bph: 12345, escapement: 'tourbillon', liftAngle: 5, humHz: 55, averagingSeconds: 15 }), DEFAULTS);
+  assert.deepEqual(clean({ bph: 12345, escapement: 'tourbillon', liftAngle: 5, humHz: 55, averagingSeconds: 15, sensitivity: 'max' }), DEFAULTS);
 });
 
 test('the theme follows the phone unless light or dark is chosen, and both ways of reaching dark give the same colours', () => {

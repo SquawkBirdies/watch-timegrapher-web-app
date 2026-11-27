@@ -149,7 +149,7 @@
     </div>
 
     <div class="panel" id="panel-simulator" role="tabpanel" aria-labelledby="tab-simulator" hidden>
-      <p class="note">A synthetic watch with a Swiss lever escapement, whose lift angle is the one set in Settings, so the amplitude read is the amplitude set here; changing that setting while it runs starts it again. Its rate, beat error, amplitude, variability and loudness change as you move the sliders, like adjusting a watch under test. The rate follows within the averaging window; the beat error and the amplitude rest on up to a minute of beats, so they follow more slowly and can show a dash on the way. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
+      <p class="note">A synthetic watch with a Swiss lever escapement, whose lift angle is the one set in Settings, so the amplitude read is the amplitude set here; changing that setting while it runs starts it again. Its rate, beat error, amplitude, variability and loudness change as you move the sliders, like adjusting a watch under test. The rate follows within the averaging window; the beat error and the amplitude rest on up to a minute of beats and start again when the beat error steps, so they show a dash for 15 s or more on the way, and an amplitude change alone takes up to half a minute to show. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
       <div class="field">
         <label for="sim-bph">Beat rate</label>
         <select id="sim-bph"></select>
@@ -277,7 +277,16 @@
     <div class="field">
       <label for="set-avg">Averaging window</label>
       <select id="set-avg" name="averagingSeconds"></select>
-      <p class="note">Longer is steadier; shorter follows changes sooner. Faint ticks lengthen it automatically.</p>
+      <p class="note">For the rate. Longer is steadier; shorter follows changes sooner. Faint ticks lengthen it automatically.</p>
+    </div>
+    <div class="field">
+      <label for="set-sensitivity">Amplitude and beat error sensitivity</label>
+      <select id="set-sensitivity" name="sensitivity">
+        <option value="high">High</option>
+        <option value="medium">Medium (default)</option>
+        <option value="low">Low</option>
+      </select>
+      <p class="note">How readily the amplitude and beat error start again when the beat error changes, as when you adjust the watch: they show a dash for 15 s or more, then the new value. High notices a change of 0.1 ms and reads from the last 45 s of beats, but restarts more often on its own. Medium and Low read from the last 60 s; Low notices only changes of about 0.2 ms and more.</p>
     </div>
     <div class="field">
       <label for="set-theme">Theme</label>

@@ -525,6 +525,12 @@ test('a reading taken a step at a time is the reading taken at once, and it says
   assert.deepEqual(heldBack({ ...s, failing: 0.06 }, true, true), { beatError: 'failing', amplitude: 'failing' });
   assert.deepEqual(heldBack({ ...s, failing: null, scatter: null }, false, false), { beatError: 'unchecked', amplitude: 'unchecked' });
   assert.deepEqual(heldBack({ ...s, amplitude: null }, true, true), { beatError: null, amplitude: null }, 'nothing was read, so nothing is held back');
+  // Fewer than two blocks hold the amplitude back, last of its reasons; the beat error is not.
+  assert.ok(s.lining && s.lining.blocks >= 2);
+  const oneBlock = { ...s, lining: { ...s.lining, blocks: 1 } };
+  assert.deepEqual(heldBack(oneBlock, false, false), { beatError: null, amplitude: 'one-block' });
+  assert.deepEqual(heldBack(oneBlock, false, true), { beatError: 'halfway', amplitude: 'halfway' });
+  assert.deepEqual(heldBack({ ...s, lining: null }, false, false), { beatError: null, amplitude: null }, 'blocks not judged when the beats were not lined up');
   // The placement check's reasons come after the resamples' own, for each reading by itself.
   assert.ok(s.scatter && s.amplitude !== null);
   const placed = { unlockGapMs: s.unlockGapMs - 0.2, differenceMs: 0.2, resampledScatterMs: 0.01, amplitude: s.amplitude - 0.1, amplitudeDifference: 0.1, resampledAmplitudeScatter: 0.05, why: null };
@@ -737,8 +743,12 @@ test('when the time from unlock to lock changes while the beats are taken, the p
   assert.ok(plain.scatter.unlockGapMs > 1.5 * s.scatter.unlockGapMs, `scatter ${plain.scatter.unlockGapMs} against ${s.scatter.unlockGapMs} ms`);
 });
 
-test('a stretch of 15 s has one block and nothing to line up on, so a changing amplitude is read low and shown: a limit', () => {
-  // The same change as above in half the time. The real-time stage reads 30 s of beats or more.
+test('a stretch of 15 s has one block and nothing to line up on, so a changing amplitude is read low, and held back for it', () => {
+  // The same change as above in half the time. Since 27 November 2026 the real-time stage's
+  // first reading, after a lock or after the stretch starts again, rests on 15 s of beats. Its
+  // amplitude was shown 6.5 degrees low at a scatter of 2 until it was held back for having
+  // fewer than two blocks, as decided by Lawrence Fan the same day. Its beat error is judged by
+  // its own scatter, which the smearing raises: here, past its limit.
   const watch = madeUpWatch({ seconds: 15, liftMs: (t) => 6.9 + t / 15 });
   const truth = amplitudeOf(50, 28800, 0.5 * (watch.truth.liftMs[0] + watch.truth.liftMs[1]));
   const s = readMadeUp(watch);
@@ -746,5 +756,8 @@ test('a stretch of 15 s has one block and nothing to line up on, so a changing a
   assert.equal(s.lining.blocks, 1);
   assert.equal(s.lining.state, 'steady');
   assert.ok(s.lining.moved.every((type) => type.every((m) => !m.moved && Number.isNaN(m.chi2))), 'no sound could be tested');
-  assert.ok(s.amplitude < truth - 5 && s.amplitude > truth - 8 && s.showAmplitude, `${s.amplitude} +- ${s.scatter.amplitude}, truly ${truth}, shown ${s.showAmplitude}`);
+  assert.ok(s.amplitude < truth - 5 && s.amplitude > truth - 8 && truth - s.amplitude > 3 * s.scatter.amplitude, `${s.amplitude} +- ${s.scatter.amplitude}, truly ${truth}: off by more than 3 times its scatter`);
+  assert.equal(s.amplitudeHeld, 'one-block');
+  assert.equal(s.showAmplitude, false);
+  assert.equal(s.beatErrorHeld, 'scatter');
 });

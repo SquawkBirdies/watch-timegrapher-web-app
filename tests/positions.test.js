@@ -24,6 +24,7 @@ import {
   describeReading,
   describeSummary,
   positionStep,
+  soundsWaiting,
   cleanLog,
   isUncertain,
 } from '../js/ui/positions.js';
@@ -163,12 +164,29 @@ test('a saved reading keeps the rate, its uncertainty and the beats behind them 
   // With the stage's report on the readings, the log keeps what it shows and why it shows a dash.
   /** @param {Partial<import('../js/dsp/soundstage.js').SoundsReport>} over @returns {ReadingsEvent} */
   const withSounds = (over) => ({ ...last, sounds: { liftAngle: 36, amplitude: null, amplitudeSd: null, amplitudeWhy: null, beatErrorMs: null, beatOffsetMs: null, beatErrorSd: null, beatErrorWhy: null, liftMs: null, liftSd: null, window: null, detail: null, ...over } });
-  // Saved as soon as the rate allows, 20 s after the lock: the pipeline is still waiting for
-  // 30 s of beats, and Save does not wait for it.
+  // Saved as soon as the rate allows, 20 s after the lock, while the first reading of the sounds,
+  // due after 15 s of beats, is still being worked out: Save does not wait for it.
   const early = takeReading(withSounds({ amplitudeWhy: 'waiting', beatErrorWhy: 'waiting' }), context);
   assert.ok(early);
   assert.deepEqual([early.beatErrorMs, early.beatErrorGap, early.amplitude, early.amplitudeGap, early.liftAngle], [null, 'waiting', null, 'waiting', 36]);
-  assert.deepEqual(describeReading(early), { main: `${describeReading(saved).main}`, detail: `Over a 20 s window · ${early.beats} beats · no beat error or amplitude: saved before 30 s of beats` });
+  assert.deepEqual(describeReading(early), { main: `${describeReading(saved).main}`, detail: `Over a 20 s window · ${early.beats} beats · no beat error or amplitude: saved before 15 s of beats` });
+  // Saved while they read again after the watch changed.
+  const changed = takeReading(withSounds({ amplitudeWhy: 'changed', beatErrorWhy: 'changed' }), context);
+  assert.ok(changed && changed.beatErrorGap === 'changed' && changed.amplitudeGap === 'changed');
+  assert.match(describeReading(changed).detail, /no beat error or amplitude: saved while reading again after a change$/);
+  // Saved with the beat error, before the amplitude's 20 s of beats.
+  const half = takeReading(withSounds({ amplitudeWhy: 'one-block', beatErrorMs: 0.41, beatOffsetMs: 0.41, beatErrorSd: 0.03, window: [8, 23] }), context);
+  assert.ok(half && half.beatErrorMs !== null && half.amplitude === null && half.amplitudeGap === 'one-block');
+  assert.match(describeReading(half).detail, /no amplitude: saved before 20 s of beats$/);
+  // The line above Save while they are still to come.
+  assert.equal(soundsWaiting(null), false);
+  assert.equal(soundsWaiting({ amplitudeWhy: 'waiting', beatErrorWhy: 'waiting' }), true);
+  assert.equal(soundsWaiting({ amplitudeWhy: 'changed', beatErrorWhy: 'changed' }), true);
+  assert.equal(soundsWaiting({ amplitudeWhy: 'one-block', beatErrorWhy: null }), 'amplitude');
+  assert.equal(soundsWaiting({ amplitudeWhy: 'failing', beatErrorWhy: 'failing' }), false, 'a reading held back is not waited for');
+  const step = (/** @type {boolean|'amplitude'} */ waiting) => positionStep({ target: 'dialUp', saved: null, running: true, tracking: true, covered: 20, needed: 20, ready: true, rateSd: 0.1, waiting });
+  assert.equal(step('amplitude'), 'Ready to save as Dial up. The amplitude needs 20 s of beats: wait for it, or save without.');
+  assert.equal(step(true), 'Ready to save as Dial up. The beat error and the amplitude need 15 s of beats: wait for them, or save without.');
   // Saved later, with both shown: the Omega's figures after 50 s of beats.
   const both = takeReading(withSounds({ amplitude: 288.42, amplitudeSd: 1.14, beatErrorMs: 0.3156, beatOffsetMs: -0.3156, beatErrorSd: 0.0443, window: [8.1, 58.6] }), { ...context, escapement: 'coaxial' });
   assert.ok(both);
@@ -334,7 +352,7 @@ test('the line under the log says what to do next', () => {
   assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 0.09 }), 'Ready to save as Dial down.');
   // Save does not wait for the beat error and the amplitude, which come later than the rate:
   // the line says so, and the choice is the user's.
-  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 0.09, waiting: true }), 'Ready to save as Dial down. The beat error and the amplitude need 30 s of beats: wait for them, or save without.');
+  assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 0.09, waiting: true }), 'Ready to save as Dial down. The beat error and the amplitude need 15 s of beats: wait for them, or save without.');
   assert.equal(positionStep({ ...base, running: true, tracking: true, covered: 12.7, waiting: true }), 'Keep the watch still: 12 of 20 s since the lock.', 'nothing to choose before the rate is ready');
   assert.match(positionStep({ ...base, running: true, tracking: true, covered: 20, ready: true, rateSd: 1.4 }), /uncertain by ±1\.4 s\/d, so it would be left out of the average/);
   assert.equal(positionStep({ ...base, saved: 'dialUp' }), 'Saved Dial up. Place the watch dial down, then press Start.');

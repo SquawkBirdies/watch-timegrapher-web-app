@@ -5,6 +5,10 @@
 import { cleanLog, emptyLog } from './ui/positions.js';
 
 /** @typedef {import('./ui/positions.js').PositionLog} PositionLog */
+/**
+ * The presets themselves are in js/dsp/steps.js, which the page does not load.
+ * @typedef {'high'|'medium'|'low'} Sensitivity
+ */
 
 /**
  * @typedef {Object} Settings
@@ -12,7 +16,9 @@ import { cleanLog, emptyLog } from './ui/positions.js';
  * @property {import('./dsp/estimate.js').Escapement} escapement
  * @property {number} liftAngle degrees, for amplitude
  * @property {50|60} humHz mains frequency
- * @property {number} averagingSeconds window of the rate and beat-error readings
+ * @property {number} averagingSeconds window of the rate readings
+ * @property {Sensitivity} sensitivity how readily the amplitude and the beat error start their
+ *   stretch of beats again after the watch changes, and how long that stretch is
  * @property {string} microphoneId the input chosen in the microphone picker; '' for the default
  * @property {boolean} magnetNoticeSeen the magnetism notice has been read once
  * @property {number} saveMinutes how many minutes of microphone audio are kept for saving
@@ -38,6 +44,7 @@ export const DEFAULTS = Object.freeze({
   liftAngle: 52,
   humHz: 60,
   averagingSeconds: 20,
+  sensitivity: 'medium',
   microphoneId: '',
   magnetNoticeSeen: false,
   saveMinutes: 1,
@@ -71,6 +78,7 @@ export function clean(raw) {
   if (hum === 50 || hum === 60) s.humHz = hum;
   const avg = Number(raw.averagingSeconds);
   if (AVERAGING_CHOICES.includes(avg)) s.averagingSeconds = avg;
+  if (raw.sensitivity === 'high' || raw.sensitivity === 'medium' || raw.sensitivity === 'low') s.sensitivity = raw.sensitivity;
   if (typeof raw.microphoneId === 'string' && raw.microphoneId.length <= 256) s.microphoneId = raw.microphoneId;
   if (raw.magnetNoticeSeen === true) s.magnetNoticeSeen = true;
   const minutes = Number(raw.saveMinutes);
