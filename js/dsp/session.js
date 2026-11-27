@@ -8,7 +8,8 @@ import { synthesizeWatch } from '../audio/simulator.js';
  * @typedef {Object} Load
  * @property {number} audioSeconds audio processed so far
  * @property {number} busySeconds computing time spent on it, stage 10's readings included
- * @property {number} longestSeconds longest time spent on a single chunk
+ * @property {number} longestSeconds longest time spent on a single chunk of audio; the finish
+ *   where the audio ends is not one
  * @property {import('./soundstage.js').StageLoad|null} stage the part of the computing spent on
  *   stage 10's readings, the sounds inside each beat; null when that stage is not running
  */
@@ -43,15 +44,17 @@ export class Session {
 
   /**
    * The audio has ended: what the pipeline still has to report (see `Pipeline.finish`). Its
-   * computing counts as the rest does.
+   * computing counts in the time spent, but not as the longest step: that figure tells how long
+   * the analysis can hold up the audio while it comes, and once the audio has ended there is
+   * none to hold up. Finishing a reading whole there takes a second or two on the iPhone, and
+   * until 27 November 2026 it was counted, so that the audio diagnostic's longest step showed
+   * the finish (2126 ms on Lawrence's phone) instead of the recording.
    * @returns {import('./pipeline.js').PipelineEvent[]}
    */
   finish() {
     const t0 = performance.now();
     const events = this.pipeline.finish();
-    const busy = (performance.now() - t0) / 1000;
-    this.busySeconds += busy;
-    this.longestSeconds = Math.max(this.longestSeconds, busy);
+    this.busySeconds += (performance.now() - t0) / 1000;
     return events;
   }
 

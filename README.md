@@ -14,13 +14,14 @@ more after the lock. Following the amplitude over time and telling the escapemen
 the two steps left. Neither reading has been compared with a timing machine.
 
 Tested in Safari on an iPhone 17 Pro Max with iOS 27.2 (the audio diagnostic in milestone 4, the
-timegrapher replaying its three demo recordings of the time, all made with Voice Memos, in
-milestone 5, a live measurement of the Omega in milestone 6, a six-position run of the Omega and
-the theme setting in milestone 7, and the two demos of today with the cost of reading the Omega's
-amplitude in milestone 8), and in Chrome on a computer at phone size, where the microphone was also
-tested with a recording played in as a simulated microphone. The screen of milestone 8's fourth
-step, which shows the amplitude and the beat error from the unlock, has so far been checked only in
-Chrome on a computer.
+timegrapher replaying its three demo recordings of the time, all made with Voice Memos, in milestone
+5, a live measurement of the Omega in milestone 6, a six-position run of the Omega and the theme
+setting in milestone 7, and the two demos of today with the cost of reading the Omega's amplitude in
+milestone 8), and in Chrome on a computer at phone size, where the microphone was also tested with a
+recording played in as a simulated microphone. The screen of milestone 8's fourth step, which shows
+the amplitude and the beat error from the unlock, was checked on the iPhone on 27 November with the
+Omega demo, the simulator, the audio diagnostic and the Omega live; the ETA has not yet been
+measured live with it.
 
 Site: <https://squawkbirdies.github.io/watch-timegrapher-web-app/>
 
@@ -520,7 +521,8 @@ Known limits of the real-time pipeline:
 
 Milestone 8's fourth step, on 26 November 2026, puts what is read from the sounds inside the beats
 on the screen. Everything in this section was checked in Chrome on a computer and in the automated
-tests; none of it has been tried on a phone yet.
+tests, and on the iPhone on 27 November as set out [below](#on-the-iphone-27-november); the ETA has
+not yet been measured live with it.
 
 **The readout** gives rate, amplitude and beat error. The amplitude is in whole degrees and the beat
 error in hundredths of a millisecond, each with its stated scatter and the stretch of beats it rests
@@ -593,7 +595,13 @@ ms on the Omega demo. The amplitude comes from the two lengths. A bar's end that
 is above 40°, a note under the readings says that co-axial movements use less, with the two figures
 the co-axial investigation found: 38° in Omega's technical guide for its calibres 8520 and 8521, and
 36° reported for the 3861 by a watchmaker on a forum. Left at the default 52°, the Omega's 288°
-would come out as 416°, which is not believable, and the readout says "check the lift angle".
+would come out as 416°, which is not believable, and the readout says "check the lift angle". The
+note speaks of the run's escapement and lift angle, which a demo brings with it, until either is
+changed in Settings after the run has ended; from then on, and before any run, it speaks of the ones
+set (decided on 27 November). Until then a stopped run's escapement was used whatever was set, so
+that setting co-axial after Stop brought no note until the next Start, as on the iPhone. Following
+Settings as soon as a run ends was tried and not kept: in Chrome it brought the note up beside the
+Omega demo's 290°, made at the demo's own 36°, when Settings were co-axial at 52°.
 
 **The simulator** has an amplitude slider, 150° to 330°, starting at 270° (decided on 26 November).
 Its watch is a Swiss lever whose lift angle is the one set in Settings (decided the same day), so
@@ -618,12 +626,14 @@ between the timed beats beside them, under that name, with each beat's time from
 what reading the sounds cost. Until this step the page ran the pipeline without a lift angle and
 called that gap the beat error. The page now starts with the 60-second recording (decided on 26
 November): the two readings come about 40 s in, and a 30-second recording ends with "needed 30 s of
-beats".
+beats". Its "longest single step" is the longest the analysis held up the recording; the reading
+finished whole where the recording ends counts in the load but not there (since 27 November).
+Before, on the iPhone, that finish set it, at 2126 ms.
 
 **Where the audio ends,** at Stop and at the end of a recording, the reading of the beats' sounds
 that is being worked out is finished and shown (decided on 26 November); until then it was dropped,
 and a run could end on a dash with its last reading a second from done. A reading is spread over the
-audio that follows its start, so that the beats are still timed promptly, and takes about 1.4 s of
+audio that follows its start, so that the beats are still timed promptly, and takes 1.0 to 2.3 s of
 computing on the iPhone: the last numbers can come that long after Stop. They rest on beats heard
 before the end, as every reading does, and no reading is started for it. A reading finished within
 the last second, which had not yet gone out with the once-a-second readings, is shown as well. The
@@ -665,33 +675,70 @@ In Chrome at phone size, on this computer, with each source played at real speed
 - **Six positions**, on the simulator: a position saved 22 s after the lock kept a dash for both,
   and one saved 42 s after its lock kept 0.39 ms and 268° (see [Six positions](#six-positions)).
 
+### On the iPhone, 27 November
+
+Lawrence ran these on his iPhone with the site as merged from pull request 57, in Safari:
+
+- **The Omega demo** locked about 10 s in with the beats grey, showed both readings and coloured its
+  beats about 40 s in, and kept both to the end with no dash in between. It ended on 288° ±1.1° and
+  0.32 ms ±0.04, each over 51 s, with bars of 6.93 and 6.32 ms; its fifth reading was still being
+  worked out where the replay ended, and was finished there ("last in 1.7 s of computing over 1.3
+  s"). A computer's fifth reading of the capture is also 288° and 0.32 ms. Before this step the
+  iPhone made four readings of the demo.
+- **The Omega demo stopped 40 s in,** while its first reading was being worked out, showed 290°
+  ±1.5° and 0.34 ms ±0.07 a fraction of a second after Stop, as in Chrome. The line under the signal
+  read "last in 1.0 s of computing over 1.7 s": more than the half of real time a reading gets
+  during a run (1.4 s over 2.8 s), so the Stop finished it. Stopped at about 36.5 s, before the
+  first reading starts, it kept its dashes with "needed 30 s of beats". The window in which a Stop
+  finishes the first reading is about 2 s wide, from 38.6 s to about 40.6 s.
+- **The simulator** (28,800 vph, 270°, 0.40 ms) locked about 8 s in with its beats coloured from the
+  start, and showed 269° ±1.1° and 0.40 ms ±0.02 about 40 s in. With the amplitude moved to 215°
+  about a minute in, the old 269° stayed on the screen for about 20 s, a dash with "sounds not clear
+  enough" followed for about 20 s, and then 214°; it ended on 214° ±0.5° and 0.38 ms ±0.02, each
+  over 60 s. After Stop, a lift angle set to 50° left a dash for the amplitude with "lift angle
+  changed". Started again at 50°, it read 268° ±1.3° over 35 s.
+- **The co-axial note** did not come when the escapement was set to co-axial with the simulator
+  stopped, until it was started again; fixed since (above).
+- **The audio diagnostic,** recording the Omega live for 60 s at co-axial and 36°, locked at 8.1 s
+  and reported 282° ±1.0° and 0.20 ms ±0.02, each over 52 s, with 7.08 and 6.48 ms from unlock to
+  lock, tick first.
+- **The Omega live,** fully wound and dial up, through the phone's default microphone: −0.7 s/day
+  ±0.06, 283° ±1.7° and 0.16 ms ±0.02, each over 51 s, with bars of 7.05 and 6.44 ms and the signal
+  at 42 times the noise spread. The plan's check expects near 0.20 ms and 285° to 289° for the watch
+  in that state, as the prototype read it on 23 November; the audio diagnostic minutes earlier read
+  0.20 ms and 282°. Its last reading was finished at Stop ("2.3 s of computing over 2.4 s").
+
 What this step leaves as it is, and its limits:
 
 - **A reading can appear, give way to a dash and come back,** as the Omega demo's did above. With 30
   to 40 s of the Omega's beats 4 to 6% of the draws lose its faint unlock, against the 5% allowed,
   and one beat more or less in the reading decides. No rule holds a number on the screen through
-  that: a dash, never a stale value. It was left so on 26 November until it is seen on the phone,
-  where it has not been looked for yet. The two rules considered were to show the first number only
-  after two readings in a row pass, which adds about 5 s and would have left the Omega demo in
-  Chrome without a number for its whole minute, and to keep a number once shown up to a higher share
-  of failing draws, which shows readings the gate refuses today and has not been measured.
+  that: a dash, never a stale value. It was left so on 26 November until it is seen on the phone;
+  the Omega demo showed no such dash there in one run. The two rules considered were to show the
+  first number only after two readings in a row pass, which adds about 5 s and would have left the
+  Omega demo in Chrome without a number for its whole minute, and to keep a number once shown up to
+  a higher share of failing draws, which shows readings the gate refuses today and has not been
+  measured.
 - **The last numbers can come after Stop,** by up to a reading's computing: about 1.4 s on the
   iPhone, and 2.2 to 3.5 s for the Omega on this computer. Start pressed in that time waits for it.
   No reading is started where the audio ends, so the last one shown can rest on beats up to about 10
   s before the end.
-- **After a change, the beat error is slow and the amplitude blank.** Both rest on up to a minute of
-  beats. With the simulator's beat error moved from 0.40 to 1.00 ms, the reading passed through 0.42
-  ms after 9 s, 0.51 after 18 s, 0.79 after 34 s and 0.97 after 54 s, and reached 1.00 after 64 s,
-  each stated at ±0.02 to ±0.07 ms: the scatter says how the beats of that minute agree, not how far
-  the watch has moved within it. The gap between the timed beats had followed within 14 s. With its
-  amplitude moved from 270° to 220°, the old reading stayed for 4 s, a dash followed for 20 s, and
-  219° was shown from 28 s after the change. A watchmaker turning a regulator or moving a stud will
-  see the same. The fifth step follows the amplitude over time and not the beat error. Following a
-  change of beat error sooner is a piece of work of its own, to come before that step (decided on 26
-  November). Two rules are to be measured for it, on simulated adjustments and on the irregular
-  watches: a dash while the gap between the timed beats disagrees with the minute's reading, and
-  starting the minute again when that gap steps. Either may cost dashes or wrong restarts on watches
-  that are only irregular, which is what the measuring is for.
+- **After a change, the beat error is slow and the amplitude first stale, then blank.** Both rest on
+  up to a minute of beats. With the simulator's beat error moved from 0.40 to 1.00 ms, the reading
+  passed through 0.42 ms after 9 s, 0.51 after 18 s, 0.79 after 34 s and 0.97 after 54 s, and
+  reached 1.00 after 64 s, each stated at ±0.02 to ±0.07 ms: the scatter says how the beats of that
+  minute agree, not how far the watch has moved within it. The gap between the timed beats had
+  followed within 14 s. With its amplitude moved from 270° to 220°, the old reading stayed for 9 s,
+  at its old scatter, a dash followed for 20 s, and 219° was shown from 28 s after the change; on
+  the iPhone, with 215° set, the old 269° stayed about 20 s, the dash about 20 s more, and 214° came
+  about 40 s after the change. A watchmaker turning a regulator or moving a stud will see the same.
+  The fifth step follows the amplitude over time, in 10 s blocks, and is the planned mend for the
+  amplitude; it does nothing for the beat error. Following a change of beat error sooner is a piece
+  of work of its own, to come before that step (decided on 26 November). Two rules are to be
+  measured for it, on simulated adjustments and on the irregular watches: a dash while the gap
+  between the timed beats disagrees with the minute's reading, and starting the minute again when
+  that gap steps. Either may cost dashes or wrong restarts on watches that are only irregular, which
+  is what the measuring is for.
 - **A Swiss lever within about 0.05 ms of in beat may never be named,** and its two lines then
   nearly coincide. On 24 November, of simulated levers 20 s after the lock, all 24 at 0.1 to 0.2 ms
   were named, 10 of 12 at 0.05 ms, and none of 12 in perfect beat. The names follow the sign of the
@@ -1107,6 +1154,7 @@ Done by Lawrence Fan:
   and the continuous mode beside the six-position log
 - the six recordings in `tests/fixtures/` (five of watches, one with no watch), which are the
   only test data not produced by AI-written code
+- every check on the iPhone
 
 What this means for the readings: every result above comes from AI-written code, tested
 against AI-written synthetic signals and against the real recordings. The expected values
