@@ -162,6 +162,8 @@ let target = nextPosition(log);
  *   to it before then; the run ends when it has answered every chunk and given its last answer
  * @property {boolean} closing the pipeline has heard all of the run's audio and has been asked
  *   for its last answer: the reading of the beats' sounds it was working out, finished
+ * @property {boolean} changedAfter the escapement or the lift angle was changed in Settings after
+ *   the run ended, so that the co-axial note speaks of the ones set
  * @property {number} fed frames sent to the pipeline
  * @property {number} posted chunks sent to the pipeline
  * @property {number} answered chunks the pipeline has finished with
@@ -383,7 +385,7 @@ async function start() {
  * @returns {Run}
  */
 function newRun(kind, name, duration, sampleRate, escapement, liftAngle) {
-  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, closing: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
+  return { kind, name, duration, sampleRate, escapement, liftAngle, running: false, ended: false, finished: false, stopping: false, closing: false, changedAfter: false, fed: 0, posted: 0, answered: 0, offset: 0, interrupted: false, resumed: false, interruptions: 0, savedAs: null };
 }
 
 /**
@@ -664,7 +666,16 @@ function render() {
   ui.amplitudeWhy.textContent = sounds.amplitudeNote;
   ui.beatError.textContent = sounds.beatError;
   ui.beatErrorWhy.textContent = sounds.beatErrorNote;
-  const hint = liftHint(escapement, lift);
+  // The note speaks of the run's escapement and lift angle, which a demo brings with it, until
+  // either is changed in Settings after the run has ended; from then on, and before any run, it
+  // speaks of the ones set, so that a change made after Stop shows at once. Until 27 November
+  // 2026 a stopped run's escapement was used whatever was set, and the note came only at the
+  // next Start (issue 37). Following Settings as soon as a run ends would instead bring the note
+  // up beside a demo's readings, made at its own lift angle, whenever the settings for the
+  // user's own watch were co-axial at more than 40 degrees. The stopped run's readings and names
+  // stay as they were made.
+  const fromSettings = !run || (!run.running && run.changedAfter);
+  const hint = liftHint(fromSettings ? settings.escapement : escapement, fromSettings ? settings.liftAngle : lift);
   ui.liftHint.hidden = hint === null;
   ui.liftHint.textContent = hint || '';
   const bph = m.bph || settings.bph;
@@ -1180,6 +1191,7 @@ ui.settingsForm.addEventListener('change', () => {
   // A lift angle set now is the one meant from here on: it replaces a demo's own while the demo
   // runs, and it is what the line under the readings shows once a run is over.
   if (run && settings.liftAngle !== before.liftAngle) run.liftAngle = settings.liftAngle;
+  if (run && !run.running && (settings.liftAngle !== before.liftAngle || settings.escapement !== before.escapement)) run.changedAfter = true;
   // The simulator's watch follows the lift angle set, which moves the sounds inside its beats.
   // Its beats from before the change would be read with the new angle for up to a minute, at
   // amplitudes the watch never had (186 degrees for half a minute after a change from 52 to 36
