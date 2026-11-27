@@ -246,7 +246,9 @@
 
 <dialog id="settings" aria-labelledby="settings-title">
   <form method="dialog" id="settings-form">
-    <h2 id="settings-title">Settings</h2>
+    <!-- Opening the dialog focuses its heading: otherwise it would focus the first select, and
+         Safari on the iPhone opens a select's picker when it takes the focus. -->
+    <h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>
     <div class="field">
       <label for="set-bph">Beat rate</label>
       <select id="set-bph" name="bph"></select>

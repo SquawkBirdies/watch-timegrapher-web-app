@@ -188,7 +188,7 @@ test('a co-axial set with a Swiss lever\'s lift angle is told so, with the two a
   assert.equal(liftHint('coaxial', 38), null);
   assert.equal(liftHint('coaxial', COAXIAL_LIFT_LIMIT), null);
   const hint = liftHint('coaxial', 52);
-  assert.ok(hint && hint.startsWith('The lift angle is set to 52°') && hint.includes('38° for its calibres 8520 and 8521') && hint.includes('36° is reported for the 3861'), hint || 'no hint');
+  assert.equal(hint, "Lift angle 52° suits a Swiss lever. Co-axials use less: 38° for Omega's 8520 and 8521, 36° reported for the 3861.");
   // Left at 52 degrees, the Omega's 288 degrees would come out as 416, which is not believable.
   assert.ok((288 * 52) / 36 > 330);
 });
