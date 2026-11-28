@@ -36,7 +36,7 @@ Either of these works.
   upload folders. Unzip the project, open the repository on github.com, choose **Add file**,
   then **Upload files**, and drag in everything inside the `watch-timegrapher-web-app` folder.
   Web uploads are limited to 100 files at a time and 25 MB per file; the project fits both.
-  The hidden files `.gitignore` and `.nojekyll` are optional and can be left out.
+  The hidden file `.gitignore` is optional and can be left out; `_config.yml` is needed (below).
 
 ### 3. Turn on GitHub Pages
 
@@ -44,6 +44,14 @@ Either of these works.
 2. Under **Build and deployment**, set **Source** to **Deploy from a branch**.
 3. Set the branch to `main` and the folder to `/ (root)`, then **Save**.
 4. After a minute or two the page shows the site's address.
+
+GitHub builds the site with Jekyll, its own site builder, so that `version.json` carries the
+commit each deploy was built from; the page shows it in its fine print, linked to the commit, and
+the audio diagnostic puts it in its report. Jekyll publishes every other file as it is.
+`_config.yml` leaves out the Markdown files and the folders the app does not load, so that none of
+them is made into a page or read as a template. A build that fails, which the repository's Actions tab
+shows, leaves the site as it was. Served any other way, as from a local server, the page shows no
+version. Until 28 November 2026 a `.nojekyll` file switched Jekyll off.
 
 ### 4. Check it on the iPhone
 

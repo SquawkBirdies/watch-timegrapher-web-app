@@ -6,6 +6,7 @@ import { encodeWav } from './audio/wav.js';
 import { offerFile } from './ui/save.js';
 import { Cascade, highpass, BUTTERWORTH4_Q } from './dsp/biquad.js';
 import { soundsReadout, soundsInWords, stageNote, beatName } from './ui/model.js';
+import { loadVersion, shortVersion } from './version.js';
 
 /**
  * @template {HTMLElement} T
@@ -394,10 +395,22 @@ function draw() {
 
 // ---------------------------------------------------------------------------- report
 
+/** The commit the site was built from, once version.json has been read; null without one. */
+let siteVersion = /** @type {string|null} */ (null);
+loadVersion().then((commit) => {
+  siteVersion = commit;
+  const line = document.getElementById('version');
+  if (!commit || !line) return;
+  line.textContent = `Version ${shortVersion(commit)}.`;
+  line.hidden = false;
+});
+
 function report() {
   const r = run;
   if (!r) return '';
   const lines = ['Watch Timegrapher audio diagnostic (milestone 4)'];
+  // The commit the site was built from, so that a report says which version made it.
+  lines.push(`Version: ${siteVersion ? shortVersion(siteVersion) : 'not known'}`);
   lines.push(`Browser: ${navigator.userAgent}`);
   lines.push(`Microphone: ${r.capture.label || 'unnamed'}`);
   lines.push(`Escapement: ${r.escapement === 'coaxial' ? 'co-axial' : 'Swiss lever'}, lift angle ${r.liftAngle}°`);

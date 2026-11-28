@@ -3,7 +3,7 @@
 // in real time for the simulator and recordings; the worker's events update the measurement
 // model, and the screen is redrawn from the model.
 
-import { Measurement, formatRate, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, liftHint, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
+import { Measurement, formatRate, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, liftHint, readingsLine, stateText, irregularWarning, shiftEvent, microphoneProblem, describeInput, formatDuration, saveLabel, recordingMegabytes } from './ui/model.js';
 import { TraceView } from './ui/trace.js';
 import { WaveformView } from './ui/waveform.js';
 import { ScreenWake } from './ui/wake.js';
@@ -17,7 +17,8 @@ import { listMicrophones } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
 import { POSITION_ICONS } from './ui/position-icons.js';
 import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, soundsWaiting, isUncertain, emptyLog, isPosition } from './ui/positions.js';
-import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES } from './store.js';
+import { loadVersion, shortVersion } from './version.js';
+import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES, DIALOG_SETTINGS, withDialogDefaults } from './store.js';
 
 /**
  * @typedef {import('./audio/file-source.js').Recording} Recording
@@ -679,10 +680,8 @@ function render() {
   const hint = liftHint(fromSettings ? settings.escapement : escapement, fromSettings ? settings.liftAngle : lift);
   ui.liftHint.hidden = hint === null;
   ui.liftHint.textContent = hint || '';
-  const bph = m.bph || settings.bph;
-  const parts = [bph ? `${formatBph(bph)} vph` : 'Beat rate automatic', `lift ${lift}°`, `${settings.averagingSeconds} s window`];
-  if (tracking && span > settings.averagingSeconds + 2) parts[2] = `window lengthened to ${Math.round(span)} s`;
-  ui.sub.textContent = parts.join(' · ');
+  // The escapement and lift angle shown are those the readings were made with: a demo's own.
+  ui.sub.textContent = readingsLine({ bph: m.bph || settings.bph, escapement, liftAngle: lift, averagingSeconds: settings.averagingSeconds, span, tracking });
   // Irregular running: a warning in the readout, for as long as the latest readings say so.
   const warning = tracking ? irregularWarning(r) : null;
   ui.irregular.hidden = warning === null;
@@ -1222,6 +1221,15 @@ ui.settingsForm.addEventListener('change', () => {
   }
   schedule();
 });
+// Reset to defaults puts this dialog's settings back as a first visit has them, and applies them
+// as any change in the dialog is applied: a new beat rate or mains frequency restarts the
+// measurement. The settings kept elsewhere (the microphone, the mode) stay.
+$('settings-reset').addEventListener('click', () => {
+  const reset = withDialogDefaults(settings);
+  const f = ui.settingsForm.elements;
+  for (const name of DIALOG_SETTINGS) /** @type {HTMLInputElement} */ (f.namedItem(name)).value = String(reset[name]);
+  ui.settingsForm.dispatchEvent(new Event('change'));
+});
 ui.settingsForm.addEventListener('submit', () => {
   // Show the lift angle as it was kept, in case the typed value was out of range.
   showSettings();
@@ -1244,5 +1252,14 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', schedule);
 const host = location.hostname.match(/^([^.]+)\.github\.io$/);
 const repo = location.pathname.split('/').filter(Boolean)[0];
 if (host && repo) /** @type {HTMLAnchorElement} */ ($('source-link')).href = `https://github.com/${host[1]}/${repo}`;
+// The commit the site was built from, in the fine print, linked to it on GitHub; nothing when the
+// page is served some other way.
+loadVersion().then((commit) => {
+  if (!commit) return;
+  const link = /** @type {HTMLAnchorElement} */ ($('version-link'));
+  link.textContent = shortVersion(commit);
+  if (host && repo) link.href = `https://github.com/${host[1]}/${repo}/commit/${commit}`;
+  $('version').hidden = false;
+});
 
 render();

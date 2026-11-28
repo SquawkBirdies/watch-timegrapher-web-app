@@ -842,7 +842,42 @@ Its limits:
   wandered 14 to 17° over five minutes in both captures, so they mark real changes of the watch.
 - **A change under about 0.05 ms is never found,** and the old value stays until its beats have
   left: 20 s at High, 44 s at Medium and Low.
-- **Not yet seen on the phone.**
+- **On a co-axial left alone, a restart marks a change of its sounds, not always of its beat
+  error.** Its timed beats are its loudest sounds, a different one in the tick and the tock, so
+  the gap between them moves with the amplitude as well (below).
+
+### On the iPhone, 27 and 28 November
+
+Lawrence ran these on his iPhone with the site as merged from pull request 60, in Safari:
+
+- **Settings** showed "Amplitude and beat error sensitivity" at Medium (default), and opening the
+  dialog no longer opened the beat rate's picker (pull request 59).
+- **The Simulator** at its defaults locked at about 8 s, showed 0.38 ms at about 25 s and 269° at
+  about 30 s. Moved from 0.40 to 1.00 ms, both readings went to "changed: reading again" within a
+  few seconds and came back about 25 s after the change, at 1.00 ms, the rate and the amplitude as
+  before. At High, moved from 1.00 to 0.90 ms, both went to a dash within a few seconds; the beat
+  error came back "over 15 s", resting on beats from after the change only, and the amplitude 5 s
+  later. In Node, over 8 runs of the app's simulator, that restart came 5 to 12 s after the change,
+  the beat error 15.2 to 16.3 s after it at 0.86 to 0.93 ms, and the amplitude 5 s later.
+- **The Omega demo,** at High, said "sounds not clear enough" from about 24 s, showed both readings
+  from about 43 s, and ended on 289° ±1.1° and 0.30 ms ±0.05 over 45 s, the longest stretch High
+  allows, after reading 7 times; Node gives 288.5° and 0.299 ms over 45 s, also after 7 readings.
+- **The ETA demo,** at High, showed its beat error from about 25 s and its amplitude just before
+  the end, ending on 266° ±0.7° and 0.27 ms ±0.03 over 20 s, as in Node; before pull request 60 it
+  ended on dashes. Its 30 s read the same at any sensitivity.
+- **The Omega live,** left alone at Medium for 5 minutes, showed "changed: reading again" twice
+  and ended on 286° ±0.9° and 0.19 ms ±0.02 over 60 s. Replayed in Node from his capture, kept on
+  his computer and not published, it restarted once, 170 s in, where the gap between the timed beats
+  rose from 1.29 to 1.39 ms and the amplitude fell from about 293° to 280°; the beat error from the
+  unlocks stayed between 0.135 and 0.158 ms across it. Around 208 s the gap fell 0.12 ms, past the
+  threshold for 2 s of the 3 needed: most likely the second restart on the phone, whose readings
+  fall at slightly other times. High restarted 4 times in the same capture, Low not at all.
+- **The audio diagnostic,** 60 s of the Omega live at co-axial and 36°, gave 293° ±1.2° and 0.18 ms
+  ±0.02 over 50 s, with the pipeline at 17.1% of real time and a longest single step of 545 ms
+  (2126 ms before pull request 58 left out the reading finished at the end).
+- **The co-axial lift angle note** (issue 37, pull request 58) came at once when the escapement was
+  set to co-axial with playback stopped, and did not come beside a finished Omega demo with the
+  settings left at a Swiss lever.
 
 ## Live microphone
 
@@ -1055,36 +1090,44 @@ Known limits of the six-position log:
 The app is a folder of static files with no build step, served by GitHub Pages over HTTPS.
 Browsers allow the microphone only on secure pages, so the app cannot be opened from a local
 file. [docs/hosting.md](docs/hosting.md) explains how to set up the site, how to host your own
-copy, and how to test on a computer.
+copy, and how to test on a computer. Since 28 November GitHub's own Jekyll build writes the commit
+it was built from into `version.json`, and the page's fine print shows it ("Version 50d4ce3."),
+linked to the commit, as does the audio diagnostic's report ("Version: 50d4ce3"), so that a
+screenshot or a report says which version made it; served any other way, they show none.
+`_config.yml` keeps the Markdown and the folders the app does not load out of the published site.
 
 `index.html` is the timegrapher. Its header shows rate, amplitude and beat error, each with its
-uncertainty or the reason for a dash under it, with the beat rate, lift angle and averaging window
-under them, and dashes instead of stale numbers when there is no lock or the microphone is
-interrupted (see [The screen](#the-screen-amplitude-beat-error-and-the-names-of-the-beats)). When
-the watch runs irregularly, a warning below them says by how much its beats wander from one to the
-next. Below are the trace, one dot per beat in milliseconds ahead of an ideal clock with
-low-confidence beats dimmed and beats not yet named in grey; a signal meter with advice; and the
-averaged tick and tock, with a bar from each beat's unlock to its lock while an amplitude is shown.
-Under the meter a line of fine print gives the input level and the share of real time the analysis
-uses, how often the sounds inside the beats have been read and what the latest reading cost in
-computing and in time, with the pipeline's own word for the reason when a reading is held back. The
-source can be the microphone, a simulated watch whose rate, beat error, amplitude, beat variability
-and loudness can be changed while it runs, one of two demo recordings, or a recording chosen from
-the phone, replayed at real speed or faster. A switch above the readings
-chooses continuous measuring or the six-position log (see [Six positions](#six-positions)).
-Settings (beat rate, escapement, lift angle, mains frequency, averaging window, amplitude and beat
-error sensitivity, theme), the
-chosen microphone, the mode, the six-position log and whether the magnetism notice has been read
-are kept on the device.
+uncertainty or the reason for a dash under it, with the beat rate, escapement, lift angle and
+averaging window under them, and dashes instead of stale numbers when there is no lock or the
+microphone is interrupted (see [The
+screen](#the-screen-amplitude-beat-error-and-the-names-of-the-beats)). When the watch runs
+irregularly, a warning below them says by how much its beats wander from one to the next. Below are
+the trace, one dot per beat in milliseconds ahead of an ideal clock with low-confidence beats dimmed
+and beats not yet named in grey; a signal meter with advice; and the averaged tick and tock, with a
+bar from each beat's unlock to its lock while an amplitude is shown. Under the meter a line of fine
+print gives the input level and the share of real time the analysis uses, how often the sounds
+inside the beats have been read and what the latest reading cost in computing and in time, with the
+pipeline's own word for the reason when a reading is held back. The source can be the microphone, a
+simulated watch whose rate, beat error, amplitude, beat variability and loudness can be changed
+while it runs, one of two demo recordings, or a recording chosen from the phone, replayed at real
+speed or faster. A switch above the readings chooses continuous measuring or the six-position log
+(see [Six positions](#six-positions)). Settings (beat rate, escapement, lift angle, mains frequency,
+averaging window, amplitude and beat error sensitivity, theme), the chosen microphone, the mode, the
+six-position log and whether the magnetism notice has been read are kept on the device. Reset to
+defaults, beside Done, sets the Settings dialog's own settings back as a first visit has them and
+applies them at once, as any change there is applied: a new beat rate or mains frequency restarts
+the measurement. It asks no question first. The microphone, the mode and the log stay. The line
+under the readings gives the beat rate, the escapement and lift angle the readings are made with,
+and the rate's window: for example "21,600 vph · co-axial · lift 36° · 20 s window".
 
 The two demo recordings are the ETA's and the Omega's Safari captures among the [test
 recordings](#test-recordings): what the phone's microphone gave Safari, so the sounds inside their
-beats can be read as a live watch's are. They replaced the three Voice Memos recordings, which
-allow no such reading. A demo plays with its own watch's escapement and lift angle, 50° for the ETA
-and 36° for the Omega, whatever the settings, and the line under the readings shows the lift angle
-in use. A lift angle set in Settings while a demo plays replaces the demo's for the rest of that
-run; a demo never changes the stored setting. A demo also plays only the first channel of its
-capture, as the microphone gives it to the app. The second channel is silent: it changes no
+beats can be read as a live watch's are. They replaced the three Voice Memos recordings, which allow
+no such reading. A demo plays with its own watch's escapement and lift angle, 50° for the ETA and
+36° for the Omega, whatever the settings, and the line under the readings shows the escapement and
+lift angle in use. A lift angle set in Settings while a demo plays replaces the demo's for the rest
+of that run; a demo never changes the stored setting. A demo also plays only the first channel of
+its capture, as the microphone gives it to the app. The second channel is silent: it changes no
 reading, and playing it nearly doubled the pipeline's computing (in Node, without the stage, about
 10% of real time against 5% for the Omega's capture, and 13% against 7% for the ETA's). Both were
 decided on 26 November. Two limits follow from the captures' lengths:
@@ -1159,6 +1202,8 @@ CLAUDE.md              guidance for AI agents working in this repository
 index.html             the timegrapher (script in js/main.js, styles in css/app.css)
 check.html             browser check
 diagnostic.html        audio diagnostic (script in js/diagnostic.js)
+version.json           the commit the site was built from, written by GitHub's build (js/version.js)
+_config.yml            what GitHub's build leaves out of the published site
 docs/hosting.md        setting up GitHub Pages
 js/dsp/filterbank.js   band-pass filter bank, 1.5 to 22.5 kHz, and energy envelopes
 js/dsp/cleanup.js      noise levelling, click clipping, mains-hum comb filter
