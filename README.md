@@ -878,6 +878,9 @@ Lawrence ran these on his iPhone with the site as merged from pull request 60, i
 - **The co-axial lift angle note** (issue 37, pull request 58) came at once when the escapement was
   set to co-axial with playback stopped, and did not come beside a finished Omega demo with the
   settings left at a Swiss lever.
+- **After pull request 61,** on 28 November, the fine print read "Version acdbe37.", linked to
+  that commit, the diagnostic's report gave "Version: acdbe37", both demos played with the
+  escapement on the line under the readings, and Reset to defaults put the settings back.
 
 ## Live microphone
 
@@ -1091,9 +1094,10 @@ The app is a folder of static files with no build step, served by GitHub Pages o
 Browsers allow the microphone only on secure pages, so the app cannot be opened from a local
 file. [docs/hosting.md](docs/hosting.md) explains how to set up the site, how to host your own
 copy, and how to test on a computer. Since 28 November GitHub's own Jekyll build writes the commit
-it was built from into `version.json`, and the page's fine print shows it ("Version 50d4ce3."),
-linked to the commit, as does the audio diagnostic's report ("Version: 50d4ce3"), so that a
-screenshot or a report says which version made it; served any other way, they show none.
+it was built from into `version.json`. The fine print of all three pages, the timegrapher, the
+audio diagnostic and the browser check, shows it ("Version acdbe37."), linked to the commit on
+GitHub, and so does the diagnostic's report ("Version: acdbe37"), so that a screenshot or a
+report says which version made it; served any other way, they show none.
 `_config.yml` keeps the Markdown and the folders the app does not load out of the published site.
 
 `index.html` is the timegrapher. Its header shows rate, amplitude and beat error, each with its

@@ -46,11 +46,11 @@ Either of these works.
 4. After a minute or two the page shows the site's address.
 
 GitHub builds the site with Jekyll, its own site builder, so that `version.json` carries the
-commit each deploy was built from; the page shows it in its fine print, linked to the commit, and
-the audio diagnostic puts it in its report. Jekyll publishes every other file as it is.
+commit each deploy was built from; all three pages show it in their fine print, linked to the
+commit, and the audio diagnostic puts it in its report. Jekyll publishes every other file as it is.
 `_config.yml` leaves out the Markdown files and the folders the app does not load, so that none of
 them is made into a page or read as a template. A build that fails, which the repository's Actions tab
-shows, leaves the site as it was. Served any other way, as from a local server, the page shows no
+shows, leaves the site as it was. Served any other way, as from a local server, the pages show no
 version. Until 28 November 2026 a `.nojekyll` file switched Jekyll off.
 
 ### 4. Check it on the iPhone

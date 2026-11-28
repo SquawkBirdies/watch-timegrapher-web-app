@@ -17,7 +17,7 @@ import { listMicrophones } from './audio/capture.js';
 import { encodeWav } from './audio/wav.js';
 import { POSITION_ICONS } from './ui/position-icons.js';
 import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, soundsWaiting, isUncertain, emptyLog, isPosition } from './ui/positions.js';
-import { loadVersion, shortVersion } from './version.js';
+import { repositoryUrl, showVersion } from './version.js';
 import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES, DIALOG_SETTINGS, withDialogDefaults } from './store.js';
 
 /**
@@ -1247,19 +1247,11 @@ ui.settings.addEventListener('click', (e) => {
 window.addEventListener('resize', schedule);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', schedule);
 
-// On GitHub Pages the address is https://OWNER.github.io/REPOSITORY/, so the source is
-// https://github.com/OWNER/REPOSITORY.
-const host = location.hostname.match(/^([^.]+)\.github\.io$/);
-const repo = location.pathname.split('/').filter(Boolean)[0];
-if (host && repo) /** @type {HTMLAnchorElement} */ ($('source-link')).href = `https://github.com/${host[1]}/${repo}`;
+// On GitHub Pages the source is the repository the site is served from.
+const repository = repositoryUrl(location);
+if (repository) /** @type {HTMLAnchorElement} */ ($('source-link')).href = repository;
 // The commit the site was built from, in the fine print, linked to it on GitHub; nothing when the
 // page is served some other way.
-loadVersion().then((commit) => {
-  if (!commit) return;
-  const link = /** @type {HTMLAnchorElement} */ ($('version-link'));
-  link.textContent = shortVersion(commit);
-  if (host && repo) link.href = `https://github.com/${host[1]}/${repo}/commit/${commit}`;
-  $('version').hidden = false;
-});
+showVersion(document, location);
 
 render();
