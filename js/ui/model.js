@@ -544,6 +544,20 @@ export function soundsInWords(r) {
   return { amplitude: phrase('amplitude', r.amplitude, '°', r.amplitudeNote), beatError: phrase('beat error', r.beatError, ' ms', r.beatErrorNote) };
 }
 
+/**
+ * The line under the readings: the beat rate, the escapement and lift angle the readings were
+ * made with, and the rate's window. The escapement was added at Lawrence Fan's request on 28
+ * November 2026, so that a screenshot says how the readings were made.
+ * @param {{bph: number, escapement: import('../dsp/estimate.js').Escapement, liftAngle: number, averagingSeconds: number, span: number, tracking: boolean}} s
+ *   `bph` 0 while it is found automatically; `span` the seconds the rate's window has grown to
+ * @returns {string}
+ */
+export function readingsLine(s) {
+  const window = s.tracking && s.span > s.averagingSeconds + 2 ? `window lengthened to ${Math.round(s.span)} s` : `${s.averagingSeconds} s window`;
+  const escapement = s.escapement === 'coaxial' ? 'co-axial' : 'Swiss lever';
+  return [s.bph ? `${formatBph(s.bph)} vph` : 'Beat rate automatic', escapement, `lift ${s.liftAngle}°`, window].join(' · ');
+}
+
 /** A lift angle above this is a Swiss lever's, in degrees: co-axial calibres are set lower. */
 export const COAXIAL_LIFT_LIMIT = 40;
 

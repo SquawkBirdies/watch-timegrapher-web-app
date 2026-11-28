@@ -1,0 +1,13 @@
+# GitHub Pages builds this site with Jekyll so that version.json can carry the commit it was built
+# from (site.github.build_revision), which the page shows in its fine print. Every file without
+# front matter, which is every file but version.json, is published as it is. The Markdown and the
+# folders the app does not load are left out, so that no page is made of them and nothing in
+# them is read as a template: a "{{" or "{%" in a Markdown file would otherwise break the build.
+# The tests folder stays, since the demos load their recordings from tests/fixtures.
+exclude:
+  - README.md
+  - CLAUDE.md
+  - docs
+  - tools
+  - package.json
+  - jsconfig.json

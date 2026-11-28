@@ -12,10 +12,10 @@ import { amplitudeOf, BLOCK_SECONDS } from '../js/dsp/amplitude.js';
 import { encodeWav, decodeWav } from '../js/audio/wav.js';
 import { RecordingSource } from '../js/audio/file-source.js';
 import { Player } from '../js/audio/player.js';
-import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, AMPLITUDE_BEATS_SECONDS, COAXIAL_LIFT_LIMIT, stateText, irregularWarning } from '../js/ui/model.js';
+import { Measurement, traceRange, ticks, formatRate, formatMs, formatBph, signalLevel, averagingNote, guidance, stageNote, soundsReadout, soundsInWords, whyWords, liftHint, beatName, shiftEvent, BEATS_NEEDED_SECONDS, AMPLITUDE_BEATS_SECONDS, COAXIAL_LIFT_LIMIT, readingsLine, stateText, irregularWarning } from '../js/ui/model.js';
 import { FIRST_READING_SECONDS } from '../js/dsp/soundstage.js';
 import { tickByGap, tickByLift, NAME_SD } from '../js/dsp/names.js';
-import { clean, DEFAULTS, SETTINGS_KEY } from '../js/store.js';
+import { clean, DEFAULTS, SETTINGS_KEY, DIALOG_SETTINGS, withDialogDefaults } from '../js/store.js';
 import { stream } from './helpers/stream.js';
 import { readiness } from '../js/ui/positions.js';
 
@@ -655,6 +655,27 @@ test('stored settings are checked, and anything invalid falls back to the defaul
     theme: 'auto',
   });
   assert.deepEqual(clean({ bph: 12345, escapement: 'tourbillon', liftAngle: 5, humHz: 55, averagingSeconds: 15, sensitivity: 'max' }), DEFAULTS);
+});
+
+test('Reset to defaults sets back every setting the Settings dialog shows, and only those', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const dialog = html.slice(html.indexOf('<dialog id="settings"'), html.indexOf('</dialog>', html.indexOf('<dialog id="settings"')));
+  const names = [...dialog.matchAll(/name="([A-Za-z]+)"/g)].map((m) => m[1]);
+  assert.deepEqual([...names].sort(), [...DIALOG_SETTINGS].sort(), 'the dialog\'s fields are the ones reset');
+  // Its button sits to the left of Done.
+  assert.match(dialog, /<button type="button" class="secondary" id="settings-reset">Reset to defaults<\/button><button class="primary" value="done">Done<\/button>/);
+  const mine = clean({ bph: 21600, escapement: 'coaxial', liftAngle: 36, humHz: 50, averagingSeconds: 40, sensitivity: 'high', theme: 'dark', microphoneId: 'usb', magnetNoticeSeen: true, saveMinutes: 5, mode: 'positions' });
+  assert.deepEqual(withDialogDefaults(mine), { ...DEFAULTS, microphoneId: 'usb', magnetNoticeSeen: true, saveMinutes: 5, mode: 'positions' });
+  assert.deepEqual(withDialogDefaults(DEFAULTS), DEFAULTS);
+});
+
+test('the line under the readings gives the beat rate, the escapement, the lift angle and the window', () => {
+  const line = (/** @type {Partial<Parameters<typeof readingsLine>[0]>} */ s) => readingsLine({ bph: 21600, escapement: 'coaxial', liftAngle: 36, averagingSeconds: 20, span: 20, tracking: true, ...s });
+  assert.equal(line({}), '21,600 vph · co-axial · lift 36° · 20 s window');
+  assert.equal(line({ bph: 28800, escapement: 'lever', liftAngle: 50 }), '28,800 vph · Swiss lever · lift 50° · 20 s window');
+  assert.equal(line({ bph: 0, tracking: false }), 'Beat rate automatic · co-axial · lift 36° · 20 s window');
+  assert.equal(line({ span: 31.6 }), '21,600 vph · co-axial · lift 36° · window lengthened to 32 s');
+  assert.equal(line({ span: 31.6, tracking: false }), '21,600 vph · co-axial · lift 36° · 20 s window');
 });
 
 test('the theme follows the phone unless light or dark is chosen, and both ways of reaching dark give the same colours', () => {

@@ -59,6 +59,26 @@ export const SAVE_MINUTES = [1, 2, 5];
 export const LIFT_RANGE = [30, 70];
 
 /** Where the settings are kept. index.html reads the theme from here before the page is drawn. */
+/**
+ * The settings the Settings dialog shows, which its Reset to defaults button sets back (added at
+ * Lawrence Fan's request on 28 November 2026). The microphone, the length of audio kept, the
+ * mode and whether the magnet notice was seen are set elsewhere, and stay.
+ * @type {ReadonlyArray<'bph'|'escapement'|'liftAngle'|'humHz'|'averagingSeconds'|'sensitivity'|'theme'>}
+ */
+export const DIALOG_SETTINGS = Object.freeze(['bph', 'escapement', 'liftAngle', 'humHz', 'averagingSeconds', 'sensitivity', 'theme']);
+
+/**
+ * The settings with those of the Settings dialog back at their defaults.
+ * @param {Settings} settings
+ * @returns {Settings}
+ */
+export function withDialogDefaults(settings) {
+  /** @type {Record<string, unknown>} */
+  const out = { ...settings };
+  for (const name of DIALOG_SETTINGS) out[name] = DEFAULTS[name];
+  return clean(out);
+}
+
 export const SETTINGS_KEY = 'timegrapher.settings.v1';
 const LOG_KEY = 'timegrapher.positions.v1';
 
