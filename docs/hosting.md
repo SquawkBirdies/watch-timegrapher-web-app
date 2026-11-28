@@ -72,8 +72,11 @@ shows the site as live from `main` and `/ (root)`.
 
 ## Updates
 
-Every change merged into `main` republishes the site, usually within two minutes. Safari may
-keep showing the old version for a while; pull down on the page to reload it.
+Every change merged into `main` republishes the site, usually within two minutes. GitHub Pages
+lets browsers keep each file for 10 minutes, so for that long a page can show the old version, or
+load old and new files together, which may not work; reloading does not help. Wait 10 minutes after
+the deploy's run in the repository's Actions tab turns green, or open the site in a new Private tab.
+The version in each page's fine print says which one has loaded.
 
 ## Hosting your own copy
 

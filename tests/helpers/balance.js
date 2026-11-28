@@ -6,9 +6,12 @@
 // Witschi's instruments define it (from the unlocks), the time from unlock to lock, and the
 // amplitude.
 // The two beats can have different sounds and different angles, as a co-axial escapement does.
+// The app's simulator streams a co-axial built the same way (js/audio/balance.js); this helper
+// makes whole recordings, with options the app does not need, and keeps its own random draws so
+// that the tests' watches stay as they were.
 
-import { Cascade, bandpassSections } from '../../js/dsp/biquad.js';
 import { seededRandom, gaussianFrom } from '../../js/audio/simulator.js';
+import { soundSamples, coaxialEscapement } from '../../js/audio/balance.js';
 
 /**
  * One sound of a beat.
@@ -112,7 +115,6 @@ export function synthesizeBalanceWatch(options) {
   const omega = Math.PI / halfPeriod; // radians per second of the balance's phase
   /** @param {number} t */
   const amplitudeAt = (t) => (typeof amplitude === 'function' ? amplitude(t) : amplitude);
-  const preRoll = Math.floor(0.002 * fs);
   /** @type {number[]} */
   const unlocks = [];
   /** @type {number[]} */
@@ -126,22 +128,13 @@ export function synthesizeBalanceWatch(options) {
    * @param {number} [jitterDb] how far this sound's level is off its set one; drawn here when absent
    */
   const addSound = (time, s, jitterDb) => {
-    const length = Math.floor((4 * s.riseMs + 7 * s.decayMs) * 1e-3 * fs);
-    const raw = new Float32Array(preRoll + length);
-    const shaped = new Float64Array(preRoll + length);
-    for (let i = 0; i < raw.length; i++) raw[i] = randn();
-    new Cascade(bandpassSections(fs, s.band[0], s.band[1])).process(raw, shaped);
-    const rise = s.riseMs * 1e-3 * fs;
-    const decay = s.decayMs * 1e-3 * fs;
-    // The envelope's highest point, to scale it to 1.
-    const iTop = rise * Math.log(1 + decay / rise);
-    const top = (1 - Math.exp(-iTop / rise)) * Math.exp(-iTop / decay);
-    const level = white * Math.pow(10, (s.db + (jitterDb ?? levelJitterDb * vary())) / 20) / top;
+    // The app's simulator makes its sounds the same way (js/audio/balance.js).
+    const samples = soundSamples(s, fs, randn, white * Math.pow(10, (s.db + (jitterDb ?? levelJitterDb * vary())) / 20));
     const pos = time * fs;
     const i0 = Math.floor(pos);
     const frac = pos - i0;
-    for (let i = 0; i < length; i++) {
-      const v = level * shaped[preRoll + i] * (1 - Math.exp(-i / rise)) * Math.exp(-i / decay);
+    for (let i = 0; i < samples.length; i++) {
+      const v = samples[i];
       if (i0 + i >= 0 && i0 + i < n) out[i0 + i] += v * (1 - frac);
       if (i0 + i + 1 >= 0 && i0 + i + 1 < n) out[i0 + i + 1] += v * frac;
     }
@@ -212,45 +205,30 @@ export function synthesizeBalanceWatch(options) {
   };
 }
 
-/** Sounds across the top of the band a phone's microphone delivers, in hertz. */
-const HIGH = /** @type {[number, number]} */ ([9000, 22000]);
-
 /**
- * A co-axial watch with the pattern found in the Omega 3861's Safari capture. Even beats take
- * the impulse on the balance itself: a faint unlock, one loud impact, the lock. Odd beats take
- * it through the lever: a faint unlock, a faint and then a moderate impact, the lock. The time
- * from unlock to lock is about 8% longer in the even beats; the two beats' lift angles average
- * 36°, the lift angle the prototype reads the Omega at.
+ * A co-axial watch with the pattern found in the Omega 3861's Safari capture
+ * (`coaxialEscapement` in js/audio/balance.js, which the app's simulator makes too). Even beats
+ * take the impulse on the balance itself: a faint unlock, one loud impact, the lock. Odd beats
+ * take it through the lever: a faint unlock, a faint and then a moderate impact, the lock. The
+ * time from unlock to lock is about 8% longer in the even beats; the two beats' lift angles
+ * average 36°, the lift angle the prototype reads the Omega at.
  * @param {Partial<BalanceWatchOptions> & {unlockDb?: number}} [overrides] `unlockDb` sets how
  *   far the unlock stands over the noise; the capture's stood about 5 dB over it
  * @returns {BalanceWatchOptions}
  */
 export function coaxialWatch(overrides = {}) {
   const { unlockDb = 5, ...rest } = overrides;
+  const { unlockDeg, lockDeg, lockJitterMs, sounds } = coaxialEscapement(unlockDb);
   return {
     bph: 21600,
     seconds: 60,
     rate: 0.4,
     amplitude: 285,
     restOffsetDeg: 0,
-    unlockDeg: [18, 18],
-    lockDeg: [19.45, 16.55],
-    lockJitterMs: 0.06,
-    sounds: [
-      [
-        { after: 'unlock', db: unlockDb, riseMs: 0.2, decayMs: 0.35, band: [14000, 22000] },
-        { after: 'unlock', delayMs: 3.25, delayJitterMs: 0.08, db: 27, riseMs: 0.08, decayMs: 0.6, band: HIGH },
-        { after: 'lock', db: 17, riseMs: 0.12, decayMs: 0.6, band: HIGH },
-        { after: 'lock', delayMs: 2.7, delayJitterMs: 0.1, db: 3, riseMs: 0.15, decayMs: 0.4, band: [14000, 22000] },
-      ],
-      [
-        { after: 'unlock', db: unlockDb + 1, riseMs: 0.25, decayMs: 0.4, band: [14000, 22000] },
-        { after: 'unlock', delayMs: 3.1, delayJitterMs: 0.1, db: 4, riseMs: 0.15, decayMs: 0.4, band: [14000, 22000] },
-        { after: 'unlock', delayMs: 4.15, delayJitterMs: 0.12, db: 17, riseMs: 0.12, decayMs: 0.5, band: HIGH },
-        { after: 'lock', db: 17, riseMs: 0.12, decayMs: 0.6, band: HIGH },
-        { after: 'lock', delayMs: 2.6, delayJitterMs: 0.1, db: 3, riseMs: 0.15, decayMs: 0.4, band: [14000, 22000] },
-      ],
-    ],
+    unlockDeg,
+    lockDeg,
+    lockJitterMs,
+    sounds,
     ...rest,
   };
 }

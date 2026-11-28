@@ -1,6 +1,7 @@
 // Synthetic watch audio with known rate and beat error. `synthesizeWatch` makes a whole
 // recording for the automated tests; `WatchStream` makes endless audio, chunk by chunk, for the
-// in-app simulator. Both are deterministic for a given seed.
+// in-app simulator's Swiss lever (its co-axial is js/audio/balance.js). Both are deterministic
+// for a given seed.
 
 import { Cascade, bandpassSections } from '../dsp/biquad.js';
 import { seededRandom } from '../dsp/mathutil.js';
@@ -201,8 +202,8 @@ export function liftSeconds(amplitude, bph, liftAngle = SIMULATED_LIFT_ANGLE) {
  *   the sound between them in proportion. When absent the first sound comes 7 ms before the
  *   last at every beat rate, which is a believable swing only at some of them
  * @property {number} [liftAngle] lift angle of the simulated watch in degrees, used with
- *   `amplitude`; SIMULATED_LIFT_ANGLE when absent. The app gives the lift angle of its settings,
- *   so that the amplitude it reads is the amplitude set, whatever the setting
+ *   `amplitude`; SIMULATED_LIFT_ANGLE when absent. The app gives the simulator's own lift angle
+ *   and measures with it, so that the amplitude it reads is the amplitude set
  * @property {number} [sampleRate]
  * @property {number} [seed]
  */
