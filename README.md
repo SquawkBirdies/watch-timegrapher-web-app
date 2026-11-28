@@ -5,7 +5,8 @@ microphone. It measures rate (seconds per day), beat error (milliseconds) and, a
 reading, amplitude (degrees), and draws a real-time trace.
 
 **Status: milestone 8 of 9, in progress.** The timegrapher listens to the phone's microphone. It can
-also be driven by a simulated watch, by two demo recordings or by a recording of your own. It
+also be driven by a simulated watch, a Swiss lever or a co-axial, by two demo recordings or by a
+recording of your own. It
 measures continuously, or saves a reading for each of the six positions a watch is checked in.
 Milestone 8, amplitude and a beat error measured from the unlock, is under way: the first four of
 its six steps are in the code. Since the fourth, the screen shows both, for Swiss-lever and co-axial
@@ -621,21 +622,71 @@ that setting co-axial after Stop brought no note until the next Start, as on the
 Settings as soon as a run ends was tried and not kept: in Chrome it brought the note up beside the
 Omega demo's 290°, made at the demo's own 36°, when Settings were co-axial at 52°.
 
-**The simulator** has an amplitude slider, 150° to 330°, starting at 270° (decided on 26 November).
-Its watch is a Swiss lever whose lift angle is the one set in Settings (decided the same day), so
-the amplitude read is the amplitude set, whatever the setting; the slider sets how long before its
-lock each beat's unlock comes. Until now that was 7 ms at every beat rate, which at 52° the app
-reads as 294° at 28,800 vph and as nothing believable at 21,600 vph and below. A lift angle changed
-while the simulator runs starts it again, as a new beat rate does. Left running, its beats from
-before the change were read with the new angle for up to a minute, at amplitudes the watch never
-had: with 270° set, 186° for half a minute after a change from 52° to 36°, then a dash, and 268°
-only a minute after the change. Its loudness now starts at 3.00× instead of 2.00× (agreed on 26
-November), and the slider reaches 4.00×: at 2.00× the simulated unlock stands about 10 dB over the
-noise of the averaged beat, 5 to 17% of the draws lost it, and the readings were often held back; at
-2.50× and 3.00× none did at any of four beat rates. In Node, at 52°, the simulator at 270° reads
-268.8° to 269.3° at 18,000 to 28,800 vph and 266.8° to 267.9° at 36,000 vph, and 0.38 to 0.43 ms for
-0.40 ms set. With other lift angles set: 268° at 36° and 28,800 vph, 269° at 60° and 21,600 vph,
-199.6° for 200° set at 70° and 18,000 vph, and 296° for 300° set at 30° and 36,000 vph.
+**The simulator** has an amplitude slider, 150° to 330°, starting at 270° (decided on 26 November),
+and since 28 November an escapement and a lift angle of its own: a Swiss lever, as it starts, or a
+co-axial, each putting in its usual lift angle when chosen, 52° and 36°, which can then be typed,
+30° to 70°. A run is measured with them, as a demo is with its watch's, so the amplitude read is the
+amplitude set. A change made in Settings during the run takes over, as it would for a real watch, so
+that a wrong escapement or lift angle can be tried on purpose (decided on 27 November): in Chrome,
+the co-axial at 270° and 36° read 300° once Settings said 40°, and the line under the readings said
+"Swiss lever" once Settings did, the readings staying. Settings keep showing the settings for the
+user's own watch, so with them at Swiss lever a co-axial run is given the wrong escapement by
+choosing Co-axial there and then Swiss lever. Changing the beat rate, the escapement or the lift
+angle on the Simulator tab starts it again (decided on 28 November). Left running, its beats from
+before a change of lift angle would be read with the new angle for up to a minute, at amplitudes the
+watch never had: with 270° set, 186° for half a minute after a change from 52° to 36°, then a dash,
+and 268° only a minute after the change. From 26 to 28 November the simulated watch was always a
+Swiss lever with the lift angle of Settings, and a change of that setting started it again. The
+amplitude slider sets how long before its lock each beat's unlock comes. Until 26 November that was
+7 ms at every beat rate, which at 52° the app reads as 294° at 28,800 vph and as nothing believable
+at 21,600 vph and below. Its loudness now starts at 3.00× instead of 2.00× (agreed on 26 November),
+and the slider reaches 4.00×: at 2.00× the simulated unlock stands about 10 dB over the noise of the
+averaged beat, 5 to 17% of the draws lost it, and the readings were often held back; at 2.50× and
+3.00× none did at any of four beat rates. In Node, at 52°, the simulator at 270° reads 268.8° to
+269.3° at 18,000 to 28,800 vph and 266.8° to 267.9° at 36,000 vph, and 0.38 to 0.43 ms for 0.40 ms
+set. With other lift angles set: 268° at 36° and 28,800 vph, 269° at 60° and 21,600 vph, 199.6° for
+200° set at 70° and 18,000 vph, and 296° for 300° set at 30° and 36,000 vph.
+
+**The simulator's co-axial** (since 28 November) is the tests' simulated co-axial, made as the
+audio is asked for (`js/audio/balance.js`): a balance swinging as a sine, unlocking and locking at
+the angles of the Omega 3861's pattern, with that pattern's sounds. Both beats have a faint unlock;
+one has a single loud impact and the other a faint and then a moderate one; and the time from
+unlock to lock is about 8% longer in the first. The tests' watches now take the pattern and the
+making of each sound from the same module, and are unchanged to the last sample. The beat error
+slider sets the balance's rest position so that the unlocks fall that far apart, which is the beat
+error a timing machine measures. At 3.00× the sounds stand over the noise as in the capture, the
+unlock about 5 dB. At 21,600 vph and 285° the sounds after the unlock come the pattern's delays
+after it; elsewhere the delays grow and shrink with the time from unlock to lock (decided on 28
+November), so that every impulse stays inside the lift. Kept fixed, the shorter beat's impulse
+would meet its lock at 28,800 vph above 310° and come after it at 36,000 vph from 270°.
+
+In Node, fed to the real-time pipeline in the app's 40 ms chunks at the app's settings, as a
+co-axial at 36° with +8 s/day and 0.40 ms set, for 120 s (seed 1):
+
+| Beat rate | 200° | 270° | 320° |
+| --- | --- | --- | --- |
+| 18,000 vph | 0.36 ms, 199.6°, from 79 s | held back | none, "check the lift angle" |
+| 21,600 vph | 0.48 ms, 199.6°, from 49 s | 0.40 ms, 269.8°, from 44 s | none, held back |
+| 25,200 vph | not run | 0.46 ms, 269.4°, from 44 s | not run |
+| 28,800 vph | 0.43 ms, 199.7°, from 44 s | 0.43 ms, 268.8°, from 49 s | none, "check the lift angle" |
+| 36,000 vph | not run | 0.40 ms, 269.3°, from 34 s | none, "check the lift angle" |
+
+Each figure is the run's last reading; "from" is when both were first shown. At 21,600 vph and 270°,
+0 ms set read 0.006 ms and 1.50 ms read 1.45 ms. Over 10 seeds at 21,600 vph and 285°, for 90 s,
+every run showed both, first at 34 to 64 s, and 8 ended on them, at 0.40 to 0.47 ms and 283.1° to
+286.2°; the other 2 had them held back at the end, 8% and 13% of their draws failing. The tests'
+co-axial, the same watch with other random draws, showed both in all 10 seeds, first at 34 to 59 s,
+and ended on them in 9, at 0.34 to 0.47 ms and 283.4° to 285.7°. At 1.50× loudness the unlock is
+lost and nothing is shown. With 0.3 ms of beat variability both were shown from 54 to 59 s, and at
+the end 268.0°, the beat error held back by the placement check. Without variability, at 3.00×, the
+rate's last reading was within 0.2 s/day of the truth in every run. Read as a Swiss lever at 36°,
+the co-axial at 21,600 vph and 270° gave the same readings as read as a co-axial, 0.396 ms and
+269.8°, since both modes take the beat error from the unlocks; read at 52°, nothing ("check the lift
+angle"). A Swiss lever at 28,800 vph and 270°, read as a co-axial at 36°, gave 0.40 ms and 186°.
+Telling the escapement from the sound, the sixth step, is to notice such mismatches; the simulator
+gives it a known answer. In headless Chrome the co-axial at 28,800 vph showed 270° and 0.46 ms 49 s
+in, and at 21,600 vph 269° and 0.39 ms 48 s in; the Swiss lever at its defaults read as before, 0.41
+ms at 26 s and 269° at 32 s.
 
 **The audio diagnostic** takes a lift angle as well (decided on 26 November), 52° unless another is
 typed, and gives the app's own amplitude and beat error in its reading line and in its report, as
@@ -761,6 +812,12 @@ What this step leaves as it is, and its limits:
 - **A co-axial's beats stay grey for 20 s or more after every lock,** 31 s on the Omega's capture,
   and for good when no amplitude can be shown. The rule was checked on one watch, the Omega 3861,
   and on simulated ones.
+- **A co-axial above about 317° or below about 156° shows neither reading,** and the readout's
+  reason can be "check the lift angle", which is wrong advice there. Each beat's own time from
+  unlock to lock must lie where a balance swinging 150° to 330° would put it for the lift angle
+  set, and a co-axial's two beats differ by about 8%: on the simulated co-axial at 36°, the shorter
+  beat falls outside from 316.8° and the longer below 156.1°. Found with the simulator's co-axial
+  on 28 November (issue 39 of the co-axial investigation); not yet changed.
 - **The names say nothing of which way the balance swings,** which sound alone cannot tell. They
   only name the same beat from run to run. A watch set to the wrong escapement is named by the wrong
   rule.
@@ -881,6 +938,10 @@ Lawrence ran these on his iPhone with the site as merged from pull request 60, i
 - **After pull request 61,** on 28 November, the fine print read "Version acdbe37.", linked to
   that commit, the diagnostic's report gave "Version: acdbe37", both demos played with the
   escapement on the line under the readings, and Reset to defaults put the settings back.
+- **After pull request 62,** on 28 November, all three pages read "Version 479e94d.", linked to
+  that commit, once GitHub Pages' 10-minute cache had passed. Five minutes after the merge the
+  timegrapher still showed the old version and the audio diagnostic had lost its line, its new code
+  having met an old file it needs ([Hosting](#hosting)).
 
 ## Live microphone
 
@@ -1098,6 +1159,10 @@ it was built from into `version.json`. The fine print of all three pages, the ti
 audio diagnostic and the browser check, shows it ("Version acdbe37."), linked to the commit on
 GitHub, and so does the diagnostic's report ("Version: acdbe37"), so that a screenshot or a
 report says which version made it; served any other way, they show none.
+GitHub Pages lets browsers keep each file for 10 minutes, so for that long after a deploy a page
+can load old and new files together, which may not work. A check on the phone therefore waits 10
+minutes after the deploy's Actions run turns green, or uses a new Private tab (decided on 28
+November); milestone 9's service worker is to switch each deploy over whole.
 `_config.yml` keeps the Markdown and the folders the app does not load out of the published site.
 
 `index.html` is the timegrapher. Its header shows rate, amplitude and beat error, each with its
@@ -1236,6 +1301,7 @@ js/audio/live.js       the microphone as a source: interruptions, resuming, the 
 js/audio/ring.js       the most recent stretch of audio, in fixed memory
 js/audio/wav.js        WAV reader for recordings, writer for saved captures
 js/audio/simulator.js  synthetic watch, as whole recordings or endless and adjustable
+js/audio/balance.js    the simulator's co-axial, built from the motion of its balance
 js/audio/file-source.js  decodes a recording and hands it out in chunks
 js/audio/player.js     paces a source in real time, or faster
 js/ui/model.js         what the screen shows, worked out from the pipeline's events
@@ -1296,8 +1362,8 @@ Done by Lawrence Fan:
 - the design decisions recorded in the plan, including the magnetism warning, the minimum iOS
   version and the choice of plain JavaScript
 - suggestions taken into the design, including the Kalman beat tracker, the beat-rate override,
-  the continuous mode beside the six-position log, and the sensitivity setting for the amplitude
-  and the beat error
+  the continuous mode beside the six-position log, the sensitivity setting for the amplitude
+  and the beat error, and the co-axial watch in the simulator
 - the six recordings in `tests/fixtures/` (five of watches, one with no watch), which are the
   only test data not produced by AI-written code
 - every check on the iPhone

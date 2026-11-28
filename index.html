@@ -149,10 +149,22 @@
     </div>
 
     <div class="panel" id="panel-simulator" role="tabpanel" aria-labelledby="tab-simulator" hidden>
-      <p class="note">A synthetic watch with a Swiss lever escapement, whose lift angle is the one set in Settings, so the amplitude read is the amplitude set here; changing that setting while it runs starts it again. Its rate, beat error, amplitude, variability and loudness change as you move the sliders, like adjusting a watch under test. The rate follows within the averaging window; the beat error and the amplitude rest on up to a minute of beats and start again when the beat error steps, so they show a dash for 15 s or more on the way, and an amplitude change alone takes up to half a minute to show. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
+      <p class="note">A synthetic watch with an escapement and a lift angle of its own. It is measured with them, as a demo is, so the amplitude read is the amplitude set here; a change made in Settings while it runs takes over, as it would for a real watch, so a wrong escapement or lift angle can be tried on purpose. Changing the beat rate, the escapement or the lift angle here starts it again. Its rate, beat error, amplitude, variability and loudness change as you move the sliders, like adjusting a watch under test. The rate follows within the averaging window; the beat error and the amplitude rest on up to a minute of beats and start again when the beat error steps, so they show a dash for 15 s or more on the way, and an amplitude change alone takes up to half a minute to show. Variability moves each beat early or late at random, as in a watch that runs badly.</p>
       <div class="field">
         <label for="sim-bph">Beat rate</label>
         <select id="sim-bph"></select>
+      </div>
+      <div class="field">
+        <label for="sim-escapement">Escapement</label>
+        <select id="sim-escapement">
+          <option value="lever">Swiss lever</option>
+          <option value="coaxial">Co-axial</option>
+        </select>
+        <p class="fine">The co-axial's beats sound like the Omega 3861 demo's: a faint unlock, then one loud impulse in one beat, and a faint and then a moderate one in the other. Choosing an escapement puts in its usual lift angle.</p>
+      </div>
+      <div class="field">
+        <label for="sim-lift">Lift angle (degrees)</label>
+        <input type="number" id="sim-lift" min="30" max="70" step="0.5" inputmode="decimal" value="52">
       </div>
       <div class="field">
         <label for="sim-rate">Rate <output id="sim-rate-out" for="sim-rate"></output></label>

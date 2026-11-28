@@ -9,7 +9,8 @@ import { WaveformView } from './ui/waveform.js';
 import { ScreenWake } from './ui/wake.js';
 import { offerFile, stampedName } from './ui/save.js';
 import { applyTheme } from './ui/theme.js';
-import { WatchStream } from './audio/simulator.js';
+import { WatchStream, SIMULATED_LIFT_ANGLE } from './audio/simulator.js';
+import { BalanceStream, COAXIAL_LIFT_ANGLE } from './audio/balance.js';
 import { decodeRecording, RecordingSource } from './audio/file-source.js';
 import { Player } from './audio/player.js';
 import { LiveInput } from './audio/live.js';
@@ -18,7 +19,7 @@ import { encodeWav } from './audio/wav.js';
 import { POSITION_ICONS } from './ui/position-icons.js';
 import { POSITIONS, positionName, readiness, takeReading, withReading, nextPosition, summarise, describeReading, describeSummary, positionStep, soundsWaiting, isUncertain, emptyLog, isPosition } from './ui/positions.js';
 import { repositoryUrl, showVersion } from './version.js';
-import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES, DIALOG_SETTINGS, withDialogDefaults } from './store.js';
+import { loadSettings, saveSettings, clean, loadLog, saveLog, BEAT_RATES, AVERAGING_CHOICES, SAVE_MINUTES, DIALOG_SETTINGS, withDialogDefaults, liftAngleOf } from './store.js';
 
 /**
  * @typedef {import('./audio/file-source.js').Recording} Recording
@@ -78,6 +79,8 @@ const ui = {
   waveLegend: $('wave-legend'),
   waveCaption: $('wave-caption'),
   simBph: /** @type {HTMLSelectElement} */ ($('sim-bph')),
+  simEscapement: /** @type {HTMLSelectElement} */ ($('sim-escapement')),
+  simLift: /** @type {HTMLInputElement} */ ($('sim-lift')),
   simRate: /** @type {HTMLInputElement} */ ($('sim-rate')),
   simBe: /** @type {HTMLInputElement} */ ($('sim-be')),
   simAmp: /** @type {HTMLInputElement} */ ($('sim-amp')),
@@ -182,8 +185,17 @@ let target = nextPosition(log);
 let run = null;
 /** @type {Player|null} */
 let player = null;
-/** @type {WatchStream|null} */
+/** @type {WatchStream|BalanceStream|null} */
 let simulator = null;
+/**
+ * The lift angle each escapement of the simulator starts with: the app's default for the Swiss
+ * lever, and for the co-axial the one the Omega 3861 is read at (decided 28 November 2026).
+ * @type {Record<Escapement, number>}
+ */
+const SIMULATOR_LIFT = { lever: SIMULATED_LIFT_ANGLE, coaxial: COAXIAL_LIFT_ANGLE };
+/** The simulator's own lift angle, kept when what is typed is not one. A browser may have put
+ *  back the box's value from an earlier visit; it is taken as it stands. */
+let simulatorLift = liftAngleOf(ui.simLift.value) ?? SIMULATOR_LIFT.lever;
 /** The microphone of the current or last microphone run; kept after stopping, for saving.
  *  @type {LiveInput|null} */
 let live = null;
@@ -279,20 +291,23 @@ async function start() {
   let next;
   try {
     if (kind === 'simulator') {
-      simulator = new WatchStream({
+      // The simulated watch has an escapement and a lift angle of its own, and is measured with
+      // them, as a demo is, so that the amplitude read is the amplitude set on its slider; a
+      // change in Settings during the run takes over, as it would for a real watch.
+      const escapement = /** @type {Escapement} */ (ui.simEscapement.value === 'coaxial' ? 'coaxial' : 'lever');
+      const watch = {
         bph: Number(ui.simBph.value),
         rate: Number(ui.simRate.value),
         beatOffsetMs: Number(ui.simBe.value),
         gain: Number(ui.simGain.value),
         jitterMs: Number(ui.simJitter.value),
         amplitude: Number(ui.simAmp.value),
-        // The simulated watch has the lift angle of the settings, so that the amplitude read is
-        // the amplitude set on its slider, whatever the setting.
-        liftAngle: settings.liftAngle,
+        liftAngle: simulatorLift,
         seed: Math.floor(Math.random() * 2 ** 31),
-      });
+      };
+      simulator = escapement === 'coaxial' ? new BalanceStream(watch) : new WatchStream(watch);
       source = simulator;
-      next = newRun('simulator', 'Simulator', null, simulator.sampleRate, settings.escapement, settings.liftAngle);
+      next = newRun('simulator', 'Simulator', null, simulator.sampleRate, escapement, simulatorLift);
       next.running = true;
     } else {
       simulator = null;
@@ -937,7 +952,24 @@ for (const input of [ui.simRate, ui.simBe, ui.simAmp, ui.simGain, ui.simJitter])
     }
   });
 }
+// A new beat rate, escapement or lift angle is another watch, so the simulator starts again with
+// it. Its beats from before a change of lift angle would otherwise be read with the new angle for
+// up to a minute, at amplitudes the watch never had: 186 degrees for half a minute after a change
+// from 52 to 36 degrees with 270 set.
 ui.simBph.addEventListener('change', () => {
+  if (run && run.running && run.kind === 'simulator') start();
+});
+ui.simEscapement.addEventListener('change', () => {
+  simulatorLift = SIMULATOR_LIFT[ui.simEscapement.value === 'coaxial' ? 'coaxial' : 'lever'];
+  ui.simLift.value = String(simulatorLift);
+  if (run && run.running && run.kind === 'simulator') start();
+});
+ui.simLift.addEventListener('change', () => {
+  // An empty or out-of-range lift angle keeps the previous one.
+  const lift = liftAngleOf(ui.simLift.value);
+  ui.simLift.value = String(lift ?? simulatorLift);
+  if (lift === null || lift === simulatorLift) return;
+  simulatorLift = lift;
   if (run && run.running && run.kind === 'simulator') start();
 });
 
@@ -1189,17 +1221,13 @@ ui.settingsForm.addEventListener('change', () => {
   saveSettings(settings);
   // The theme changes at once; the charts are drawn again with its colours below.
   if (settings.theme !== before.theme) applyTheme(settings.theme);
-  // A lift angle set now is the one meant from here on: it replaces a demo's own while the demo
-  // runs, and it is what the line under the readings shows once a run is over.
+  // A lift angle set now is the one meant from here on: it replaces a demo's or the simulator's
+  // own while it runs, and it is what the line under the readings shows once a run is over. The
+  // simulated watch keeps its own, so its amplitude then reads wrong by the ratio of the two, as
+  // a real watch's does.
   if (run && settings.liftAngle !== before.liftAngle) run.liftAngle = settings.liftAngle;
   if (run && !run.running && (settings.liftAngle !== before.liftAngle || settings.escapement !== before.escapement)) run.changedAfter = true;
-  // The simulator's watch follows the lift angle set, which moves the sounds inside its beats.
-  // Its beats from before the change would be read with the new angle for up to a minute, at
-  // amplitudes the watch never had (186 degrees for half a minute after a change from 52 to 36
-  // degrees with 270 set), so it starts again instead, as it does for a new beat rate. A restart
-  // starts the source of the tab that is open, so it is made only while that is the simulator's.
-  const simulatorLift = !!run && run.kind === 'simulator' && tab === 'simulator' && settings.liftAngle !== before.liftAngle;
-  if (settings.bph !== before.bph || settings.humHz !== before.humHz || simulatorLift) {
+  if (settings.bph !== before.bph || settings.humHz !== before.humHz) {
     restart();
   } else if (run && run.running) {
     /** @type {{averagingSeconds?: number, escapement?: Escapement, liftAngle?: number, sensitivity?: Sensitivity}} */
@@ -1207,12 +1235,7 @@ ui.settingsForm.addEventListener('change', () => {
     if (settings.averagingSeconds !== before.averagingSeconds) changes.averagingSeconds = settings.averagingSeconds;
     if (settings.sensitivity !== before.sensitivity) changes.sensitivity = settings.sensitivity;
     // The sounds inside the beats are read again with the new lift angle.
-    if (settings.liftAngle !== before.liftAngle) {
-      changes.liftAngle = settings.liftAngle;
-      // A simulator left running under another tab is not started again: its watch takes the
-      // new angle from its next beat, and the readings come right as the earlier beats age out.
-      if (simulator && run.kind === 'simulator') simulator.liftAngle = settings.liftAngle;
-    }
+    if (settings.liftAngle !== before.liftAngle) changes.liftAngle = settings.liftAngle;
     if (settings.escapement !== before.escapement) {
       changes.escapement = settings.escapement;
       run.escapement = settings.escapement;

@@ -270,8 +270,9 @@ test('the simulator\'s amplitude sets how long before its lock each beat\'s unlo
   assert.ok(Math.abs(liftSeconds(270, 28800) * 1e3 - 7.675) < 0.001 && Math.abs(liftSeconds(270, 21600) * 1e3 - 10.233) < 0.001);
   // Without an amplitude the sounds stay 7 ms apart whatever the beat rate, as before.
   assert.equal(new WatchStream({ bph: 21600 }).unlockSeconds(), 0.007);
-  // The app gives its simulator the lift angle of the settings, and a change of it applies from
-  // the next beat: the unlock comes sooner before the lock for a smaller angle.
+  // The app gives its simulator a lift angle of its own and starts it again when that changes;
+  // a change of the property applies from the next beat: the unlock comes sooner before the
+  // lock for a smaller angle.
   const follows = new WatchStream({ bph: 28800, amplitude: 270, liftAngle: 36 });
   assert.equal(follows.unlockSeconds(), liftSeconds(270, 28800, 36));
   assert.ok(Math.abs(follows.unlockSeconds() * 1e3 - 5.309) < 0.001);
@@ -298,9 +299,9 @@ test('the simulator\'s amplitude sets how long before its lock each beat\'s unlo
     assert.ok(Math.abs(s.beatErrorMs - 0.4) <= 0.05, `beat error ${s.beatErrorMs.toFixed(3)} ms`);
   }
   // Read at 52 degrees, a watch whose lift angle is 60 gives 52/60 of its swing: an amplitude is
-  // only as right as the lift angle. That is why the app's simulator takes the angle set. Its
-  // beats from before a change of the setting would be read this way for up to a minute, so
-  // the app starts the simulator again instead.
+  // only as right as the lift angle. That is why the app measures its simulator with the
+  // simulator's own angle, and starts it again when that angle changes. A lift angle changed in
+  // Settings while it runs is read this way, as it would be for a real watch.
   pipeline.setOptions({ liftAngle: 52 });
   const after = /** @type {ReadingsEvent[]} */ (run(pipeline, (n) => sim.next(n), 1.5).filter((e) => e.type === 'readings')).pop();
   assert.ok(after && after.sounds && after.sounds.amplitude !== null && Math.abs(after.sounds.amplitude - (270 * 52) / 60) <= 2, `at 52 degrees ${after?.sounds?.amplitude}`);

@@ -83,6 +83,17 @@ export const SETTINGS_KEY = 'timegrapher.settings.v1';
 const LOG_KEY = 'timegrapher.positions.v1';
 
 /**
+ * A lift angle as typed, if it is one: a number within LIFT_RANGE, to a tenth of a degree.
+ * Settings and the simulator's own lift angle both take it this way.
+ * @param {unknown} value
+ * @returns {number|null}
+ */
+export function liftAngleOf(value) {
+  const lift = Number(value);
+  return Number.isFinite(lift) && lift >= LIFT_RANGE[0] && lift <= LIFT_RANGE[1] ? Math.round(lift * 10) / 10 : null;
+}
+
+/**
  * Keep only valid values; anything else falls back to the default.
  * @param {Record<string, unknown>} raw
  * @returns {Settings}
@@ -92,8 +103,8 @@ export function clean(raw) {
   const bph = Number(raw.bph);
   if (bph === 0 || BEAT_RATES.includes(bph)) s.bph = bph;
   if (raw.escapement === 'lever' || raw.escapement === 'coaxial') s.escapement = raw.escapement;
-  const lift = Number(raw.liftAngle);
-  if (Number.isFinite(lift) && lift >= LIFT_RANGE[0] && lift <= LIFT_RANGE[1]) s.liftAngle = Math.round(lift * 10) / 10;
+  const lift = liftAngleOf(raw.liftAngle);
+  if (lift !== null) s.liftAngle = lift;
   const hum = Number(raw.humHz);
   if (hum === 50 || hum === 60) s.humHz = hum;
   const avg = Number(raw.averagingSeconds);
