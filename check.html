@@ -86,6 +86,7 @@ code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
     <a id="source" href="https://github.com/">source repository</a> for who did what.
     MIT licence.
   </p>
+  <p class="small" id="version" hidden>Version <a id="version-link"></a>.</p>
   <p class="small">Browser: <code id="agent"></code></p>
 </main>
 
@@ -152,6 +153,10 @@ const source = document.getElementById('source');
 const host = location.hostname.match(/^([^.]+)\.github\.io$/);
 const repo = location.pathname.split('/').filter(Boolean)[0];
 if (host && repo) source.href = `https://github.com/${host[1]}/${repo}`;
+
+// The commit the site was built from, linked to it on GitHub, as on the other pages. Loaded on
+// its own, so that the checks above still run if it fails.
+import('./js/version.js').then(({ showVersion }) => showVersion(document, location)).catch(() => {});
 </script>
 </body>
 </html>

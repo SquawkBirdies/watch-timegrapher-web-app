@@ -6,7 +6,7 @@ import { encodeWav } from './audio/wav.js';
 import { offerFile } from './ui/save.js';
 import { Cascade, highpass, BUTTERWORTH4_Q } from './dsp/biquad.js';
 import { soundsReadout, soundsInWords, stageNote, beatName } from './ui/model.js';
-import { loadVersion, shortVersion } from './version.js';
+import { shortVersion, showVersion } from './version.js';
 
 /**
  * @template {HTMLElement} T
@@ -397,13 +397,8 @@ function draw() {
 
 /** The commit the site was built from, once version.json has been read; null without one. */
 let siteVersion = /** @type {string|null} */ (null);
-loadVersion().then((commit) => {
-  siteVersion = commit;
-  const line = document.getElementById('version');
-  if (!commit || !line) return;
-  line.textContent = `Version ${shortVersion(commit)}.`;
-  line.hidden = false;
-});
+// Shown at the foot of the page, linked to the commit on GitHub, as on the other pages.
+showVersion(document, location).then((commit) => { siteVersion = commit; });
 
 function report() {
   const r = run;
